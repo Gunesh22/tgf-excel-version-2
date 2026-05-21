@@ -5,7 +5,7 @@ import {
   Phone, ArrowLeft, Plus, Download, Search, ChevronLeft, ChevronRight,
   Edit3, X, Save, FileText, Calendar, Tag, User, MapPin, MessageSquare,
   Hash, Check, Clock, PhoneOff, CheckCircle2, AlertCircle, Trash2,
-  PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame,
+  PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame, SlidersHorizontal,
 } from "lucide-react";
 import {
   subscribeToCallLogs, updateCallLog, addIncomingCallLog,
@@ -647,6 +647,19 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("All");
   const [page, setPage] = useState(1);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [filterSource, setFilterSource] = useState("All");
+  const [filterCity, setFilterCity] = useState("All");
+  const [filterCalledFor, setFilterCalledFor] = useState("All");
+  const [filterCallType, setFilterCallType] = useState("All");
+  const [filterSubProgram, setFilterSubProgram] = useState("All");
+  const [filterObjectionReason, setFilterObjectionReason] = useState("All");
+  const [filterCallbackStatus, setFilterCallbackStatus] = useState("All");
+  const [filterCallCount, setFilterCallCount] = useState("All");
+  const [filterDateType, setFilterDateType] = useState("All");
+  const [filterDateRange, setFilterDateRange] = useState("All");
+  const [customDateFrom, setCustomDateFrom] = useState("");
+  const [customDateTo, setCustomDateTo] = useState("");
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -856,18 +869,195 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     return { total, called, interested, regDone, callbacks, incoming, outgoing, hotLeads };
   }, [monthFilteredLogs]);
 
-  // ── Filter (now uses monthly data) ──
+  // ── Unique values for dropdowns dynamically computed from month data ──
+  const uniqueSources = useMemo(() => {
+    const set = new Set();
+    monthFilteredLogs.forEach(log => {
+      const k = Object.keys(log).find(key => key.toLowerCase().includes("source") || key.toLowerCase().includes("sourse"));
+      if (k && log[k]) set.add(String(log[k]).trim());
+    });
+    return Array.from(set).sort();
+  }, [monthFilteredLogs]);
+
+  const uniqueCities = useMemo(() => {
+    const set = new Set();
+    monthFilteredLogs.forEach(log => {
+      const k = Object.keys(log).find(key => key.toLowerCase().includes("city") || key.toLowerCase().includes("location") || key.toLowerCase().includes("khoji city"));
+      if (k && log[k]) set.add(String(log[k]).trim());
+    });
+    return Array.from(set).sort();
+  }, [monthFilteredLogs]);
+
+  const uniqueCalledFor = useMemo(() => {
+    const set = new Set();
+    monthFilteredLogs.forEach(log => {
+      const k = Object.keys(log).find(key => key.toLowerCase().includes("called for") || key.toLowerCase().includes("called_for") || key.toLowerCase().includes("calledfor"));
+      if (k && log[k]) set.add(String(log[k]).trim());
+    });
+    return Array.from(set).sort();
+  }, [monthFilteredLogs]);
+
+  const uniqueSubPrograms = useMemo(() => {
+    const set = new Set();
+    monthFilteredLogs.forEach(log => {
+      if (log["Sub Program"]) set.add(String(log["Sub Program"]).trim());
+    });
+    return Array.from(set).sort();
+  }, [monthFilteredLogs]);
+
+  const uniqueObjectionReasons = useMemo(() => {
+    const set = new Set();
+    monthFilteredLogs.forEach(log => {
+      if (log.objectionReason) set.add(String(log.objectionReason).trim());
+    });
+    return Array.from(set).sort();
+  }, [monthFilteredLogs]);
+
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (searchQuery) count++;
+    if (filterStatus !== "All") count++;
+    if (filterSource !== "All") count++;
+    if (filterCity !== "All") count++;
+    if (filterCalledFor !== "All") count++;
+    if (filterCallType !== "All") count++;
+    if (filterSubProgram !== "All") count++;
+    if (filterObjectionReason !== "All") count++;
+    if (filterCallbackStatus !== "All") count++;
+    if (filterCallCount !== "All") count++;
+    if (filterDateType !== "All" && filterDateRange !== "All") count++;
+    return count;
+  }, [
+    searchQuery, filterStatus, filterSource, filterCity, filterCalledFor,
+    filterCallType, filterSubProgram, filterObjectionReason,
+    filterCallbackStatus, filterCallCount, filterDateType, filterDateRange
+  ]);
+
+  const handleClearAllFilters = () => {
+    setSearchQuery("");
+    setFilterStatus("All");
+    setFilterSource("All");
+    setFilterCity("All");
+    setFilterCalledFor("All");
+    setFilterCallType("All");
+    setFilterSubProgram("All");
+    setFilterObjectionReason("All");
+    setFilterCallbackStatus("All");
+    setFilterCallCount("All");
+    setFilterDateType("All");
+    setFilterDateRange("All");
+    setCustomDateFrom("");
+    setCustomDateTo("");
+    setPage(1);
+    toast.success("All filters cleared!");
+  };
+
+  // ── Filter (now uses monthly data & multi-criteria advanced filters) ──
   const filteredLogs = useMemo(() => {
     return monthFilteredLogs.filter(log => {
+      // 1. Text Search Query
       const q = searchQuery.toLowerCase();
       if (q && !Object.values(log).join(" ").toLowerCase().includes(q)) return false;
+
+      // 2. Quick Status Filter (General Status)
       if (filterStatus === "Hot Leads" && !log.isHotLead) return false;
       if (filterStatus === "Callback" && !log.callbackDate) return false;
       if (filterStatus === "Follow up" && !(log.callbackDate || log.status === "reminder" || log.status === "Next time")) return false;
       if (filterStatus !== "All" && filterStatus !== "Hot Leads" && filterStatus !== "Callback" && filterStatus !== "Follow up" && log.status !== filterStatus) return false;
+
+      // 3. Source Filter
+      if (filterSource !== "All") {
+        const k = Object.keys(log).find(key => key.toLowerCase().includes("source") || key.toLowerCase().includes("sourse"));
+        if (!k || String(log[k] || "").trim() !== filterSource) return false;
+      }
+
+      // 4. Called For Filter
+      if (filterCalledFor !== "All") {
+        const k = Object.keys(log).find(key => key.toLowerCase().includes("called for") || key.toLowerCase().includes("called_for") || key.toLowerCase().includes("calledfor"));
+        if (!k || String(log[k] || "").trim() !== filterCalledFor) return false;
+      }
+
+      // 5. City/Location Filter
+      if (filterCity !== "All") {
+        const k = Object.keys(log).find(key => key.toLowerCase().includes("city") || key.toLowerCase().includes("location") || key.toLowerCase().includes("khoji city"));
+        if (!k || String(log[k] || "").trim() !== filterCity) return false;
+      }
+
+      // 6. Call Type Filter
+      if (filterCallType !== "All") {
+        const cType = log.callType || "outgoing";
+        if (cType !== filterCallType) return false;
+      }
+
+      // 7. Sub Program / Sheet Filter
+      if (filterSubProgram !== "All") {
+        if (String(log["Sub Program"] || "").trim() !== filterSubProgram) return false;
+      }
+
+      // 8. Objection Reason Filter
+      if (filterObjectionReason !== "All") {
+        if (String(log.objectionReason || "").trim() !== filterObjectionReason) return false;
+      }
+
+      // 9. Callback Status Filter
+      if (filterCallbackStatus !== "All") {
+        if (!log.callbackDate) return false;
+        const cbStatus = log.callbackStatus || "pending";
+        if (cbStatus !== filterCallbackStatus) return false;
+      }
+
+      // 10. Call Count Filter
+      if (filterCallCount !== "All") {
+        const count = log.history ? log.history.length : (log.status ? 1 : 0);
+        if (filterCallCount === "0") {
+          if (count !== 0) return false;
+        } else if (filterCallCount === "1") {
+          if (count !== 1) return false;
+        } else if (filterCallCount === "2+") {
+          if (count < 2) return false;
+        }
+      }
+
+      // 11. Date / Activity Range Filter
+      if (filterDateType !== "All" && filterDateRange !== "All") {
+        let logDate = null;
+        if (filterDateType === "lastCalledAt") {
+          logDate = log.lastCalledAt ? new Date(log.lastCalledAt) : null;
+        } else if (filterDateType === "createdAt") {
+          logDate = log.createdAt?.toDate ? log.createdAt.toDate() : log.createdAt ? new Date(log.createdAt) : null;
+        }
+
+        if (!logDate || isNaN(logDate)) return false;
+
+        const startOfDay = (d) => { const nd = new Date(d); nd.setHours(0, 0, 0, 0); return nd; };
+        const endOfDay = (d) => { const nd = new Date(d); nd.setHours(23, 59, 59, 999); return nd; };
+
+        const today = new Date();
+        const yesterday = new Date();
+        yesterday.setDate(today.getDate() - 1);
+
+        if (filterDateRange === "Today") {
+          if (logDate < startOfDay(today) || logDate > endOfDay(today)) return false;
+        } else if (filterDateRange === "Yesterday") {
+          if (logDate < startOfDay(yesterday) || logDate > endOfDay(yesterday)) return false;
+        } else if (filterDateRange === "This Week") {
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(today.getDate() - 7);
+          if (logDate < startOfDay(sevenDaysAgo)) return false;
+        } else if (filterDateRange === "Custom") {
+          if (customDateFrom && logDate < startOfDay(new Date(customDateFrom))) return false;
+          if (customDateTo && logDate > endOfDay(new Date(customDateTo))) return false;
+        }
+      }
+
       return true;
     });
-  }, [monthFilteredLogs, searchQuery, filterStatus]);
+  }, [
+    monthFilteredLogs, searchQuery, filterStatus, filterSource, filterCalledFor,
+    filterCity, filterCallType, filterSubProgram, filterObjectionReason,
+    filterCallbackStatus, filterCallCount, filterDateType, filterDateRange,
+    customDateFrom, customDateTo
+  ]);
 
   // ── Dynamic columns from data ──
   // All internal/system keys — used to filter them from dynamic columns
@@ -1067,34 +1257,255 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
       )}
 
       {/* Filters */}
-      <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-3 shrink-0">
-        <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5">
-          <Search size={14} className="text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search..."
-            value={searchQuery}
-            onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
-            className="bg-transparent text-sm outline-none w-36"
-          />
+      <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center justify-between shrink-0 gap-3">
+        <div className="flex items-center gap-3 overflow-x-auto flex-1">
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5 shrink-0">
+            <Search size={14} className="text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search..."
+              value={searchQuery}
+              onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
+              className="bg-transparent text-sm outline-none w-36"
+            />
+          </div>
+
+          <button
+            onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border shrink-0 ${
+              showAdvancedFilters || activeFiltersCount > 0
+                ? "bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm"
+                : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+            }`}
+          >
+            <SlidersHorizontal size={13} />
+            Advanced Filters {activeFiltersCount > 0 && `(${activeFiltersCount})`}
+          </button>
+
+          <div className="flex items-center gap-2">
+            {["All", "Hot Leads", "Follow up", "Callback", "Interested", "Reg.Done", "Not interested", "NA"].map(s => (
+              <button
+                key={s}
+                onClick={() => { setFilterStatus(s); setPage(1); }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${filterStatus === s
+                  ? s === "Hot Leads" ? "bg-orange-500 text-white shadow" : s === "Follow up" ? "bg-blue-600 text-white shadow" : "bg-[#217346] text-white shadow"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+              >
+                {s === "Hot Leads" && <Flame size={12} className={filterStatus === s ? "text-white" : "text-orange-500"} />}
+                {s === "Follow up" && <Clock size={12} className={filterStatus === s ? "text-white" : "text-blue-500"} />}
+                {s}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto">
-          {["All", "Hot Leads", "Follow up", "Callback", "Interested", "Reg.Done", "Not interested", "NA"].map(s => (
-            <button
-              key={s}
-              onClick={() => { setFilterStatus(s); setPage(1); }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${filterStatus === s
-                ? s === "Hot Leads" ? "bg-orange-500 text-white shadow" : s === "Follow up" ? "bg-blue-600 text-white shadow" : "bg-[#217346] text-white shadow"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-            >
-              {s === "Hot Leads" && <Flame size={12} className={filterStatus === s ? "text-white" : "text-orange-500"} />}
-              {s === "Follow up" && <Clock size={12} className={filterStatus === s ? "text-white" : "text-blue-500"} />}
-              {s}
-            </button>
-          ))}
-        </div>
+
+        {activeFiltersCount > 0 && (
+          <button
+            onClick={handleClearAllFilters}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 border border-red-100 hover:bg-red-100 rounded-xl text-xs font-bold transition whitespace-nowrap shrink-0"
+          >
+            Clear All
+          </button>
+        )}
       </div>
+
+      {/* Advanced Filters Panel */}
+      {showAdvancedFilters && (
+        <div className="bg-white border-b border-gray-200 px-6 py-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 shrink-0 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
+          {/* Source Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <Tag size={11} className="text-amber-500" /> Source
+            </label>
+            <select
+              value={filterSource}
+              onChange={e => { setFilterSource(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All Sources</option>
+              {uniqueSources.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          {/* Called For Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <Phone size={11} className="text-blue-500" /> Called For
+            </label>
+            <select
+              value={filterCalledFor}
+              onChange={e => { setFilterCalledFor(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All Purposes</option>
+              {uniqueCalledFor.map(cf => <option key={cf} value={cf}>{cf}</option>)}
+            </select>
+          </div>
+
+          {/* City Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <MapPin size={11} className="text-red-500" /> City / Location
+            </label>
+            <select
+              value={filterCity}
+              onChange={e => { setFilterCity(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All Cities</option>
+              {uniqueCities.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          {/* Call Type Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <PhoneOutgoing size={11} className="text-emerald-500" /> Call Type
+            </label>
+            <select
+              value={filterCallType}
+              onChange={e => { setFilterCallType(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All Types</option>
+              <option value="outgoing">Outgoing</option>
+              <option value="incoming">Incoming</option>
+              <option value="outgoing f">Outgoing F</option>
+              <option value="incoming f">Incoming F</option>
+            </select>
+          </div>
+
+          {/* Sub Program / Sheet Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <FileText size={11} className="text-indigo-500" /> Sheet Name
+            </label>
+            <select
+              value={filterSubProgram}
+              onChange={e => { setFilterSubProgram(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All Sheets</option>
+              {uniqueSubPrograms.map(sp => <option key={sp} value={sp}>{sp}</option>)}
+            </select>
+          </div>
+
+          {/* Objection Reason Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <AlertCircle size={11} className="text-rose-500" /> Objection
+            </label>
+            <select
+              value={filterObjectionReason}
+              onChange={e => { setFilterObjectionReason(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All Reasons</option>
+              {uniqueObjectionReasons.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+
+          {/* Callback Status Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <Clock size={11} className="text-purple-500" /> Callback Status
+            </label>
+            <select
+              value={filterCallbackStatus}
+              onChange={e => { setFilterCallbackStatus(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All Callbacks</option>
+              <option value="pending">⏳ Pending</option>
+              <option value="done">✅ Done</option>
+              <option value="rescheduled">🔄 Rescheduled</option>
+              <option value="cancelled">❌ Cancelled</option>
+            </select>
+          </div>
+
+          {/* Call Count Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <User size={11} className="text-gray-500" /> Call Count
+            </label>
+            <select
+              value={filterCallCount}
+              onChange={e => { setFilterCallCount(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All Counts</option>
+              <option value="0">0 Calls (Never Called)</option>
+              <option value="1">1 Call</option>
+              <option value="2+">2+ Calls</option>
+            </select>
+          </div>
+
+          {/* Date Type Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <CalendarDays size={11} className="text-teal-500" /> Date Filter By
+            </label>
+            <select
+              value={filterDateType}
+              onChange={e => { setFilterDateType(e.target.value); setPage(1); if (e.target.value === "All") setFilterDateRange("All"); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">No Date Filter</option>
+              <option value="lastCalledAt">Last Called Date</option>
+              <option value="createdAt">Assignment Date</option>
+            </select>
+          </div>
+
+          {/* Date Range Selector */}
+          {filterDateType !== "All" && (
+            <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+                <Calendar size={11} className="text-teal-500" /> Date Range
+              </label>
+              <select
+                value={filterDateRange}
+                onChange={e => { setFilterDateRange(e.target.value); setPage(1); }}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+              >
+                <option value="All">All Dates</option>
+                <option value="Today">Today</option>
+                <option value="Yesterday">Yesterday</option>
+                <option value="This Week">Last 7 Days</option>
+                <option value="Custom">Custom Range</option>
+              </select>
+            </div>
+          )}
+
+          {/* Custom Date Range Picker */}
+          {filterDateType !== "All" && filterDateRange === "Custom" && (
+            <>
+              <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+                  Start Date
+                </label>
+                <input
+                  type="date"
+                  value={customDateFrom}
+                  onChange={e => { setCustomDateFrom(e.target.value); setPage(1); }}
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition font-sans"
+                />
+              </div>
+              <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+                  End Date
+                </label>
+                <input
+                  type="date"
+                  value={customDateTo}
+                  onChange={e => { setCustomDateTo(e.target.value); setPage(1); }}
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition font-sans"
+                />
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Edit Modal */}
       {editingRow && (
