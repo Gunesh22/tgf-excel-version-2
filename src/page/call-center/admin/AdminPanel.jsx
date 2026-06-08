@@ -5,25 +5,104 @@ import {
   Settings, ArrowLeft, BarChart3, Users, FileSpreadsheet,
   ClipboardCheck, Plus, Trash2, RefreshCw, Eye, Download,
   Upload, FolderOpen, ChevronRight, TrendingUp, PhoneCall,
-  UserCheck, AlertTriangle, Check, X, Calendar, Filter, Loader, Flame, FileText
+  UserCheck, AlertTriangle, Check, X, Calendar, Filter, Loader, Flame, FileText, Search, ArrowRight, Columns
 } from "lucide-react";
 import {
   getPrograms, createProgram, deleteProgram, importContacts, getProgramContactStats,
   getAttenders, createAttender, updateAttender, deleteAttender,
   subscribeToAllCallLogs, getAttenderCallLogs, reassignContactsToPool,
   subscribeToRegistrations, reassignContactsBetweenAttenders,
-  subscribeToCallLogs, updateCallLog, getProgramCallLogs
+  subscribeToCallLogs, updateCallLog, getProgramCallLogs,
+  getProgramChunkContacts, remapProgramContacts
 } from "../../../lib/db";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, LineChart, Line, Legend } from "recharts";
+import ImportContacts from "../ImportContacts";
 
 const COLORS = ["#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"];
 const TAB_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: <BarChart3 size={18} /> },
   { id: "monthly", label: "Monthly Report", icon: <FileText size={18} /> },
   { id: "programs", label: "Programs", icon: <FolderOpen size={18} /> },
+  { id: "import", label: "Lead Distribution 📂", icon: <Upload size={18} /> },
   { id: "attenders", label: "Attenders", icon: <Users size={18} /> },
   { id: "abhivyakti", label: "Abhivyakti", icon: <ClipboardCheck size={18} /> },
 ];
+
+const cleanExportRow = (log) => {
+  const INTERNAL_KEYS = [
+    "id", "programId", "programName", "contactId", "attenderId", "createdAt", "updatedAt",
+    "history", "_callbackDue", "_deleted", "isCallbackDue", "isHotLead", "callCount",
+    "callbackStatus", "lastCalledAt", "firstCalledAt", "registeredAt", "conversionSource",
+    "convertedBy", "subProgram", "objectionReason"
+  ];
+
+  const row = {};
+  
+  // Find standard field mappings
+  const findValue = (obj, keysList) => {
+    const foundKey = Object.keys(obj).find(k => keysList.includes(k.toLowerCase()));
+    return foundKey ? obj[foundKey] : "";
+  };
+
+  const nameVal = findValue(log, ["name", "caller", "caller name", "lead name", "lead", "name of caller"]);
+  const phoneVal = findValue(log, ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"]);
+  const emailVal = findValue(log, ["email", "mail", "e-mail", "email id", "emailaddress"]);
+  const cityVal = findValue(log, ["city", "location", "khoji city", "place", "city name"]);
+  const countryVal = findValue(log, ["country", "nation"]);
+  const tagsVal = findValue(log, ["tags", "tag"]);
+  const statusVal = log.status || "Pending";
+  const remarkVal = log.remark || "";
+  const subProgramVal = log["Sub Program"] || log.subProgram || "";
+
+  let callbackDateStr = "";
+  if (log.callbackDate) {
+    const d = log.callbackDate.toDate ? log.callbackDate.toDate() : new Date(log.callbackDate);
+    if (d && !isNaN(d)) {
+      callbackDateStr = d.toLocaleDateString("en-IN");
+    }
+  }
+
+  row["Name"] = nameVal;
+  row["Phone"] = phoneVal;
+  row["Email"] = emailVal;
+  row["City"] = cityVal;
+  row["Country"] = countryVal;
+  row["Tags"] = tagsVal;
+  row["Sub Program"] = subProgramVal;
+  row["Status"] = statusVal;
+  row["Remark"] = remarkVal;
+  row["Callback Date"] = callbackDateStr;
+
+  // Add all other dynamic/custom keys from GHL / Excel
+  Object.keys(log).forEach(key => {
+    if (INTERNAL_KEYS.includes(key) || key.startsWith("_")) return;
+    
+    // Skip if it was mapped to a standard field above
+    const isStandard = [
+      "name", "caller", "caller name", "lead name", "lead", "name of caller",
+      "phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number",
+      "email", "mail", "e-mail", "email id", "emailaddress",
+      "city", "location", "khoji city", "place", "city name",
+      "country", "nation", "tags", "tag", "status", "remark", "callbackdate", "sub program"
+    ].includes(key.toLowerCase());
+    
+    if (!isStandard) {
+      row[key] = log[key];
+    }
+  });
+
+  if (log.attenderName) {
+    row["Attended By"] = log.attenderName;
+  }
+
+  let historyStr = "";
+  if (log.history && Array.isArray(log.history)) {
+    historyStr = log.history.map(h => `[${new Date(h.timestamp).toLocaleDateString("en-IN")}] ${h.attenderName}: ${h.status} - ${h.remark}`).join(" | ");
+  }
+  row["Call History Timeline"] = historyStr;
+
+  return row;
+};
 
 export default function AdminPanel({ onExit, onAttendersChange }) {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -105,6 +184,7 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
             {activeTab === "dashboard" && <DashboardTab programs={programs} attenders={attenders} />}
             {activeTab === "monthly" && <MonthlyReportTab programs={programs} attenders={attenders} />}
             {activeTab === "programs" && <ProgramsTab programs={programs} attenders={attenders} onRefresh={refreshAll} />}
+            {activeTab === "import" && <ImportContacts programs={programs} onImportComplete={refreshAll} />}
             {activeTab === "attenders" && <AttendersTab attenders={attenders} programs={programs} onRefresh={refreshAll} />}
             {activeTab === "abhivyakti" && <AbhivyaktiTab programs={programs} />}
           </>
@@ -181,11 +261,12 @@ function DashboardTab({ programs, attenders }) {
       }
     });
     // Find first and last active hour to trim empty edges
-    const startIndex = map.findIndex(m => m.calls > 0) || 0;
-    // B7 fix: Replaced findLastIndex (ES2023) with manual loop for browser compatibility
+    // A1 fix: findIndex returns -1 when nothing found; don't coerce with || 0
+    const startIndex = map.findIndex(m => m.calls > 0);
+    // Browser-compatible replacement for findLastIndex (ES2023)
     let endIndex = 23;
     for (let i = map.length - 1; i >= 0; i--) { if (map[i].calls > 0) { endIndex = i; break; } }
-    if (startIndex === -1) return []; // No calls
+    if (startIndex === -1) return []; // No calls at all
     return map.slice(Math.max(0, startIndex - 1), Math.min(24, endIndex + 2));
   }, [filteredLogs]);
 
@@ -217,30 +298,7 @@ function DashboardTab({ programs, attenders }) {
       toast.error("No data to export for this selection.");
       return;
     }
-    const cleanData = filteredLogs.map(log => {
-      const { id, contactId, createdAt, updatedAt, _callbackDue, _deleted, history, isCallbackDue, isHotLead, callCount, ...rest } = log;
-      let createdStr = "";
-      if (createdAt) createdStr = createdAt.toDate ? createdAt.toDate().toLocaleString("en-IN") : new Date(createdAt).toLocaleString("en-IN");
-      let updatedStr = "";
-      if (updatedAt) updatedStr = updatedAt.toDate ? updatedAt.toDate().toLocaleString("en-IN") : new Date(updatedAt).toLocaleString("en-IN");
-      // Format history into a readable timeline string
-      let historyStr = "";
-      if (history && Array.isArray(history)) {
-        historyStr = history.map(h => `[${new Date(h.timestamp).toLocaleDateString("en-IN")}] ${h.attenderName}: ${h.status} - ${h.remark}`).join(" | ");
-      }
-
-      const nameKey = Object.keys(rest).find(k => k.toLowerCase() === "name" || k.toLowerCase().includes("caller") || k.toLowerCase().includes("khoji")) || "Name";
-      const nameVal = rest[nameKey] || "";
-      delete rest[nameKey];
-
-      return {
-        [nameKey]: nameVal,
-        ...rest,
-        "History Timeline": historyStr,
-        "Created At": createdStr,
-        "Last Updated": updatedStr,
-      };
-    });
+    const cleanData = filteredLogs.map(cleanExportRow);
     const ws = XLSX.utils.json_to_sheet(cleanData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Monthly Report");
@@ -504,6 +562,25 @@ function DashboardTab({ programs, attenders }) {
 }
 
 // ─── Programs Tab ─────────────────────────────
+// Standard mapping targets for the field mapping modal
+const STANDARD_TARGETS = ["Name", "Phone", "Email", "City", "Country", "Tags", "Source", "Called For", "Custom", "Ignore"];
+
+function getDefaultExcelMapping(colName) {
+  const c = colName.trim().toLowerCase();
+  if (["name", "caller", "caller name", "lead name", "lead", "name of caller", "first name", "last name", "contact name"].includes(c)) return "Name";
+  if (["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number", "cont no"].includes(c)) return "Phone";
+  if (["email", "mail", "e-mail", "email id", "emailaddress"].includes(c)) return "Email";
+  if (["city", "location", "khoji city", "place", "city name"].includes(c)) return "City";
+  if (["country", "nation"].includes(c)) return "Country";
+  if (["tags", "tag"].includes(c)) return "Tags";
+  if (["source", "sourse", "origin"].includes(c)) return "Source";
+  if (["called for", "called_for", "calledfor"].includes(c)) return "Called For";
+  if (["sub program", "subprogram", "sheet"].includes(c)) return "Ignore";
+  // Long survey questions → auto-ignore
+  if (colName.length > 40 || colName.includes("?") || colName.toLowerCase().includes("how ") || colName.toLowerCase().includes("enter ") || colName.toLowerCase().includes("please ")) return "Ignore";
+  return "Custom";
+}
+
 function ProgramsTab({ programs, attenders, onRefresh }) {
   const [newName, setNewName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -511,12 +588,24 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
   const [stats, setStats] = useState({});
   const [expandedProgram, setExpandedProgram] = useState(null);
   const [pendingUpload, setPendingUpload] = useState(null);
+  // Field mapping state (shared for new-upload and remap-existing flows)
+  const [mappingStep, setMappingStep] = useState(false);
+  const [remapProgram, setRemapProgram] = useState(null); // set when remapping existing program
+  const [columnMappings, setColumnMappings] = useState({});
+  const [skipEmptySettings, setSkipEmptySettings] = useState({});
+  const [excelColumns, setExcelColumns] = useState([]);
+  const [excelSampleRows, setExcelSampleRows] = useState({});
+  const [isRemapping, setIsRemapping] = useState(false);
 
   useEffect(() => {
-    programs.forEach(async p => {
-      const s = await getProgramContactStats(p.id);
-      setStats(prev => ({ ...prev, [p.id]: s }));
-    });
+    // P1 fix: use Promise.all instead of forEach(async) to handle errors and avoid fire-and-forget
+    Promise.all(programs.map(p => getProgramContactStats(p.id).then(s => ({ id: p.id, s }))))
+      .then(results => {
+        const next = {};
+        results.forEach(({ id, s }) => { next[id] = s; });
+        setStats(prev => ({ ...prev, ...next }));
+      })
+      .catch(err => console.error("Failed to load program stats:", err));
   }, [programs]);
 
   const handleCreate = async () => {
@@ -536,10 +625,16 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
   };
 
   const handleDelete = async (id, name) => {
-    if (!window.confirm(`Delete program "${name}"? This won't delete already-assigned contacts.`)) return;
-    await deleteProgram(id);
-    toast.success("Program deleted.");
-    onRefresh();
+    if (!window.confirm(`Delete program "${name}"?\n\n⚠️ Already-assigned contacts will become orphaned. Consider reassigning them first.`)) return;
+    // A3 fix: wrap in try/catch so errors are shown instead of silently dropped
+    try {
+      await deleteProgram(id);
+      toast.success("Program deleted.");
+      onRefresh();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to delete program: " + err.message);
+    }
   };
 
   const handleFileUpload = async (e, program) => {
@@ -559,36 +654,174 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
       } catch (err) {
         toast.error("Failed to parse Excel file.");
       }
-      e.target.value = null; // reset input
+      e.target.value = null;
     };
     reader.readAsBinaryString(file);
+  };
+
+  // Called after sheet selection is confirmed — scans columns and opens mapping modal
+  const handleOpenMappingStep = () => {
+    if (!pendingUpload || pendingUpload.selectedSheets.length === 0) return;
+    const { wb, selectedSheets } = pendingUpload;
+
+    // Collect all unique column names + sample values across selected sheets
+    const colSet = new Set();
+    const samples = {};
+    selectedSheets.forEach(sheetName => {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { raw: false, defval: "" });
+      rows.slice(0, 10).forEach(row => {
+        Object.entries(row).forEach(([col, val]) => {
+          if (col === "Sub Program") return;
+          colSet.add(col);
+          if (!samples[col]) samples[col] = [];
+          const strVal = String(val || "").trim();
+          if (strVal && samples[col].length < 3 && !samples[col].includes(strVal)) {
+            samples[col].push(strVal);
+          }
+        });
+      });
+    });
+
+    const cols = Array.from(colSet);
+    const initMappings = {};
+    const initSkipEmpty = {};
+    cols.forEach(col => {
+      initMappings[col] = getDefaultExcelMapping(col);
+      initSkipEmpty[col] = true; // skip empty by default
+    });
+
+    setExcelColumns(cols);
+    setExcelSampleRows(samples);
+    setColumnMappings(initMappings);
+    setSkipEmptySettings(initSkipEmpty);
+    setMappingStep(true);
+  };
+
+  // Open mapping dialog for an ALREADY-IMPORTED program
+  const handleOpenRemapDialog = async (program) => {
+    const toastId = toast.loading(`Loading contacts from "${program.name}"...`);
+    try {
+      const contacts = await getProgramChunkContacts(program.id);
+      if (!contacts.length) { toast.error("No contacts found in this program.", { id: toastId }); return; }
+
+      const SKIP_KEYS = ["_contactRefId", "_mappedFields", "normalizedPhone", "GHL_ID"];
+      const colSet = new Set();
+      const samples = {};
+
+      contacts.slice(0, 50).forEach(contact => {
+        Object.entries(contact).forEach(([col, val]) => {
+          if (SKIP_KEYS.includes(col) || col.startsWith("_")) return;
+          colSet.add(col);
+          if (!samples[col]) samples[col] = [];
+          const strVal = String(val || "").trim();
+          if (strVal && samples[col].length < 3 && !samples[col].includes(strVal)) {
+            samples[col].push(strVal);
+          }
+        });
+      });
+
+      const cols = Array.from(colSet);
+      const initMappings = {};
+      const initSkipEmpty = {};
+      cols.forEach(col => {
+        initMappings[col] = getDefaultExcelMapping(col);
+        initSkipEmpty[col] = true;
+      });
+
+      toast.dismiss(toastId);
+      setRemapProgram(program);
+      setExcelColumns(cols);
+      setExcelSampleRows(samples);
+      setColumnMappings(initMappings);
+      setSkipEmptySettings(initSkipEmpty);
+      setMappingStep(true);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to load contacts: " + err.message, { id: toastId });
+    }
+  };
+
+  // Apply remapping to existing program data
+  const handleConfirmRemap = async () => {
+    if (!remapProgram) return;
+    setIsRemapping(true);
+    setMappingStep(false);
+    try {
+      const count = await remapProgramContacts(remapProgram.id, columnMappings, skipEmptySettings);
+      toast.success(`Remapped ${count} contacts in "${remapProgram.name}"!`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Remap failed: " + err.message);
+    } finally {
+      setIsRemapping(false);
+      setRemapProgram(null);
+    }
   };
 
   const handleConfirmImport = async () => {
     if (!pendingUpload) return;
     setIsUploading(pendingUpload.program.id);
     const { program, wb, selectedSheets } = pendingUpload;
+    setMappingStep(false);
     setPendingUpload(null);
 
     try {
+      const mappedFieldsList = [];
+      Object.entries(columnMappings).forEach(([col, target]) => {
+        if (col === "Sub Program" || target === "Ignore") return;
+        mappedFieldsList.push(target === "Custom" ? col : target);
+      });
+      const uniqueMappedFields = Array.from(new Set(mappedFieldsList));
+
       let combinedJson = [];
       selectedSheets.forEach(sheetName => {
-        const json = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { raw: false, defval: "" });
-        const sheetJson = json.map(row => ({
-          ...row,
-          "Sub Program": sheetName // Append sub program identifier
-        }));
-        combinedJson = combinedJson.concat(sheetJson);
+        const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { raw: false, defval: "" });
+        const mappedRows = rawRows.map(row => {
+          const newRow = {};
+
+          uniqueMappedFields.forEach(f => {
+            newRow[f] = "";
+          });
+
+          // Always carry sub-program (sheet name)
+          newRow["Sub Program"] = sheetName;
+
+          Object.entries(row).forEach(([col, val]) => {
+            if (col === "Sub Program") return;
+            const target = columnMappings[col] ?? "Custom";
+            const skipEmpty = !!skipEmptySettings[col];
+            const strVal = String(val ?? "").trim();
+            if (skipEmpty && !strVal) return;
+            if (target === "Ignore") return;
+
+            if (target === "Custom") {
+              newRow[col] = strVal;
+            } else {
+              // Standard target (Name, Phone, Email, etc.)
+              if (newRow[target]) {
+                // Concatenate if already set (e.g. first+last name)
+                newRow[target] = `${newRow[target]} ${strVal}`.trim();
+              } else {
+                newRow[target] = strVal;
+              }
+            }
+          });
+
+          newRow._mappedFields = uniqueMappedFields;
+          return newRow;
+        });
+        combinedJson = combinedJson.concat(mappedRows);
       });
 
-      if (combinedJson.length === 0) { toast.error("Empty sheets selected!"); return; }
-      
+      if (combinedJson.length === 0) { toast.error("Empty sheets selected!"); setIsUploading(null); return; }
+
       const imported = await importContacts(program.id, program.name, combinedJson, selectedSheets);
       toast.success(`Imported ${imported} contacts into "${program.name}"!`);
       const s = await getProgramContactStats(program.id);
       setStats(prev => ({ ...prev, [program.id]: s }));
     } catch (err) {
-      toast.error("Import failed.");
+      console.error(err);
+      toast.error("Import failed: " + err.message);
     } finally {
       setIsUploading(null);
     }
@@ -652,13 +885,14 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
 
   return (
     <div className="relative">
-      {pendingUpload && (
+      {/* Step 1 — Sheet selector */}
+      {pendingUpload && !mappingStep && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(15, 23, 42, 0.7)', backdropFilter: 'blur(5px)' }}>
-          <div style={{ backgroundColor: '#fff', padding: '2rem', borderRadius: '1.5rem', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', width: '400px', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ backgroundColor: '#fff', padding: '2rem', borderRadius: '1.5rem', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', width: '420px', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
             <h3 className="text-xl font-black text-slate-800 mb-2">Select Sheets to Import</h3>
-            <p className="text-sm text-slate-500 mb-4">File contains {pendingUpload.sheetNames.length} sheet(s). Select the ones you want to add to <strong>{pendingUpload.program.name}</strong>.</p>
+            <p className="text-sm text-slate-500 mb-4">File contains {pendingUpload.sheetNames.length} sheet(s). Select the ones to add to <strong>{pendingUpload.program.name}</strong>.</p>
 
-            <div className="overflow-y-auto space-y-2 mb-6 pr-2 custom-scrollbar flex-1">
+            <div className="overflow-y-auto space-y-2 mb-6 pr-2 flex-1">
               {pendingUpload.sheetNames.map(sheet => (
                 <label key={sheet} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:bg-slate-50 cursor-pointer transition-colors">
                   <input
@@ -671,7 +905,7 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
                         selectedSheets: isChecked
                           ? [...prev.selectedSheets, sheet]
                           : prev.selectedSheets.filter(s => s !== sheet)
-                      }))
+                      }));
                     }}
                     className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
                   />
@@ -682,22 +916,182 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
 
             <div className="flex gap-3 mt-auto shrink-0">
               <button onClick={() => setPendingUpload(null)} className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200 transition">Cancel</button>
-              <button onClick={handleConfirmImport} disabled={pendingUpload.selectedSheets.length === 0} className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 disabled:opacity-50 transition">Import {pendingUpload.selectedSheets.length} Sheet(s)</button>
+              <button
+                onClick={handleOpenMappingStep}
+                disabled={pendingUpload.selectedSheets.length === 0}
+                className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
+              >
+                Next: Map Fields <ArrowRight size={14} />
+              </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Step 2 — Field mapping modal (same design as Lead Management tab) */}
+      {mappingStep && (pendingUpload || remapProgram) && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-150 animate-in zoom-in-95 duration-200">
 
-      {isUploading && (
+            {/* Header */}
+            <div className="px-8 py-5 border-b border-gray-100 flex justify-between items-center bg-slate-50 shrink-0">
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">Map Excel Columns</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Choose how Excel columns align with Dialer contact fields. Ignored columns will be skipped during import.
+                </p>
+              </div>
+              <button
+                onClick={() => setMappingStep(false)}
+                className="text-slate-400 hover:text-slate-700 p-2 hover:bg-gray-100 rounded-xl transition"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Table Area */}
+            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200 pb-3">
+                    <th className="pb-3 text-xs font-bold text-slate-500 uppercase tracking-wider w-1/4">Column in file</th>
+                    <th className="pb-3 text-xs font-bold text-slate-500 uppercase tracking-wider w-1/4">Sample values</th>
+                    <th className="pb-3 text-xs font-bold text-slate-500 uppercase tracking-wider w-1/8">Status</th>
+                    <th className="pb-3 text-xs font-bold text-slate-500 uppercase tracking-wider w-1/8">Object</th>
+                    <th className="pb-3 text-xs font-bold text-slate-500 uppercase tracking-wider w-1/4">Field</th>
+                    <th className="pb-3 text-xs font-bold text-slate-500 uppercase tracking-wider w-1/6 text-center">Update empty values</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {excelColumns.map(col => {
+                    const samples = excelSampleRows[col] || [];
+                    const target = columnMappings[col];
+                    const isMapped = target && target !== "Ignore";
+                    const skipEmpty = !!skipEmptySettings[col];
+                    return (
+                      <tr key={col} className="hover:bg-slate-50/50 transition-colors">
+                        {/* Column name */}
+                        <td className="py-4 pr-4 font-extrabold text-slate-700 text-sm align-top">{col}</td>
+
+                        {/* Sample values */}
+                        <td className="py-4 pr-4 text-xs text-slate-500 leading-relaxed align-top whitespace-pre-line font-medium">
+                          {samples.length > 0 ? (
+                            samples.map((s, idx) => (
+                              <div key={idx} className="truncate max-w-xs">{s}</div>
+                            ))
+                          ) : (
+                            <span className="text-gray-300 italic">No values</span>
+                          )}
+                        </td>
+
+                        {/* Status badge */}
+                        <td className="py-4 pr-4 align-top pt-5">
+                          {isMapped ? (
+                            <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase">
+                              <Check size={10} className="stroke-[3px]" /> Mapped
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 bg-gray-50 text-gray-500 border border-gray-200 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase">
+                              <X size={10} className="stroke-[3px]" /> Ignored
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Object */}
+                        <td className="py-4 pr-4 text-xs text-slate-500 font-bold align-top pt-5">Contact</td>
+
+                        {/* Field dropdown */}
+                        <td className="py-4 pr-4 align-top">
+                          <select
+                            value={target}
+                            onChange={e => setColumnMappings(prev => ({ ...prev, [col]: e.target.value }))}
+                            className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition shadow-sm"
+                          >
+                            <optgroup label="Standard Fields">
+                              <option value="Name">Name (Caller Name)</option>
+                              <option value="Phone">Phone</option>
+                              <option value="Email">Email</option>
+                              <option value="City">City</option>
+                              <option value="Country">Country</option>
+                              <option value="Tags">Tags</option>
+                              <option value="Source">Source</option>
+                              <option value="Called For">Called For</option>
+                              <option value="Date Added">Date Added</option>
+                            </optgroup>
+                            <optgroup label="Options">
+                              <option value="Custom">Keep as Custom Field</option>
+                              <option value="Ignore">Don't Import (Ignore)</option>
+                            </optgroup>
+                          </select>
+                        </td>
+
+                        {/* Skip empty checkbox */}
+                        <td className="py-4 text-center align-top pt-5">
+                          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={skipEmpty}
+                              onChange={e => setSkipEmptySettings(prev => ({ ...prev, [col]: e.target.checked }))}
+                              className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 transition cursor-pointer"
+                            />
+                            <span className="text-[11px] font-semibold text-slate-600">Skip empty values</span>
+                          </label>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer */}
+            <div className="px-8 py-5 border-t border-gray-100 flex justify-between bg-slate-50 shrink-0">
+              <button
+                onClick={() => { setMappingStep(false); if (remapProgram) setRemapProgram(null); }}
+                className="px-5 py-2.5 bg-gray-100 text-slate-700 rounded-xl font-bold text-xs hover:bg-gray-200 transition"
+              >
+                Back
+              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setMappingStep(false); setPendingUpload(null); setRemapProgram(null); }}
+                  className="px-5 py-2.5 text-slate-500 hover:text-slate-700 font-bold text-xs transition"
+                >
+                  Cancel
+                </button>
+                {remapProgram ? (
+                  <button
+                    onClick={handleConfirmRemap}
+                    className="px-6 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl font-black text-xs transition shadow-md shadow-violet-200 flex items-center gap-2"
+                  >
+                    <RefreshCw size={12} /> Apply Remapping
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleConfirmImport}
+                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-xs transition shadow-md shadow-blue-200 flex items-center gap-2"
+                  >
+                    <span>Import Now</span>
+                    <ArrowRight size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+
+      {(isUploading || isRemapping) && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(15, 23, 42, 0.7)', backdropFilter: 'blur(5px)' }}>
           <div style={{ backgroundColor: '#fff', padding: '2rem', borderRadius: '1.5rem', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '350px' }}>
-            <div style={{ width: '64px', height: '64px', borderRadius: '1rem', backgroundColor: '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem', position: 'relative', overflow: 'hidden' }}>
-              <Upload size={30} className="text-indigo-600 animate-bounce" />
+            <div style={{ width: '64px', height: '64px', borderRadius: '1rem', backgroundColor: isRemapping ? '#f5f3ff' : '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem', position: 'relative', overflow: 'hidden' }}>
+              {isRemapping ? <RefreshCw size={30} className="text-violet-600 animate-spin" /> : <Upload size={30} className="text-indigo-600 animate-bounce" />}
             </div>
-            <h3 className="text-xl font-black text-slate-800 mb-2">Uploading to Cloud</h3>
+            <h3 className="text-xl font-black text-slate-800 mb-2">{isRemapping ? "Applying Field Mapping" : "Uploading to Cloud"}</h3>
             <p className="text-sm text-slate-500 text-center flex flex-col items-center gap-2">
-              <span>Securely processing Excel data and writing chunks to Firebase...</span>
+              <span>{isRemapping ? "Rewriting field mapping across all contacts in Firestore..." : "Securely processing Excel data and writing chunks to Firebase..."}</span>
               <span className="text-indigo-500 font-bold flex items-center gap-2 mt-2">
                 <Loader size={12} className="animate-spin" /> Please don't close this tab
               </span>
@@ -752,6 +1146,15 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                    {/* Remap Fields button (for existing programs) */}
+                    <button
+                      onClick={() => handleOpenRemapDialog(p)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-bold cursor-pointer transition bg-violet-50 text-violet-600 hover:bg-violet-100"
+                      title="Remap the field columns for all existing contacts in this program"
+                    >
+                      <Columns size={15} /> Remap Fields
+                    </button>
+
                     {/* Download Master Excel button */}
                     <button
                       onClick={() => handleExportExcel(p)}
@@ -764,7 +1167,7 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
                     <label className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-bold cursor-pointer transition ${isUploading === p.id ? "bg-gray-100 text-gray-400" : "bg-indigo-50 text-indigo-600 hover:bg-indigo-100"}`}>
                       {isUploading === p.id ? <Loader size={15} className="animate-spin" /> : <Upload size={15} />}
                       {isUploading === p.id ? "Uploading..." : "Upload Excel"}
-                      <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e => handleFileUpload(e, p)} disabled={isUploading === p.id} />
+                      <input type="file" accept=".xlsx,.xls" className="hidden" onChange={e => handleFileUpload(e, p)} disabled={!!isUploading} />
                     </label>
                     <button onClick={() => handleDelete(p.id, p.name)} className="p-2 text-red-400 hover:bg-red-50 rounded-xl transition">
                       <Trash2 size={16} />
@@ -799,6 +1202,9 @@ function AttendersTab({ attenders, programs, onRefresh }) {
   const [viewLogs, setViewLogs] = useState([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [viewMonth, setViewMonth] = useState(""); // Admin month filter in sheet viewer
+  const [viewSearchQuery, setViewSearchQuery] = useState("");
+  const [viewSortBy, setViewSortBy] = useState("activityDesc");
+  const [viewFilterStatus, setViewFilterStatus] = useState("All");
 
   // Compute available months from viewLogs for the month picker
   const viewAvailableMonths = React.useMemo(() => {
@@ -808,6 +1214,23 @@ function AttendersTab({ attenders, programs, onRefresh }) {
       if (d) months.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
     });
     return Array.from(months).sort().reverse();
+  }, [viewLogs]);
+
+  // Compute duplicate phone map inside the selected program/attender queues to show "Same Person" tag
+  const adminDuplicatePhoneMap = React.useMemo(() => {
+    const map = {}; // programId -> { phone -> count }
+    viewLogs.forEach(l => {
+      const progId = l.programId || "incoming";
+      const keys = Object.keys(l);
+      const phoneKey = keys.find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno"].includes(k.toLowerCase()))
+        || keys.find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
+      const phone = phoneKey ? String(l[phoneKey] || "").replace(/[\s\-\.\(\)\+]/g, "").trim() : "";
+      if (phone) {
+        if (!map[progId]) map[progId] = {};
+        map[progId][phone] = (map[progId][phone] || 0) + 1;
+      }
+    });
+    return map;
   }, [viewLogs]);
 
   // Apply month and program filters
@@ -824,21 +1247,94 @@ function AttendersTab({ attenders, programs, onRefresh }) {
     if (viewProgramId) {
       logs = logs.filter(l => l.programId === viewProgramId);
     }
+    if (viewSearchQuery) {
+      const q = viewSearchQuery.toLowerCase();
+      logs = logs.filter(log => Object.values(log).join(" ").toLowerCase().includes(q));
+    }
+    if (viewFilterStatus !== "All") {
+      if (viewFilterStatus === "Hot Leads") {
+        logs = logs.filter(log => log.isHotLead);
+      } else if (viewFilterStatus === "Callback") {
+        logs = logs.filter(log => log.callbackDate);
+      } else if (viewFilterStatus === "Follow up") {
+        logs = logs.filter(log => log.callbackDate || log.status === "reminder" || log.status === "Next time");
+      } else if (viewFilterStatus === "Pending") {
+        // U4 fix: Pending = no status set at all
+        logs = logs.filter(log => !log.status);
+      } else if (viewFilterStatus === "Called") {
+        // U4 fix: Called = has any status (was actually called)
+        logs = logs.filter(log => !!log.status);
+      } else if (viewFilterStatus === "Callbacks Due") {
+        // U5 fix: Callbacks Due = has a callbackDate that is today or past
+        logs = logs.filter(log => log._callbackDue);
+      } else {
+        logs = logs.filter(log => log.status === viewFilterStatus);
+      }
+    }
     return logs;
-  }, [viewLogs, viewMonth, viewProgramId]);
+  }, [viewLogs, viewMonth, viewProgramId, viewSearchQuery, viewFilterStatus]);
+
+  const sortedViewLogs = React.useMemo(() => {
+    const list = [...filteredViewLogs];
+    list.sort((a, b) => {
+      // Keep overdue callbacks at the top
+      const aDue = a._callbackDue ? 1 : 0;
+      const bDue = b._callbackDue ? 1 : 0;
+      if (aDue !== bDue) return bDue - aDue;
+
+      if (viewSortBy === "nameAsc") {
+        const aKeys = Object.keys(a);
+        const bKeys = Object.keys(b);
+        const aNameKey = aKeys.find(k => k.toLowerCase() === "name" || k.toLowerCase().includes("caller") || k.toLowerCase().includes("khoji")) || "Name";
+        const bNameKey = bKeys.find(k => k.toLowerCase() === "name" || k.toLowerCase().includes("caller") || k.toLowerCase().includes("khoji")) || "Name";
+        const aName = String(a[aNameKey] || "").toLowerCase();
+        const bName = String(b[bNameKey] || "").toLowerCase();
+        return aName.localeCompare(bName);
+      } else if (viewSortBy === "createdDesc") {
+        const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : a.createdAt ? new Date(a.createdAt) : new Date(0);
+        const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : b.createdAt ? new Date(b.createdAt) : new Date(0);
+        return bDate - aDate;
+      } else {
+        // Default: activityDesc
+        const aDate = a.lastCalledAt ? new Date(a.lastCalledAt) : a.createdAt?.toDate ? a.createdAt.toDate() : a.createdAt ? new Date(a.createdAt) : new Date(0);
+        const bDate = b.lastCalledAt ? new Date(b.lastCalledAt) : b.createdAt?.toDate ? b.createdAt.toDate() : b.createdAt ? new Date(b.createdAt) : new Date(0);
+        return bDate - aDate;
+      }
+    });
+    return list;
+  }, [filteredViewLogs, viewSortBy]);
 
   const viewLogCols = React.useMemo(() => {
-    if (filteredViewLogs.length === 0) return [];
-    const internal = ["id", "contactId", "attenderId", "attenderName", "programId", "programName", "status", "remark", "callbackDate", "callType", "createdAt", "updatedAt", "_callbackDue", "_deleted", "isCallbackDue", "history", "isHotLead"];
-    return Array.from(new Set(filteredViewLogs.flatMap(l => Object.keys(l)).filter(k => !internal.includes(k) && !k.startsWith("_"))));
-  }, [filteredViewLogs]);
+    if (sortedViewLogs.length === 0) return [];
+    const internal = [
+      "id", "contactId", "attenderId", "attenderName", "programId", "programName",
+      "status", "remark", "callbackDate", "callType", "createdAt", "updatedAt",
+      "_callbackDue", "_deleted", "isCallbackDue", "history", "isHotLead",
+      "sub program", "subprogram", "ghl_id", "_contactrefid", "objectionreason"
+    ];
+    const order = ["name", "phone", "email", "city", "profession", "country", "tags", "khoji"];
+    return Array.from(new Set(sortedViewLogs.flatMap(l => Object.keys(l)).filter(k => !internal.includes(k.toLowerCase()) && !k.startsWith("_")))).sort((a, b) => {
+      const idxA = order.findIndex(o => a.toLowerCase().includes(o));
+      const idxB = order.findIndex(o => b.toLowerCase().includes(o));
+      const weightA = idxA !== -1 ? idxA : 100;
+      const weightB = idxB !== -1 ? idxB : 100;
+      if (weightA !== weightB) return weightA - weightB;
+      return a.localeCompare(b);
+    });
+  }, [sortedViewLogs]);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
-    await createAttender(newName.trim());
-    setNewName("");
-    toast.success("Attender added!");
-    onRefresh();
+    // A3 fix: try/catch so errors surface instead of silently failing
+    try {
+      await createAttender(newName.trim());
+      setNewName("");
+      toast.success("Attender added!");
+      onRefresh();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to add attender: " + err.message);
+    }
   };
 
   const handleToggleActive = async (attender) => {
@@ -849,9 +1345,15 @@ function AttendersTab({ attenders, programs, onRefresh }) {
 
   const handleDelete = async (id, name) => {
     if (!window.confirm(`Delete attender "${name}"?\n\n⚠️ WARNING: All call logs assigned to this attender will remain in the system but become orphaned. Consider reassigning their contacts to pool or another attender first.`)) return;
-    await deleteAttender(id);
-    toast.success("Attender removed.");
-    onRefresh();
+    // A3 fix: try/catch so errors surface
+    try {
+      await deleteAttender(id);
+      toast.success("Attender removed.");
+      onRefresh();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to delete attender: " + err.message);
+    }
   };
 
   const handleReassign = async (attender) => {
@@ -897,30 +1399,11 @@ function AttendersTab({ attenders, programs, onRefresh }) {
     return () => { if (viewUnsubRef.current) viewUnsubRef.current(); };
   }, []);
 
+
+
   const handleExportSheet = () => {
-    if (!filteredViewLogs.length) return;
-    const rows = filteredViewLogs.map(l => {
-      const { id, attenderId, contactId, history, _callbackDue, _deleted, isCallbackDue, isHotLead, callCount, ...rest } = l;
-      const r = { ...rest };
-      if (r.callbackDate?.toDate) r.callbackDate = r.callbackDate.toDate().toLocaleDateString("en-IN");
-      if (r.createdAt?.toDate) r.createdAt = r.createdAt.toDate().toLocaleString("en-IN");
-      if (r.updatedAt?.toDate) delete r.updatedAt;
-
-      let historyStr = "";
-      if (history && Array.isArray(history)) {
-        historyStr = history.map(h => `[${new Date(h.timestamp).toLocaleDateString("en-IN")}] ${h.attenderName}: ${h.status} - ${h.remark}`).join(" | ");
-      }
-
-      const nameKey = Object.keys(r).find(k => k.toLowerCase() === "name" || k.toLowerCase().includes("caller") || k.toLowerCase().includes("khoji")) || "Name";
-      const nameVal = r[nameKey] || "";
-      delete r[nameKey];
-
-      return {
-        [nameKey]: nameVal,
-        ...r,
-        "History Timeline": historyStr
-      };
-    });
+    if (!sortedViewLogs.length) return;
+    const rows = sortedViewLogs.map(cleanExportRow);
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Sheet");
@@ -1014,13 +1497,14 @@ function AttendersTab({ attenders, programs, onRefresh }) {
 
       {/* Sheet Viewer Modal */}
       {viewingAttender && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setViewingAttender(null)}>
+        // L2 fix: backdrop click uses handleCloseViewSheet (not setViewingAttender(null)) to properly cancel the Firestore listener
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={handleCloseViewSheet}>
           <div className="bg-white rounded-3xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-indigo-600 text-white shadow-lg shadow-indigo-600/20">
               <div>
                 <h3 className="font-black text-xl">{viewingAttender.name}'s Sheet</h3>
                 <p className="text-white/70 text-sm font-medium">
-                  {filteredViewLogs.length} entries
+                  {sortedViewLogs.length} entries
                   {viewMonth && ` · ${new Date(viewMonth + '-01').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}`}
                   {viewProgramId && ` · ${programs.find(p => p.id === viewProgramId)?.name}`}
                 </p>
@@ -1056,6 +1540,50 @@ function AttendersTab({ attenders, programs, onRefresh }) {
                 </button>
               </div>
             </div>
+
+            {/* Toolbar row */}
+            <div className="bg-gray-50 border-b border-gray-100 px-6 py-3 flex flex-wrap items-center gap-3">
+              {/* Search input */}
+              <div className="relative flex-1 min-w-[200px]">
+                <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search name, phone, city..."
+                  value={viewSearchQuery}
+                  onChange={e => setViewSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-1.5 bg-white border border-gray-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Status Filter */}
+              <select
+                value={viewFilterStatus}
+                onChange={e => setViewFilterStatus(e.target.value)}
+                className="px-3.5 py-1.5 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer"
+              >
+                <option value="All">All Statuses</option>
+                <option value="Pending">Pending (Never Called)</option>
+                <option value="Called">Called (Has Any Status)</option>
+                <option value="Interested">Interested</option>
+                <option value="Reg.Done">Reg.Done</option>
+                <option value="Callbacks Due">Callbacks Due</option>
+                <option value="Callback">Callback Set</option>
+                <option value="Follow up">Follow Up</option>
+                <option value="Hot Leads">Hot Leads</option>
+              </select>
+
+              {/* Sort By */}
+              <select
+                value={viewSortBy}
+                onChange={e => setViewSortBy(e.target.value)}
+                className="px-3.5 py-1.5 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer"
+              >
+                <option value="activityDesc">Sort by Last Call Date</option>
+                <option value="createdDesc">Sort by Date Imported</option>
+                <option value="nameAsc">Sort Alphabetically (Name)</option>
+              </select>
+            </div>
+
             <div className="flex-1 overflow-auto">
               {isLoadingLogs ? (
                 <div className="py-20 flex items-center justify-center"><Loader size={24} className="animate-spin text-indigo-500" /></div>
@@ -1075,7 +1603,7 @@ function AttendersTab({ attenders, programs, onRefresh }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {filteredViewLogs.map((log, i) => {
+                    {sortedViewLogs.map((log, i) => {
                       return (
                         <tr key={log.id} className="hover:bg-indigo-50/30 transition-colors">
                           <td className="px-4 py-3 text-gray-400 text-xs font-bold">{i + 1}</td>
@@ -1091,7 +1619,28 @@ function AttendersTab({ attenders, programs, onRefresh }) {
                           </td>
                           <td className="px-4 py-3"><span className={`text-[10px] font-black uppercase px-2 py-1 rounded-lg ${log.callType === "incoming" ? "bg-green-50 text-green-600" : "bg-slate-50 text-slate-500"}`}>{log.callType || "outgoing"}</span></td>
                           <td className="px-4 py-3 text-xs font-bold text-indigo-600 whitespace-nowrap">{log.programName || <span className="text-gray-300">—</span>}</td>
-                          {viewLogCols.map(c => { const v = log[c]; const display = (v && typeof v === "object") ? JSON.stringify(v) : (v || "\u2014"); return <td key={c} className="px-4 py-3 text-xs font-bold text-slate-700 whitespace-nowrap">{display}</td>; })}
+                          {viewLogCols.map(c => {
+                            const v = log[c];
+                            const display = (v && typeof v === "object") ? JSON.stringify(v) : (v || "\u2014");
+                            const isName = c.toLowerCase().includes("name") || c.toLowerCase().includes("lead");
+                            
+                            const keys = Object.keys(log);
+                            const phoneKey = keys.find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno"].includes(k.toLowerCase()))
+                              || keys.find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
+                            const phone = phoneKey ? String(log[phoneKey] || "").replace(/[\s\-\.\(\)\+]/g, "").trim() : "";
+                            const isDupInProg = isName && phone && adminDuplicatePhoneMap[log.programId || "incoming"]?.[phone] > 1;
+
+                            return (
+                              <td key={c} className="px-4 py-3 text-xs font-bold text-slate-700 whitespace-nowrap align-middle">
+                                {display}
+                                {isDupInProg && (
+                                  <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200">
+                                    Same Person
+                                  </span>
+                                )}
+                              </td>
+                            );
+                          })}
                           <td className="px-4 py-3 text-slate-500 text-xs max-w-[200px] truncate">{log.remark || "—"}</td>
                           <td className="px-4 py-3 text-xs font-bold text-amber-600">
                             {log.callbackDate?.toDate ? log.callbackDate.toDate().toLocaleDateString() : log.callbackDate || "—"}
@@ -1099,7 +1648,7 @@ function AttendersTab({ attenders, programs, onRefresh }) {
                         </tr>
                       );
                     })}
-                    {filteredViewLogs.length === 0 && <tr><td colSpan={15} className="py-20 text-center text-gray-400 font-bold">No entries found for this filter.</td></tr>}
+                    {sortedViewLogs.length === 0 && <tr><td colSpan={15} className="py-20 text-center text-gray-400 font-bold">No entries found for this filter.</td></tr>}
                   </tbody>
                 </table>
               )}
@@ -1115,6 +1664,7 @@ function AttendersTab({ attenders, programs, onRefresh }) {
 }
 
 // ─── Monthly Report Tab ──────────────────────
+// L3 fix: Synced exactly with AttenderView.jsx CONNECTED_STATUSES / NOT_CONNECTED_STATUSES
 const CONNECTED_STATUSES = ["Info given", "Interested", "Reg.Done", "reminder", "Query", "Already Reg.d", "Next time", "Shivir done", "Not possible"];
 const NOT_CONNECTED_STATUSES = ["NA", "Busy", "Call Cut", "switched off", "Invalid No", "Not interested", "Called by mistake", "no network", "wrong no.", "no answer"];
 
@@ -1220,7 +1770,8 @@ function MonthlyReportTab({ programs, attenders }) {
 
   useEffect(() => {
     if (unsubRef.current) unsubRef.current();
-    unsubRef.current = subscribeToAllCallLogs(null, (logs) => {
+    // A5 fix: pass "ALL" sentinel (not null) so subscribeToAllCallLogs fetches across all programs
+    unsubRef.current = subscribeToAllCallLogs("ALL", (logs) => {
       setCallLogs(logs.filter(l => !l._deleted));
     });
     return () => { if (unsubRef.current) unsubRef.current(); };
@@ -1392,9 +1943,22 @@ function MonthlyReportTab({ programs, attenders }) {
     // FIX #7: Complete no-answer list including Invalid No and wrong no.
     const NO_ANSWER_STATUSES = ["NA", "Busy", "Call Cut", "switched off", "no answer", "no network", "Invalid No", "wrong no."];
     const map = {};
+
+    // 1. Initialize for all attenders based on assigned contacts in monthLogs
+    monthLogs.forEach(l => {
+      const staff = l.attenderName || "Unknown";
+      if (!map[staff]) {
+        map[staff] = { staff, contacts: 0, attempts: 0, connected: 0, notConnected: 0, noAnswer: 0, infoGiven: 0, registrations: 0 };
+      }
+      map[staff].contacts++;
+    });
+
+    // 2. Aggregate attempts from allAttempts
     allAttempts.forEach(a => {
       const staff = a.attenderName || "Unknown";
-      if (!map[staff]) map[staff] = { staff, attempts: 0, connected: 0, notConnected: 0, noAnswer: 0, infoGiven: 0, registrations: 0 };
+      if (!map[staff]) {
+        map[staff] = { staff, contacts: 0, attempts: 0, connected: 0, notConnected: 0, noAnswer: 0, infoGiven: 0, registrations: 0 };
+      }
       map[staff].attempts++;
       if (CONNECTED_STATUSES.includes(a.status)) map[staff].connected++;
       else if (NOT_CONNECTED_STATUSES.includes(a.status)) map[staff].notConnected++;
@@ -1402,14 +1966,20 @@ function MonthlyReportTab({ programs, attenders }) {
       if (a.status === "Info given") map[staff].infoGiven++;
       if (a.status === "Reg.Done") map[staff].registrations++;
     });
+
     return Object.values(map)
       .sort((a, b) => b.attempts - a.attempts)
-      .map(m => ({
-        ...m,
-        connRate: m.attempts > 0 ? Math.round((m.connected / m.attempts) * 100) + '%' : '0%',
-        regRate: m.attempts > 0 ? Math.round((m.registrations / m.attempts) * 100) + '%' : '0%',
-      }));
-  }, [allAttempts]);
+      .map(m => {
+        const contacts = m.contacts || 0;
+        return {
+          ...m,
+          connRate: m.attempts > 0 ? Math.round((m.connected / m.attempts) * 100) + '%' : '0%',
+          regRate: m.attempts > 0 ? Math.round((m.registrations / m.attempts) * 100) + '%' : '0%',
+          perAssignConversion: contacts > 0 ? Math.round((m.registrations / contacts) * 100) + '%' : '0%',
+          callsPerAssign: contacts > 0 ? (m.attempts / contacts).toFixed(1) : '0.0',
+        };
+      });
+  }, [allAttempts, monthLogs]);
 
   // B) Day-wise Trend
   const dayWiseTrend = React.useMemo(() => {
@@ -1618,8 +2188,8 @@ function MonthlyReportTab({ programs, attenders }) {
       [],
       ["SECTION 4: DETAILED BREAKDOWNS"],
       [],
-      ["Attender Performance", "Attempts", "Contacts", "Connected", "Conn %", "Registrations", "Reg %"],
-      ...attenderPerformance.map(r => [r.staff, r.attempts, r.contacts, r.connected, r.connRate, r.registrations, r.regRate]),
+      ["Attender Performance", "Assigned Contacts", "Total Calls", "Calls/Assign", "Connected", "Conn %", "Registrations", "Reg %", "Per Assign Conversion"],
+      ...attenderPerformance.map(r => [r.staff, r.contacts, r.attempts, r.callsPerAssign, r.connected, r.connRate, r.registrations, r.regRate, r.perAssignConversion]),
       [],
       ["Program Wise Details", "Attempts", "Contacts", "Connected", "Conn %", "Registrations", "Reg %"],
       ...programWiseDetails.map(r => [r.program, r.attempts, r.contacts, r.connected, r.connRate, r.registrations, r.regRate]),
@@ -1676,13 +2246,14 @@ function MonthlyReportTab({ programs, attenders }) {
   // Attender totals footer
   const attTotals = attenderPerformance.length > 1
     ? attenderPerformance.reduce((acc, r) => ({
+      contacts: acc.contacts + (r.contacts || 0),
       attempts: acc.attempts + r.attempts,
       connected: acc.connected + r.connected,
       notConnected: acc.notConnected + r.notConnected,
       noAnswer: acc.noAnswer + r.noAnswer,
       infoGiven: acc.infoGiven + r.infoGiven,
       registrations: acc.registrations + r.registrations,
-    }), { attempts: 0, connected: 0, notConnected: 0, noAnswer: 0, infoGiven: 0, registrations: 0 })
+    }), { contacts: 0, attempts: 0, connected: 0, notConnected: 0, noAnswer: 0, infoGiven: 0, registrations: 0 })
     : null;
 
   return (
@@ -1694,22 +2265,21 @@ function MonthlyReportTab({ programs, attenders }) {
           <p className="text-slate-400 text-xs mt-0.5">Attempts = every call made &nbsp;·&nbsp; Contacts = each person's final status</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 p-1 bg-white border border-gray-200 rounded-xl shadow-sm overflow-x-auto max-w-[200px] md:max-w-md no-scrollbar">
-            <button
-              onClick={() => toggleProgram("ALL")}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all whitespace-nowrap ${selectedProgramIds.includes("ALL") ? "bg-slate-800 text-white shadow-sm" : "text-slate-400 hover:bg-gray-50"}`}
+          <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-1.5 shadow-sm shrink-0">
+            <FileSpreadsheet size={14} className="text-indigo-500 shrink-0" />
+            <select
+              value={selectedProgramIds.includes("ALL") ? "ALL" : selectedProgramIds[0] || "ALL"}
+              onChange={e => {
+                const val = e.target.value;
+                setSelectedProgramIds(val === "ALL" ? ["ALL"] : [val]);
+              }}
+              className="bg-transparent text-[11px] font-black text-indigo-700 focus:outline-none cursor-pointer min-w-[150px] md:min-w-[180px] pr-2 font-sans"
             >
-              ALL
-            </button>
-            {programs.map(p => (
-              <button
-                key={p.id}
-                onClick={() => toggleProgram(p.id)}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all whitespace-nowrap ${selectedProgramIds.includes(p.id) ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:bg-gray-50"}`}
-              >
-                {p.name.toUpperCase()}
-              </button>
-            ))}
+              <option value="ALL">ALL SHEETS</option>
+              {programs.map(p => (
+                <option key={p.id} value={p.id}>{p.name.toUpperCase()}</option>
+              ))}
+            </select>
           </div>
           <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
             className="px-3 py-2 bg-white border border-gray-200 rounded-xl font-bold text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
@@ -1796,9 +2366,10 @@ function MonthlyReportTab({ programs, attenders }) {
       <MonthlySection color="rose" id="sAbhivyakti" label="Section — Abhivyakti Info &amp; Reg Stats" badge="Info Given &amp; Registrations" onToggle={toggle} isOpen={openSections["sAbhivyakti"]}>
         <div className="grid grid-cols-3 gap-0 divide-x divide-gray-100">
           {[
-            { label: "Info Given", attempts: monthLogs.filter(l => l.status === "Info given").length, contacts: Array.from(new Set(monthLogs.filter(l => l.status === "Info given").map(l => l.phone))).length, color: "bg-blue-50 text-blue-700 border-blue-100" },
-            { label: "Interested", attempts: monthLogs.filter(l => l.status === "Interested").length, contacts: Array.from(new Set(monthLogs.filter(l => l.status === "Interested").map(l => l.phone))).length, color: "bg-purple-50 text-purple-700 border-purple-100" },
-            { label: "Reg.Done (Abhivyakti)", attempts: monthLogs.filter(l => l.status === "Reg.Done").length, contacts: Array.from(new Set(monthLogs.filter(l => l.status === "Reg.Done").map(l => l.phone))).length, color: "bg-emerald-50 text-emerald-700 border-emerald-100" },
+            // A4 fix: extract phone using normalised key search instead of l.phone (which is never the actual field name)
+            { label: "Info Given", attempts: monthLogs.filter(l => l.status === "Info given").length, contacts: Array.from(new Set(monthLogs.filter(l => l.status === "Info given").map(l => { const k = Object.keys(l).find(k => ["phone","mobile","whatsapp","phone number","whatsapp number","whatsappno"].includes(k.toLowerCase())) || Object.keys(l).find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile")); return k ? String(l[k] || "").trim() : l.id; }))).length, color: "bg-blue-50 text-blue-700 border-blue-100" },
+            { label: "Interested", attempts: monthLogs.filter(l => l.status === "Interested").length, contacts: Array.from(new Set(monthLogs.filter(l => l.status === "Interested").map(l => { const k = Object.keys(l).find(k => ["phone","mobile","whatsapp","phone number","whatsapp number","whatsappno"].includes(k.toLowerCase())) || Object.keys(l).find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile")); return k ? String(l[k] || "").trim() : l.id; }))).length, color: "bg-purple-50 text-purple-700 border-purple-100" },
+            { label: "Reg.Done (Abhivyakti)", attempts: monthLogs.filter(l => l.status === "Reg.Done").length, contacts: Array.from(new Set(monthLogs.filter(l => l.status === "Reg.Done").map(l => { const k = Object.keys(l).find(k => ["phone","mobile","whatsapp","phone number","whatsapp number","whatsappno"].includes(k.toLowerCase())) || Object.keys(l).find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile")); return k ? String(l[k] || "").trim() : l.id; }))).length, color: "bg-emerald-50 text-emerald-700 border-emerald-100" },
           ].map(s => (
             <div key={s.label} className={`${s.color} p-6 text-center border-b border-gray-100`}>
               <p className="text-[10px] font-black uppercase tracking-widest opacity-60">{s.label}</p>
@@ -1811,19 +2382,22 @@ function MonthlyReportTab({ programs, attenders }) {
 
       <MonthlySection color="indigo" id="s3" onToggle={toggle} isOpen={openSections["s3"]} label="Section 3 — Attender Performance" badge={attenderPerformance.length + ' attenders'}>
         <MonthlyTable
-          heads={['Attender', 'Total Calls', 'Connected', 'Conn %', 'No Answer', 'Info Given', 'Reg.Done', 'Reg %']}
+          heads={['Attender', 'Assigned Contacts', 'Total Calls', 'Calls/Assign', 'Connected', 'Conn %', 'No Answer', 'Info Given', 'Reg.Done', 'Reg %', 'Per Assign Conversion']}
           rows={attenderPerformance.map(r => [
-            r.staff, r.attempts, r.connected, r.connRate, r.noAnswer, r.infoGiven, r.registrations, r.regRate
+            r.staff, r.contacts, r.attempts, r.callsPerAssign, r.connected, r.connRate, r.noAnswer, r.infoGiven, r.registrations, r.regRate, r.perAssignConversion
           ])}
           footer={attTotals ? [
             'Grand Total',
+            attTotals.contacts,
             attTotals.attempts,
+            attTotals.contacts > 0 ? (attTotals.attempts / attTotals.contacts).toFixed(1) : '0.0',
             attTotals.connected,
             attTotals.attempts > 0 ? Math.round((attTotals.connected / attTotals.attempts) * 100) + '%' : '0%',
             attTotals.noAnswer,
             attTotals.infoGiven,
             attTotals.registrations,
             attTotals.attempts > 0 ? Math.round((attTotals.registrations / attTotals.attempts) * 100) + '%' : '0%',
+            attTotals.contacts > 0 ? Math.round((attTotals.registrations / attTotals.contacts) * 100) + '%' : '0%',
           ] : undefined}
         />
       </MonthlySection>

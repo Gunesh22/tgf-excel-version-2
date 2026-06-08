@@ -2,9 +2,76 @@ import {
   collection, addDoc, getDocs, getDoc, doc, setDoc,
   updateDoc, deleteDoc, query, where,
   serverTimestamp, writeBatch, onSnapshot,
-  limit, Timestamp, runTransaction, arrayUnion
+  limit, Timestamp, runTransaction, arrayUnion, orderBy,
+  deleteField
 } from "firebase/firestore";
 import { db } from "./firebase";
+
+// ─────────────────────────────────────────────
+// IGNORED FIELDS DEFINITIONS
+// ─────────────────────────────────────────────
+const IGNORED_FIELDS = [
+  "consent", "consent in hindi", "current date", "current_date",
+  "21day current date", "21day_current date", "21day challenge day", "21day_challenge_day",
+  "date added", "date_added", "program name", "razorpay", "program payment status",
+  "payment status", "payment event", "khoji status", "possibility",
+  "understand that this is an offline event and agree to attend in person",
+  "have completed 15 days of meditation nonstop without fail",
+  "confirm that i will definitely attend this event",
+  "acknowledgement",
+  "event startdate", "event type", "base amount",
+  "program_payment_status", "payment_status", "payment_event", "khoji_status",
+  "event_startdate", "event_type", "base_amount",
+  "d2e payment status", "d2e_payment_status", "total registrations", "total_registrations",
+  "organization type", "organization_type", "total number of registration", "total_number_of_registration",
+  "total number of registrations", "total_number_of_registrations",
+  "a serious business person", "form ai tools", "form_ai_tools",
+  "ai टूल से", "from ai tools", "aapne kaise convice kiya",
+  "actual online event count", "adhar card", "age", "your age",
+  "attended", "not attended-reason", "attendy", "attender",
+  "be 100% honest", "stopping you", "closed airport to venue",
+  "company", "consent in gujarati", "cont no", "mobile number",
+  "estimated budget", "event address", "event day", "event name", "event details",
+  "guest category", "guest designation", "guest email id", "guest name",
+  "have you done maha aasmani param gyan shivir", "how did you hear about us",
+  "how would you like to attend the retreat", "ioc-ppc", "incremental challenge day",
+  "khoji id", "khoji, new", "khoji/ new", "last run time",
+  "ma not possible reason", "mahaasmani", "middle name", "number of students",
+  "organization", "other video editing tool", "pan card number", "person - label",
+  "person - phone", "person - closed deals", "person - open deals", "person - next activity date",
+  "position/title", "position", "title", "profession", "profession details", "profession info",
+  "prog. feedback", "projected budget", "registration_count_group", "registration count group",
+  "school name", "select service", "shivir done", "shivir name", "shivir/event category",
+  "shivir_code", "source of information", "specialization", "specific month",
+  "tejasthan", "what is your tejstan/center name", "tell me briefly about your business",
+  "tentative date of the mini shivir", "the preferred language of the retreat",
+  "todays_date_25daychallenge", "todays date 25daychallenge", "type of the event",
+  "what are you looking to achieve or explore", "what do you want to get out of this call",
+  "what interests you the most about joining this retreat", "what is stopping you from hitting results",
+  "what is your time slot", "what makes you different from the other applications",
+  "whats the business", "whats your message", "when you want to attend the event",
+  "where will you attend the program", "which mini shivir did you attend",
+  "your area of living", "your city name", "your current monthly revenue",
+  "your health issues", "your message", "your selfless service is a gift",
+  "zone", "अन्य टूल", "other tool", "अपना प्रश्न यहाँ लिखें",
+  "आप कितने समय से अध्यात्म की खोज में हैं", "ग्राफ़िक डिजाइनिंग", "graphic designing",
+  "फोटोग्राफी और वीडियो शूटिंग", "photography & video shooting", "वीडियो एडिटिंग", "video editing",
+  "वेबसाइट और लैंडिंग पेज", "website & landing page",
+  "date", "content", "enter trainer name", "how would you like to attend the shivir", "how would you like to attend"
+];
+
+const isIgnoredField = (key) => {
+  if (!key) return true;
+  const k = key.toLowerCase().trim().replace(/_/g, " ");
+  return IGNORED_FIELDS.some(ignored => {
+    // Only allow substring matching for longer ignored terms,
+    // require exact match for short terms like "date" and "content" to prevent blocking valid fields like "Registration Date"
+    if (ignored === "date" || ignored === "content") {
+      return k === ignored;
+    }
+    return k === ignored || k.includes(ignored);
+  });
+};
 
 // ─────────────────────────────────────────────
 // PROGRAMS (Folders)
@@ -28,17 +95,396 @@ export const deleteProgram = async (id) => {
   await deleteDoc(doc(db, "programs", id));
 };
 
+// Read all contacts from all chunks of a program (for field-scanning before remapping)
+export const getProgramChunkContacts = async (programId) => {
+  const snap = await getDocs(collection(db, "programQueues", programId, "chunks"));
+  const allContacts = [];
+  snap.docs.forEach(d => {
+    const contacts = d.data().contacts || [];
+    contacts.forEach(c => allContacts.push(c));
+  });
+  return allContacts;
+};
+
+const getCaseInsensitiveProp = (obj, propName) => {
+  if (!obj) return { found: false };
+  if (obj[propName] !== undefined) return { found: true, key: propName, val: obj[propName] };
+  const keys = Object.keys(obj);
+  const matchingKey = keys.find(k => k.toLowerCase() === propName.toLowerCase());
+  if (matchingKey) {
+    return { found: true, key: matchingKey, val: obj[matchingKey] };
+  }
+  return { found: false };
+};
+
+// Apply a new field mapping to all contacts in all chunks of a program.
+// Also updates already assigned call logs for this program.
+// columnMappings: { originalColName: "Name"|"Phone"|...|"Custom"|"Ignore" }
+// skipEmptySettings: { originalColName: boolean }
+// Returns number of contacts updated.
+export const remapProgramContacts = async (programId, columnMappings, skipEmptySettings) => {
+  const snap = await getDocs(collection(db, "programQueues", programId, "chunks"));
+  const INTERNAL_KEYS = ["_contactRefId", "_mappedFields", "Sub Program", "GHL_ID", "normalizedPhone"];
+  let totalUpdated = 0;
+  const MAX_BATCH = 499;
+
+  const batchWriteOps = [];
+
+  const activeMappedFields = [];
+  Object.entries(columnMappings).forEach(([col, target]) => {
+    if (col === "Sub Program" || target === "Ignore") return;
+    activeMappedFields.push(target === "Custom" ? col : target);
+  });
+
+  snap.docs.forEach(chunkDoc => {
+    const rawContacts = chunkDoc.data().contacts || [];
+    const remappedContacts = rawContacts.map(contact => {
+      const newContact = {};
+      const contactMappedFields = [...activeMappedFields];
+
+      // Always carry system/meta keys untouched
+      INTERNAL_KEYS.forEach(k => {
+        const lookup = getCaseInsensitiveProp(contact, k);
+        if (lookup.found) {
+          newContact[lookup.key] = lookup.val;
+        }
+      });
+
+      // Initialize all activeMappedFields to "" by default
+      activeMappedFields.forEach(f => {
+        newContact[f] = "";
+      });
+
+      Object.entries(contact).forEach(([key, val]) => {
+        const isInternal = INTERNAL_KEYS.some(k => k.toLowerCase() === key.toLowerCase());
+        if (isInternal) return;
+
+        const mappingLookup = getCaseInsensitiveProp(columnMappings, key);
+        if (!mappingLookup.found) {
+          // Unknown col (not in mapping dialog) — keep as-is
+          newContact[key] = val;
+          const strVal = val === null || val === undefined ? "" : String(val).trim();
+          if (strVal) contactMappedFields.push(key);
+          return;
+        }
+
+        const canonicalKey = mappingLookup.key;
+        const target = mappingLookup.val;
+
+        const skipEmptyLookup = getCaseInsensitiveProp(skipEmptySettings, key);
+        const skipEmpty = skipEmptyLookup.found ? !!skipEmptyLookup.val : false;
+        const strVal = val === null || val === undefined ? "" : String(val).trim();
+
+        if (skipEmpty && !strVal) return;
+        if (target === "Ignore") return;
+
+        if (target === "Custom") {
+          newContact[canonicalKey] = strVal || val;
+        } else {
+          // Standard target
+          if (newContact[target]) {
+            newContact[target] = `${newContact[target]} ${strVal}`.trim();
+          } else {
+            newContact[target] = strVal || val;
+          }
+        }
+      });
+
+      newContact._mappedFields = Array.from(new Set(contactMappedFields));
+
+      // Re-compute normalizedPhone
+      const phoneVal = newContact.Phone || newContact["Cont No"] || newContact.phone || newContact.Number || newContact.Mobile || "";
+      newContact.normalizedPhone = normalizePhone(String(phoneVal));
+
+      return newContact;
+    });
+
+    batchWriteOps.push({
+      ref: chunkDoc.ref,
+      data: { contacts: remappedContacts }
+    });
+    totalUpdated += rawContacts.length;
+  });
+
+  // Query and update existing call logs for this program
+  const logsSnap = await getDocs(
+    query(collection(db, "callLogs"), where("programId", "==", programId))
+  );
+
+  const LOG_SYSTEM_KEYS = new Set([
+    "contactid", "programid", "programname", "attenderid", "attendername",
+    "calltype", "status", "remark", "callbackdate", "iscallbackdue",
+    "createdat", "updatedat", "history", "callbackstatus", "objectionreason",
+    "registeredat", "conversionsource", "convertedby", "_callbackdue", "_deleted", "_isnew",
+    "_contactrefid", "_mappedfields", "sub program", "subprogram", "ghl_id", "normalizedphone"
+  ]);
+
+  const STANDARD_FIELDS = new Set(["Name", "Phone", "Email", "City", "Country", "Tags", "Source", "Called For"]);
+
+  logsSnap.docs.forEach(logDoc => {
+    const logData = logDoc.data();
+    const logUpdate = {};
+    const logMappedFields = [...activeMappedFields];
+
+    // Initialize all active mapped fields to "" if not already present in logData (case-insensitive)
+    activeMappedFields.forEach(f => {
+      const lookup = getCaseInsensitiveProp(logData, f);
+      if (!lookup.found) {
+        logUpdate[f] = "";
+      }
+    });
+
+    Object.entries(logData).forEach(([key, val]) => {
+      const keyLower = key.toLowerCase();
+      if (LOG_SYSTEM_KEYS.has(keyLower)) return;
+
+      const mappingLookup = getCaseInsensitiveProp(columnMappings, key);
+      const strVal = val === null || val === undefined ? "" : String(val).trim();
+
+      if (!mappingLookup.found) {
+        // Keep standard fields in mapped fields
+        const isStandard = Array.from(STANDARD_FIELDS).some(f => f.toLowerCase() === keyLower);
+        if (isStandard) {
+          const canonicalStandard = Array.from(STANDARD_FIELDS).find(f => f.toLowerCase() === keyLower);
+          logMappedFields.push(canonicalStandard);
+        } else if (!isIgnoredField(key)) {
+          // Keep custom fields if they have value and are not ignored
+          if (strVal) {
+            logMappedFields.push(key);
+          }
+        }
+        return;
+      }
+
+      const canonicalKey = mappingLookup.key;
+      const target = mappingLookup.val;
+      const skipEmptyLookup = getCaseInsensitiveProp(skipEmptySettings, key);
+      const skipEmpty = skipEmptyLookup.found ? !!skipEmptyLookup.val : false;
+
+      if (target === "Ignore" || (skipEmpty && !strVal)) {
+        logUpdate[canonicalKey] = deleteField();
+        if (key !== canonicalKey) {
+          logUpdate[key] = deleteField();
+        }
+        const tField = target === "Custom" ? canonicalKey : target;
+        const idx = logMappedFields.indexOf(tField);
+        if (idx !== -1) logMappedFields.splice(idx, 1);
+        return;
+      }
+
+      if (target === "Custom") {
+        logUpdate[canonicalKey] = strVal || val;
+        if (key !== canonicalKey) {
+          logUpdate[key] = deleteField();
+        }
+      } else {
+        logUpdate[target] = strVal || val;
+        if (key !== target) {
+          logUpdate[key] = deleteField();
+        }
+      }
+    });
+
+    logUpdate._mappedFields = Array.from(new Set(logMappedFields));
+
+    // Recompute normalizedPhone safely (without evaluating Firestore delete field token)
+    const newPhoneLookup = getCaseInsensitiveProp(logUpdate, "Phone");
+    const oldPhoneLookup = getCaseInsensitiveProp(logData, "Phone");
+    let phoneVal = "";
+    if (newPhoneLookup.found && typeof newPhoneLookup.val === "string") {
+      phoneVal = newPhoneLookup.val;
+    } else if (oldPhoneLookup.found && typeof oldPhoneLookup.val === "string") {
+      phoneVal = oldPhoneLookup.val;
+    }
+    if (phoneVal) {
+      logUpdate.normalizedPhone = normalizePhone(String(phoneVal));
+    }
+
+    batchWriteOps.push({
+      ref: logDoc.ref,
+      data: logUpdate
+    });
+  });
+
+  // Commit in batches of MAX_BATCH
+  for (let i = 0; i < batchWriteOps.length; i += MAX_BATCH) {
+    const batch = writeBatch(db);
+    batchWriteOps.slice(i, i + MAX_BATCH).forEach(op => {
+      batch.update(op.ref, op.data);
+    });
+    await batch.commit();
+  }
+
+  return totalUpdated;
+};
+
+export const normalizePhone = (phone) => {
+  if (!phone) return "";
+  const cleaned = String(phone).replace(/[\s\-\.\(\)\+]/g, "").trim();
+  if (cleaned.length >= 10) {
+    return cleaned.slice(-10);
+  }
+  return cleaned;
+};
+
+
+// ─────────────────────────────────────────────
+// CONTACTS (MASTER POOL - CHUNKED FOR FREE TIER)
+// ─────────────────────────────────────────────
+
+const cleanImportRow = (row) => {
+  if (row._mappedFields && Array.isArray(row._mappedFields)) {
+    const clean = {
+      Name: "",
+      Phone: "",
+      Email: "",
+      City: "",
+      Country: "",
+      Tags: ""
+    };
+    if (row["Sub Program"] !== undefined) {
+      clean["Sub Program"] = row["Sub Program"];
+    }
+    if (row.GHL_ID !== undefined) {
+      clean.GHL_ID = row.GHL_ID;
+    }
+    row._mappedFields.forEach(field => {
+      clean[field] = row[field] !== undefined && row[field] !== null ? String(row[field]) : "";
+    });
+    clean._mappedFields = row._mappedFields;
+    
+    // Always ensure normalizedPhone is populated
+    const phoneVal = clean.Phone || clean["Cont No"] || clean.phone || clean.Number || clean.Mobile || "";
+    clean.normalizedPhone = normalizePhone(phoneVal);
+    
+    return clean;
+  }
+
+  const clean = {
+    Name: "",
+    Phone: "",
+    Email: "",
+    City: "",
+    Country: "",
+    Tags: ""
+  };
+  
+  if (row["Sub Program"] !== undefined) {
+    clean["Sub Program"] = row["Sub Program"];
+  }
+
+  const mappedFields = [];
+
+  // Parse standard fields (by matching lowercase keys)
+  Object.entries(row).forEach(([key, val]) => {
+    const k = key.trim().toLowerCase();
+    const strVal = val === null || val === undefined ? "" : String(val).trim();
+    if (!strVal) return;
+    
+    if (["name", "caller", "caller name", "lead name", "lead", "name of caller"].includes(k) || k === "first name" || k === "last name") {
+      if (k === "last name" && clean.Name) {
+        clean.Name = `${clean.Name} ${strVal}`.trim();
+      } else if (clean.Name) {
+        if (strVal.length > clean.Name.length) clean.Name = strVal;
+      } else {
+        clean.Name = strVal;
+      }
+      mappedFields.push("Name");
+    }
+    else if (["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"].includes(k)) {
+      clean.Phone = strVal;
+      mappedFields.push("Phone");
+    }
+    else if (["email", "mail", "e-mail", "email id", "emailaddress"].includes(k)) {
+      clean.Email = strVal;
+      mappedFields.push("Email");
+    }
+    else if (["city", "khoji city", "place", "city name"].includes(k)) {
+      clean.City = strVal;
+      mappedFields.push("City");
+    }
+    else if (["country", "nation"].includes(k)) {
+      clean.Country = strVal;
+      mappedFields.push("Country");
+    }
+    else if (["tags", "tag"].includes(k)) {
+      clean.Tags = strVal;
+      mappedFields.push("Tags");
+    }
+    else if (["source", "sourse"].includes(k)) {
+      clean.Source = strVal;
+      mappedFields.push("Source");
+    }
+    else if (["called for", "called_for", "calledfor"].includes(k)) {
+      clean["Called For"] = strVal;
+      mappedFields.push("Called For");
+    }
+  });
+
+  // Preserve all other custom fields as-is
+  const excludeKeys = [
+    "name", "caller", "caller name", "lead name", "lead", "name of caller", "first name", "last name",
+    "phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number",
+    "email", "mail", "e-mail", "email id", "emailaddress",
+    "city", "khoji city", "place", "city name",
+    "country", "nation", "tags", "tag", "sub program",
+    "source", "sourse", "called for", "called_for", "calledfor"
+  ];
+
+  Object.entries(row).forEach(([key, val]) => {
+    const k = key.trim().toLowerCase();
+    const strVal = val === null || val === undefined ? "" : String(val).trim();
+    
+    if (!excludeKeys.includes(k) && !key.startsWith("_")) {
+      if (!isIgnoredField(k) && strVal) {
+        clean[key] = strVal;
+        mappedFields.push(key);
+      }
+    }
+  });
+
+  if (mappedFields.length > 0) {
+    clean._mappedFields = Array.from(new Set(mappedFields));
+  }
+
+  // Always ensure normalizedPhone is populated
+  const phoneVal = clean.Phone || clean["Cont No"] || clean.phone || clean.Number || clean.Mobile || "";
+  clean.normalizedPhone = normalizePhone(phoneVal);
+
+  return clean;
+};
+
 // ─────────────────────────────────────────────
 // CONTACTS (MASTER POOL - CHUNKED FOR FREE TIER)
 // ─────────────────────────────────────────────
 export const importContacts = async (programId, programName, rows, subPrograms = null) => {
   // Free tier massively limits writes (20k/day).
-  // We chunk 500 contacts into a SINGLE document. 
+  // We chunk contacts into a SINGLE document up to 800 KB (maximum 500 contacts per chunk). 
   // An Excel sheet of 20,000 rows only uses 40 database writes!
-  const chunkSize = 500;
   const MAX_BATCH_OPS = 499; // L5 fix: Firebase limit is 500 ops per batch, reserve 1 for parent doc
+  const maxDocSizeBytes = 800000; // 800 KB limit for safety (Firestore doc limit is 1 MB)
+  const maxContactsPerChunk = 500;
   let imported = 0;
   const queueIndexOffset = Date.now();
+
+  // Load all existing callLogs for this program to check duplicates and merge fields
+  const logsSnap = await getDocs(
+    query(collection(db, "callLogs"), where("programId", "==", programId))
+  );
+  const assignedLogs = new Map(); // normalizedPhone -> { ref, data }
+  logsSnap.docs.forEach(d => {
+    const data = d.data();
+    if (data._deleted) return;
+    const phoneVal = data.Phone || data["Cont No"] || data.phone || data.Number || data.Mobile || "";
+    const norm = normalizePhone(phoneVal);
+    if (norm) {
+      assignedLogs.set(norm, { ref: d.ref, data });
+    }
+  });
+
+  // Track phone numbers processed in this import to prevent internal duplicates
+  const processedPhones = new Set();
+  const logsToUpdate = [];
 
   // Group rows by sub-program to prevent chunk starvation
   const rowsBySub = {};
@@ -48,29 +494,111 @@ export const importContacts = async (programId, programName, rows, subPrograms =
     rowsBySub[sp].push(r);
   });
 
-  // Build all chunk operations first
+  // Build all chunk operations first using dynamic size-based chunking
   const chunkOps = [];
   let rowOffset = 0;
   
   Object.keys(rowsBySub).forEach(sp => {
     const spRows = rowsBySub[sp];
-    for (let i = 0; i < spRows.length; i += chunkSize) {
-      const chunkRows = spRows.slice(i, i + chunkSize);
-      const formattedContacts = chunkRows.map((r, idx) => ({
-        ...r,
-        _contactRefId: `C_${queueIndexOffset}_${rowOffset + idx}`, // Unique virtual ID
-      }));
-      chunkOps.push({ 
-        chunkIndex: queueIndexOffset + rowOffset, 
-        subProgram: sp, // Tag the chunk
-        contacts: formattedContacts, 
-        count: chunkRows.length 
+    let currentChunkContacts = [];
+    let currentChunkSize = 0;
+
+    spRows.forEach((r, idx) => {
+      const cleaned = cleanImportRow(r);
+      const phoneVal = cleaned.Phone || cleaned["Cont No"] || cleaned.phone || cleaned.Number || cleaned.Mobile || "";
+      const norm = normalizePhone(phoneVal);
+
+      if (norm) {
+        // 1. If it's already assigned, update its fields and skip adding to chunk
+        if (assignedLogs.has(norm)) {
+          const existing = assignedLogs.get(norm);
+          const updatePayload = {};
+          let needsUpdate = false;
+
+          Object.entries(cleaned).forEach(([k, val]) => {
+            if (k.startsWith("_") && k !== "_mappedFields") return;
+            const strVal = val === null || val === undefined ? "" : String(val).trim();
+            if (!strVal) return;
+
+            const existingVal = existing.data[k] === null || existing.data[k] === undefined ? "" : String(existing.data[k]).trim();
+            if (!existingVal && strVal) {
+              updatePayload[k] = strVal;
+              needsUpdate = true;
+            }
+          });
+
+          // Merge _mappedFields metadata
+          const existingMapped = existing.data._mappedFields || [];
+          const contactMapped = cleaned._mappedFields || [];
+          const combinedMapped = Array.from(new Set([...existingMapped, ...contactMapped]));
+          if (combinedMapped.length > existingMapped.length) {
+            updatePayload._mappedFields = combinedMapped;
+            needsUpdate = true;
+          }
+
+          if (needsUpdate) {
+            logsToUpdate.push({ ref: existing.ref, data: updatePayload });
+            Object.assign(existing.data, updatePayload); // Update cache
+          }
+          return; // Skip adding to chunk queue
+        }
+
+        // 2. If it's a duplicate within the same Excel sheet, skip it
+        if (processedPhones.has(norm)) {
+          return;
+        }
+        processedPhones.add(norm);
+      }
+
+      const contactObj = {
+        ...cleaned,
+        _contactRefId: `C_${queueIndexOffset}_${rowOffset}`, // Unique virtual ID
+      };
+      rowOffset++;
+
+      const serializedLength = encodeURIComponent(JSON.stringify(contactObj)).length;
+
+      // Split chunk if it exceeds either size limit or max contact count
+      if (
+        currentChunkContacts.length > 0 && 
+        (currentChunkSize + serializedLength > maxDocSizeBytes || currentChunkContacts.length >= maxContactsPerChunk)
+      ) {
+        chunkOps.push({
+          chunkIndex: queueIndexOffset + (rowOffset - currentChunkContacts.length - 1),
+          subProgram: sp,
+          contacts: currentChunkContacts,
+          count: currentChunkContacts.length
+        });
+        currentChunkContacts = [contactObj];
+        currentChunkSize = serializedLength;
+      } else {
+        currentChunkContacts.push(contactObj);
+        currentChunkSize += serializedLength;
+      }
+    });
+
+    if (currentChunkContacts.length > 0) {
+      chunkOps.push({
+        chunkIndex: queueIndexOffset + (rowOffset - currentChunkContacts.length),
+        subProgram: sp,
+        contacts: currentChunkContacts,
+        count: currentChunkContacts.length
       });
-      rowOffset += chunkRows.length;
     }
   });
 
   // Split into multiple batches to respect Firebase's 500 ops/batch limit
+  // First, write the callLog updates
+  for (let i = 0; i < logsToUpdate.length; i += MAX_BATCH_OPS) {
+    const batch = writeBatch(db);
+    const slice = logsToUpdate.slice(i, i + MAX_BATCH_OPS);
+    slice.forEach(op => {
+      batch.update(op.ref, op.data);
+    });
+    await batch.commit();
+  }
+
+  // Second, write the queue chunks
   for (let batchStart = 0; batchStart < chunkOps.length; batchStart += MAX_BATCH_OPS) {
     const batch = writeBatch(db);
     const batchSlice = chunkOps.slice(batchStart, batchStart + MAX_BATCH_OPS);
@@ -139,22 +667,17 @@ export const getProgramContactStats = async (programId) => {
 // Global Duplicate Detection (Now checks ONLY assigned numbers and registrations, instead of the 50k queued chunk pool)
 export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
   if (!phone) return null;
-  const cleanPhone = String(phone).trim();
-  // L8 fix: Run ALL phone-field queries in parallel for ~5x speed improvement
-  const phoneFields = ["Phone", "Cont No", "Number", "Mobile", "phone number"];
-  const results = await Promise.allSettled(
-    phoneFields.map(field =>
-      getDocs(query(collection(db, "callLogs"), where(field, "==", cleanPhone)))
-    )
+  const norm = normalizePhone(phone);
+  if (!norm) return null;
+  const q = query(
+    collection(db, "callLogs"),
+    where("normalizedPhone", "==", norm)
   );
-  for (const result of results) {
-    if (result.status !== "fulfilled") continue;
-    const matches = result.value.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(d => d.contactId !== excludeContactId && d.id !== excludeContactId);
-    if (matches.length > 0) return matches[0];
-  }
-  return null;
+  const snap = await getDocs(q);
+  const matches = snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(d => d._deleted !== true && d.contactId !== excludeContactId && d.id !== excludeContactId);
+  return matches.length > 0 ? matches[0] : null;
 };
 
 // ─────────────────────────────────────────────
@@ -187,22 +710,7 @@ export const deleteAttender = async (id) => {
 // QUEUE — Assign N contacts to attender
 // ─────────────────────────────────────────────
 export const assignContactsToAttender = async (programId, programName, attenderId, attenderName, count, subProgramName = null) => {
-  // ⚠️ B1 KNOWN LIMITATION: The assignedPhones set is built before transactions.
-  // If two admins assign contacts simultaneously, the same contact could be assigned twice.
-  // A proper fix requires a server-side lock or an "isAssigned" field on each contact.
-  // 1. Pre-fetch ALL assigned phone numbers across all attenders to detect duplicates
-  const allLogsSnap = await getDocs(collection(db, "callLogs"));
-  const assignedPhones = new Set();
-  allLogsSnap.docs.forEach(d => {
-    const data = d.data();
-    if (data._deleted) return;
-    // Check common phone field names
-    const phone = data.Phone || data["Cont No"] || data.phone || data.Number || data.Mobile || data["phone number"] || "";
-    const cleaned = String(phone).replace(/[\s\-\.\(\)\+]/g, "").trim();
-    if (cleaned.length > 4) assignedPhones.add(cleaned);
-  });
-
-  // 2. Fetch chunks from the queue
+  // 1. Fetch chunks from the queue
   let q;
   if (subProgramName) {
     q = query(
@@ -222,22 +730,67 @@ export const assignContactsToAttender = async (programId, programName, attenderI
   const chunks = snap.docs.map(d => ({ id: d.id, ref: d.ref, data: d.data() }));
   chunks.sort((a, b) => (a.data.chunkIndex || 0) - (b.data.chunkIndex || 0));
 
+  // 2. Gather all phone numbers from the loaded chunks to check duplicate assignment
+  const chunkPhones = [];
+  chunks.forEach(chunk => {
+    const pool = chunk.data.contacts || [];
+    pool.forEach(contact => {
+      const phone = contact.Phone || contact["Cont No"] || contact.phone || contact.Number || contact.Mobile || "";
+      const norm = normalizePhone(phone);
+      if (norm) chunkPhones.push(norm);
+    });
+  });
+
+  const assignedLogs = new Map(); // normalizedPhone -> { ref, data }
+  if (chunkPhones.length > 0) {
+    // Slice into batches of 30 due to Firestore "in" query limitation
+    const batches = [];
+    const uniqueChunkPhones = Array.from(new Set(chunkPhones));
+    for (let i = 0; i < uniqueChunkPhones.length; i += 30) {
+      batches.push(uniqueChunkPhones.slice(i, i + 30));
+    }
+
+    const queries = batches.map(batch =>
+      getDocs(query(
+        collection(db, "callLogs"),
+        where("normalizedPhone", "in", batch)
+      ))
+    );
+
+    const snaps = await Promise.all(queries);
+    snaps.forEach(snap => {
+      snap.docs.forEach(doc => {
+        const data = doc.data();
+        if (data._deleted) return;
+        const norm = data.normalizedPhone;
+        if (norm) {
+          // Prefer storing/updating the callLog that matches the current programId
+          const existing = assignedLogs.get(norm);
+          if (!existing || data.programId === programId) {
+            assignedLogs.set(norm, { ref: doc.ref, data });
+          }
+        }
+      });
+    });
+  }
+
   let totalAssigned = 0;
   const now = Timestamp.now();
   let remainingNeed = count;
+  const sessionAssigned = new Set();
 
   for (const chunk of chunks) {
     if (remainingNeed <= 0) break;
 
-    await runTransaction(db, async (transaction) => {
+    const txResult = await runTransaction(db, async (transaction) => {
       const freshSnap = await transaction.get(chunk.ref);
-      if (!freshSnap.exists()) return;
+      if (!freshSnap.exists()) return 0;
 
       const freshData = freshSnap.data();
       const pool = freshData.contacts || [];
       if (pool.length === 0) {
         transaction.delete(chunk.ref);
-        return;
+        return 0;
       }
 
       // Filter out duplicates from the pool
@@ -250,18 +803,57 @@ export const assignContactsToAttender = async (programId, programName, attenderI
         }
 
         const phone = contact.Phone || contact["Cont No"] || contact.phone || contact.Number || contact.Mobile || "";
-        const cleaned = String(phone).replace(/[\s\-\.\(\)\+]/g, "").trim();
-        if (cleaned.length > 4 && assignedPhones.has(cleaned)) {
-          skipped.push(contact); // duplicate — skip
-        } else {
-          unique.push(contact);
+        const norm = normalizePhone(phone);
+        if (norm) {
+          // 1. If it's already assigned, discard from chunk and merge fields if matching current program
+          if (assignedLogs.has(norm)) {
+            const existing = assignedLogs.get(norm);
+            if (existing.data.programId === programId) {
+              const updatePayload = {};
+              let needsUpdate = false;
+
+              Object.entries(contact).forEach(([k, val]) => {
+                if (k.startsWith("_") && k !== "_mappedFields") return;
+                const strVal = val === null || val === undefined ? "" : String(val).trim();
+                if (!strVal) return;
+
+                const existingVal = existing.data[k] === null || existing.data[k] === undefined ? "" : String(existing.data[k]).trim();
+                if (!existingVal && strVal) {
+                  updatePayload[k] = strVal;
+                  needsUpdate = true;
+                }
+              });
+
+              // Merge _mappedFields metadata
+              const existingMapped = existing.data._mappedFields || [];
+              const contactMapped = contact._mappedFields || [];
+              const combinedMapped = Array.from(new Set([...existingMapped, ...contactMapped]));
+              if (combinedMapped.length > existingMapped.length) {
+                updatePayload._mappedFields = combinedMapped;
+                needsUpdate = true;
+              }
+
+              if (needsUpdate) {
+                transaction.update(existing.ref, updatePayload);
+                Object.assign(existing.data, updatePayload); // Update cache
+              }
+            }
+            continue; // Skip entirely (discarded from queue chunk leftovers)
+          }
+
+          // 2. If it was already assigned in this current batch run, discard from chunk leftovers
+          if (sessionAssigned.has(norm)) {
+            continue;
+          }
         }
+
+        unique.push(contact);
       }
 
       // Take what we need from unique contacts
       const takeCount = Math.min(remainingNeed, unique.length);
       const taken = unique.slice(0, takeCount);
-      const leftovers = [...unique.slice(takeCount), ...skipped]; // keep skipped for other programs
+      const leftovers = [...unique.slice(takeCount), ...skipped];
 
       if (leftovers.length === 0) {
         transaction.delete(chunk.ref);
@@ -272,7 +864,7 @@ export const assignContactsToAttender = async (programId, programName, attenderI
       // Create individual log rows for attender
       taken.forEach(contact => {
         const logRef = doc(collection(db, "callLogs"));
-        transaction.set(logRef, {
+        const payload = {
           contactId: contact._contactRefId || null,
           programId,
           programName,
@@ -280,7 +872,7 @@ export const assignContactsToAttender = async (programId, programName, attenderI
           attenderName,
           callType: "outgoing",
           ...Object.fromEntries(
-            Object.entries(contact).filter(([k]) => !k.startsWith("_"))
+            Object.entries(contact).filter(([k]) => !k.startsWith("_") || k === "_mappedFields")
           ),
           status: "",
           remark: "",
@@ -288,16 +880,30 @@ export const assignContactsToAttender = async (programId, programName, attenderI
           isCallbackDue: false,
           createdAt: now,
           updatedAt: now,
-        });
-        // Add to set so subsequent chunks don't re-assign
-        const ph = contact.Phone || contact["Cont No"] || contact.phone || "";
-        const cl = String(ph).replace(/[\s\-\.\(\)\+]/g, "").trim();
-        if (cl.length > 4) assignedPhones.add(cl);
+        };
+        const phoneVal = payload.Phone || payload["Cont No"] || payload.phone || payload.Number || payload.Mobile || "";
+        const normVal = normalizePhone(phoneVal);
+        payload.normalizedPhone = normVal;
+
+        if (subProgramName) {
+          payload["Sub Program"] = subProgramName;
+          payload["subProgram"] = subProgramName;
+        }
+        transaction.set(logRef, payload);
+        
+        if (normVal) {
+          sessionAssigned.add(normVal);
+        }
       });
 
-      totalAssigned += takeCount;
-      remainingNeed -= takeCount;
+      // Return the count so mutation happens OUTSIDE the transaction callback
+      // (transaction callbacks can be retried, mutating outer vars inside would double-count)
+      return takeCount;
     });
+
+    // Safe to mutate here — outside the retryable transaction body
+    totalAssigned += txResult || 0;
+    remainingNeed -= txResult || 0;
   }
 
   return totalAssigned;
@@ -309,19 +915,18 @@ export const assignContactsToAttender = async (programId, programName, attenderI
 
 // Real-time subscription — queries by attenderId only (month-scoped on client)
 export const subscribeToCallLogs = (attenderId, callback) => {
+  // No limit here — limiting without orderBy causes newly assigned contacts
+  // to fall outside the window and never appear in the snapshot.
   const q = query(
     collection(db, "callLogs"),
     where("attenderId", "==", attenderId)
   );
   return onSnapshot(q, snap => {
     const logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // Sort: callback due today/overdue first (red), then rest
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
     const overdue = [];
     const rest = [];
-
     logs.forEach(log => {
       if (log.callbackDate) {
         const cbDate = log.callbackDate.toDate ? log.callbackDate.toDate() : new Date(log.callbackDate);
@@ -333,13 +938,30 @@ export const subscribeToCallLogs = (attenderId, callback) => {
       }
       rest.push(log);
     });
-
     callback([...overdue, ...rest]);
   });
 };
 
 export const updateCallLog = async (logId, updates, contactId = null) => {
   const logRef = doc(db, "callLogs", logId);
+  
+  let previousStatus = "";
+  try {
+    const logSnap = await getDoc(logRef);
+    if (logSnap.exists()) {
+      previousStatus = logSnap.data().status || "";
+    }
+  } catch (e) {
+    console.warn("Failed to fetch previous status", e);
+  }
+
+  // Update normalizedPhone if phone field is modified
+  const phoneFields = ["Phone", "Cont No", "Number", "Mobile", "phone number", "phone", "whatsapp"];
+  const updatedPhoneKey = Object.keys(updates).find(k => phoneFields.includes(k) || k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile"));
+  if (updatedPhoneKey) {
+    updates.normalizedPhone = normalizePhone(updates[updatedPhoneKey]);
+  }
+
   // Using setDoc with merge instead of updateDoc bypasses Firebase FieldPath validation, 
   // allowing us to save keys with slashes/dots like "Khoji/ New" from Excel files without crashing.
   await setDoc(logRef, { ...updates, updatedAt: serverTimestamp() }, { merge: true });
@@ -391,6 +1013,13 @@ export const updateCallLog = async (logId, updates, contactId = null) => {
       console.error("Registration write failed:", e);
       // NOTE: Errors here are tracked but shouldn't fail the initial save
     }
+  } else if (previousStatus === "Reg.Done" && updates.status && updates.status !== "Reg.Done") {
+    try {
+      await deleteDoc(doc(db, "registrations", logId));
+      console.log("🗑️ Reverted registration deleted for log:", logId);
+    } catch (e) {
+      console.error("Registration deletion failed on revert:", e);
+    }
   }
 };
 
@@ -415,6 +1044,9 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
     updatedAt: serverTimestamp(),
     ...data,
   };
+
+  const phoneVal = logData.Phone || logData["Cont No"] || logData.phone || logData.Number || logData.Mobile || "";
+  logData.normalizedPhone = normalizePhone(phoneVal);
 
   const docRef = await addDoc(collection(db, "callLogs"), logData);
 
@@ -481,13 +1113,37 @@ export const reassignContactsToPool = async (attenderId, programId) => {
     leftoverContacts.push(rawContact);
   }
 
-  // Push the unworked records back into the queue collection as a fresh chunk
+  // Push the unworked records back into the queue collection as fresh chunks
   if (leftoverContacts.length > 0) {
-    const ref = doc(collection(db, "programQueues", programId, "chunks"));
-    batch.set(ref, {
-      chunkIndex: Date.now(), // High index puts it at the back of the queue
-      contacts: leftoverContacts
+    const maxDocSizeBytes = 800000; // 800 KB limit for safety
+    let currentChunkContacts = [];
+    let currentChunkSize = 0;
+    const chunkIndexOffset = Date.now();
+
+    leftoverContacts.forEach((contactObj, idx) => {
+      const serializedLength = encodeURIComponent(JSON.stringify(contactObj)).length;
+
+      if (currentChunkContacts.length > 0 && currentChunkSize + serializedLength > maxDocSizeBytes) {
+        const ref = doc(collection(db, "programQueues", programId, "chunks"));
+        batch.set(ref, {
+          chunkIndex: chunkIndexOffset + idx,
+          contacts: currentChunkContacts
+        });
+        currentChunkContacts = [contactObj];
+        currentChunkSize = serializedLength;
+      } else {
+        currentChunkContacts.push(contactObj);
+        currentChunkSize += serializedLength;
+      }
     });
+
+    if (currentChunkContacts.length > 0) {
+      const ref = doc(collection(db, "programQueues", programId, "chunks"));
+      batch.set(ref, {
+        chunkIndex: chunkIndexOffset + leftoverContacts.length,
+        contacts: currentChunkContacts
+      });
+    }
   }
 
   await batch.commit();

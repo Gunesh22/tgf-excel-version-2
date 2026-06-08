@@ -5,11 +5,11 @@ import {
   Phone, ArrowLeft, Plus, Download, Search, ChevronLeft, ChevronRight,
   Edit3, X, Save, FileText, Calendar, Tag, User, MapPin, MessageSquare,
   Hash, Check, Clock, PhoneOff, CheckCircle2, AlertCircle, Trash2,
-  PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame, SlidersHorizontal,
+  PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame, SlidersHorizontal, FileSpreadsheet, CheckSquare
 } from "lucide-react";
 import {
   subscribeToCallLogs, updateCallLog, addIncomingCallLog,
-  assignContactsToAttender, getPrograms
+  assignContactsToAttender, getPrograms, normalizePhone
 } from "../../../lib/db";
 
 const STATUS_OPTIONS = [
@@ -35,13 +35,131 @@ const CALLED_FOR_OPTIONS = [
 
 const CALL_TYPE_OPTIONS = ["outgoing", "incoming", "outgoing f", "incoming f"];
 
+const CONNECTED_STATUSES = ["Info given", "Interested", "Reg.Done", "reminder", "Query", "Already Reg.d", "Next time", "Shivir done", "Not possible"];
+const NOT_CONNECTED_STATUSES = ["NA", "Busy", "Call Cut", "switched off", "Invalid No", "Not interested", "Called by mistake", "no network", "wrong no.", "no answer"];
+
 const DEFAULT_COLUMNS = ["Name", "Phone", "Source", "City", "Called For", "Call Type", "Status", "Remark", "Callback Date"];
+
+import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from "recharts";
+
+const IGNORED_FIELDS = [
+  "consent", "consent in hindi", "current date", "current_date",
+  "21day current date", "21day_current date", "21day challenge day", "21day_challenge_day",
+  "date added", "date_added", "program name", "razorpay", "program payment status",
+  "payment status", "payment event", "khoji status", "possibility",
+  "understand that this is an offline event and agree to attend in person",
+  "have completed 15 days of meditation nonstop without fail",
+  "confirm that i will definitely attend this event",
+  "acknowledgement",
+  "event startdate", "event type", "base amount",
+  "program_payment_status", "payment_status", "payment_event", "khoji_status",
+  "event_startdate", "event_type", "base_amount",
+  "d2e payment status", "d2e_payment_status", "total registrations", "total_registrations",
+  "organization type", "organization_type", "total number of registration", "total_number_of_registration",
+  "total number of registrations", "total_number_of_registrations",
+  "a serious business person", "form ai tools", "form_ai_tools",
+  "ai टूल से", "from ai tools", "aapne kaise convice kiya",
+  "actual online event count", "adhar card", "age", "your age",
+  "attended", "not attended-reason", "attendy", "attender",
+  "be 100% honest", "stopping you", "closed airport to venue",
+  "company", "consent in gujarati", "cont no", "mobile number",
+  "estimated budget", "event address", "event day", "event name", "event details",
+  "guest category", "guest designation", "guest email id", "guest name",
+  "have you done maha aasmani param gyan shivir", "how did you hear about us",
+  "how would you like to attend the retreat", "ioc-ppc", "incremental challenge day",
+  "khoji id", "khoji, new", "khoji/ new", "last run time",
+  "ma not possible reason", "mahaasmani", "middle name", "number of students",
+  "organization", "other video editing tool", "pan card number", "person - label",
+  "person - phone", "person - closed deals", "person - open deals", "person - next activity date",
+  "position/title", "position", "title", "profession", "profession details", "profession info",
+  "prog. feedback", "projected budget", "registration_count_group", "registration count group",
+  "school name", "select service", "shivir done", "shivir name", "shivir/event category",
+  "shivir_code", "source of information", "specialization", "specific month",
+  "tejasthan", "what is your tejstan/center name", "tell me briefly about your business",
+  "tentative date of the mini shivir", "the preferred language of the retreat",
+  "todays_date_25daychallenge", "todays date 25daychallenge", "type of the event",
+  "what are you looking to achieve or explore", "what do you want to get out of this call",
+  "what interests you the most about joining this retreat", "what is stopping you from hitting results",
+  "what is your time slot", "what makes you different from the other applications",
+  "whats the business", "whats your message", "when you want to attend the event",
+  "where will you attend the program", "which mini shivir did you attend",
+  "your area of living", "your city name", "your current monthly revenue",
+  "your health issues", "your message", "your selfless service is a gift",
+  "zone", "अन्य टूल", "other tool", "अपना प्रश्न यहाँ लिखें",
+  "आप कितने समय से अध्यात्म की खोज में हैं", "ग्राफ़िक डिजाइनिंग", "graphic designing",
+  "फोटोग्राफी और वीडियो शूटिंग", "photography & video shooting", "वीडियो एडिटिंग", "video editing",
+  "वेबसाइट और लैंडिंग पेज", "website & landing page",
+  "date", "content", "enter trainer name", "how would you like to attend the shivir", "how would you like to attend"
+];
+
+const isIgnoredField = (key) => {
+  if (!key) return true;
+  const k = key.toLowerCase().trim().replace(/_/g, " ");
+  return IGNORED_FIELDS.some(ignored => {
+    // Only allow substring matching for longer ignored terms,
+    // require exact match for short terms like "date" and "content" to prevent blocking valid fields like "Registration Date"
+    if (ignored === "date" || ignored === "content") {
+      return k === ignored;
+    }
+    return k === ignored || k.includes(ignored);
+  });
+};
 
 // ─── Edit Modal ───────────────────────────────
 const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose }) => {
-  const [edited, setEdited] = useState({
-    ...row,
-    remark: (row.history && row.history.length > 0) ? "" : (row.remark || ""),
+  const [edited, setEdited] = useState(() => {
+    const normalized = { ...row };
+    
+    // Normalize alternate spellings first to avoid duplicates or missing fields
+    const sourceAliases = ["source", "sourse"];
+    const calledForAliases = ["called for", "called_for", "calledfor"];
+    
+    let sourceVal = "";
+    let sourceKeyToClean = null;
+    Object.keys(normalized).forEach(k => {
+      if (sourceAliases.includes(k.toLowerCase())) {
+        if (normalized[k]) {
+          sourceVal = normalized[k];
+        }
+        sourceKeyToClean = k;
+      }
+    });
+    if (sourceKeyToClean) {
+      delete normalized[sourceKeyToClean];
+    }
+    normalized["Source"] = sourceVal;
+
+    let calledForVal = "";
+    let calledForKeyToClean = null;
+    Object.keys(normalized).forEach(k => {
+      if (calledForAliases.includes(k.toLowerCase())) {
+        if (normalized[k]) {
+          calledForVal = normalized[k];
+        }
+        calledForKeyToClean = k;
+      }
+    });
+    if (calledForKeyToClean) {
+      delete normalized[calledForKeyToClean];
+    }
+    normalized["Called For"] = calledForVal;
+
+    const whitelist = ["Name", "Phone", "Email", "City", "Country", "Tags", "Source", "Called For"];
+    whitelist.forEach(col => {
+      if (normalized[col] === undefined || normalized[col] === null) {
+        const foundKey = Object.keys(normalized).find(k => k.toLowerCase() === col.toLowerCase());
+        if (foundKey) {
+          normalized[col] = normalized[foundKey];
+          if (foundKey !== col) delete normalized[foundKey];
+        } else {
+          normalized[col] = "";
+        }
+      }
+    });
+    return {
+      ...normalized,
+      remark: (row.history && row.history.length > 0) ? "" : (row.remark || ""),
+    };
   });
   const [saving, setSaving] = useState(false);
   const [globalDup, setGlobalDup] = useState(null);
@@ -50,36 +168,52 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
 
   // Identify fields from the contact that aren't internal bookkeeping fields
   const dynamicFields = useMemo(() => {
-    const internal = [
-      "id", "contactid", "attenderid", "attendername", "programid", "programname",
-      "status", "remark", "callbackdate", "calltype", "createdat", "updatedat",
-      "_callbackdue", "_deleted", "iscallbackdue", "ishotlead", "registeredat",
-      "type", "callback", "call type", "call_type", "followup", "followup date"
+    const standardOrder = ["Name", "Phone", "Email", "City", "Country", "Tags", "Source", "Called For"];
+    const internalKeys = [
+      "id", "contactId", "programId", "programName", "attenderId", "attenderName",
+      "callType", "status", "remark", "callbackDate", "callbackStatus", "isCallbackDue",
+      "isHotLead", "createdAt", "updatedAt", "lastCalledAt", "firstCalledAt", "history",
+      "_callbackDue", "_deleted", "_isNew", "registeredAt", "conversionSource", "convertedBy",
+      "GHL_ID", "Sub Program", "subProgram", "objectionReason"
     ];
-    let keys = Object.keys(row).filter(k => !internal.includes(k.toLowerCase()) && !k.startsWith("_"));
 
-    // GUARANTEE Standard Fields appear so user can type them in if missing
-    // NOTE: 'Remark' is intentionally omitted here because it has a dedicated textarea below.
-    const standardKeys = ["Name", "Phone", "City", "Source", "Called For"];
-    standardKeys.forEach(sk => {
-      const hasMatch = keys.some(k => k.toLowerCase().includes(sk.toLowerCase()) ||
-        (sk === "Phone" && (k.toLowerCase().includes("cont") || k.toLowerCase().includes("number"))) ||
-        (sk === "City" && (k.toLowerCase().includes("khoji") || k.toLowerCase().includes("location")))
-      );
-      if (!hasMatch) {
-        keys.push(sk);
+    const contactKeys = Object.keys(edited).filter(k => {
+      if (internalKeys.includes(k)) return false;
+      if (k.startsWith("_")) return false;
+      
+      // Always show standard fields
+      if (standardOrder.includes(k)) return true;
+
+      // If the contact has recorded mapped fields list, only allow if explicitly mapped.
+      if (edited._mappedFields && Array.isArray(edited._mappedFields)) {
+        return edited._mappedFields.includes(k);
       }
+
+      if (isIgnoredField(k)) return false;
+      
+      // Only show other fields if they have a non-empty, non-dummy value
+      const val = edited[k];
+      if (val === null || val === undefined) return false;
+      const strVal = String(val).trim();
+      if (!strVal) return false;
+      
+      const lowerVal = strVal.toLowerCase();
+      if (["none", "n/a", "null", "undefined", "false"].includes(lowerVal)) return false;
+      
+      return true;
     });
 
-    return keys.sort((a, b) => {
-      const aLower = a.toLowerCase();
-      const bLower = b.toLowerCase();
-      const weightA = (aLower.includes("name") || aLower.includes("lead")) ? 1 : (aLower.includes("phone") || aLower.includes("cont") || aLower.includes("number")) ? 2 : aLower.includes("city") ? 3 : 4;
-      const weightB = (bLower.includes("name") || bLower.includes("lead")) ? 1 : (bLower.includes("phone") || bLower.includes("cont") || bLower.includes("number")) ? 2 : bLower.includes("city") ? 3 : 4;
-      if (weightA !== weightB) return weightA - weightB;
+    const sortedKeys = [...contactKeys].sort((a, b) => {
+      const idxA = standardOrder.indexOf(a);
+      const idxB = standardOrder.indexOf(b);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
       return a.localeCompare(b);
     });
-  }, [row]);
+
+    return sortedKeys;
+  }, [edited]);
 
   // Debounced duplicate check — only on phone value change, not every keystroke
   const dupTimerRef = useRef(null);
@@ -90,11 +224,12 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
     if (!phoneVal || phoneVal.length < 5) { setGlobalDup(null); return; }
     dupTimerRef.current = setTimeout(() => {
       import("../../../lib/db").then(({ checkGlobalDuplicate }) => {
-        checkGlobalDuplicate(phoneVal, edited.contactId).then(setGlobalDup);
+        checkGlobalDuplicate(phoneVal, edited.contactId || row.id).then(setGlobalDup);
       });
     }, 1000);
     return () => { if (dupTimerRef.current) clearTimeout(dupTimerRef.current); };
-  }, [edited, edited.contactId]);
+  }, [edited]);
+  // A7 fix: used `edited` not `edited.contactId` so dep is correct; fallback to row.id prevents self-match on undefined contactId
 
   // Identity helpers
   const getLogName = () => {
@@ -193,11 +328,12 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
     }
   };
 
-  // X / backdrop / ESC
-  // B2 fix: removed duplicate onClose() — handleSaveAndClose already calls onClose() on success
-  // B3 fix: use ref pattern to always have the latest function without stale closures
-  const handleDismiss = async () => {
-    await handleSaveAndClose();
+  // A6 fix: handleDismiss is now a TRUE cancel — does NOT save.
+  // The X button, backdrop click, and ESC all discard changes.
+  // Only the "Save & Close" button (or handleSaveAndClose) actually saves.
+  const handleDismiss = () => {
+    if (saving) return; // Don't close mid-save
+    if (onClose) onClose();
   };
   handleDismissRef.current = handleDismiss;
 
@@ -273,8 +409,16 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
               <Flame size={14} className={edited.isHotLead ? "animate-pulse" : ""} /> {edited.isHotLead ? "HOT LEAD" : "Mark Hot"}
             </button>
             {saving && <Loader size={16} className="text-white animate-spin" />}
-            <button onClick={handleDismiss} className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center text-white hover:bg-white/30 transition" title="Close without saving">
+            <button onClick={handleDismiss} className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center text-white hover:bg-white/30 transition" title="Discard changes & close">
               <X size={18} />
+            </button>
+            <button
+              onClick={handleSaveAndClose}
+              disabled={saving}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-white/20 hover:bg-white/30 rounded-xl text-white text-xs font-black transition disabled:opacity-50"
+              title="Save changes & close"
+            >
+              {saving ? <Loader size={13} className="animate-spin" /> : <Save size={13} />} Save
             </button>
           </div>
         </div>
@@ -284,7 +428,7 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
           {(() => {
             const isQuestion = (f) => f.length > 40 || /^(what|how|why|describe|tell)[\s_]/i.test(f);
             const isCampaign = (f) => { const k = f.toLowerCase().replace(/[_\s]/g, ""); return k.includes("adid") || k.includes("adname") || k.includes("adsetid") || k.includes("adsetname") || k.includes("campaignid") || k.includes("campaignname") || k.includes("formid") || k.includes("formname") || k.includes("isorganic") || k.includes("createdtime"); };
-            const iconFor = (f) => { const k = f.toLowerCase(); return k.includes("name") || k.includes("lead") || k.includes("khoji") || k.includes("caller") ? <User size={11} className="text-emerald-500" /> : k.includes("phone") || k.includes("mobile") ? <Phone size={11} className="text-blue-500" /> : k.includes("city") || k.includes("location") ? <MapPin size={11} className="text-red-500" /> : k.includes("email") ? <Hash size={11} className="text-purple-500" /> : k.includes("when") || k.includes("suitable") ? <Clock size={11} className="text-amber-500" /> : <Tag size={11} className="text-indigo-500" />; };
+            const iconFor = (f) => { const k = f.toLowerCase(); return k.includes("name") || k.includes("lead") || k.includes("khoji") || k.includes("caller") ? <User size={11} className="text-emerald-500" /> : k.includes("phone") || k.includes("mobile") ? <Phone size={11} className="text-blue-500" /> : k.includes("city") || k.includes("location") ? <MapPin size={11} className="text-red-500" /> : k.includes("email") ? <Hash size={11} className="text-purple-500" /> : k.includes("when") || k.includes("suitable") ? <Clock size={11} className="text-amber-500" /> : k.includes("mahaasmani") || k.includes("mahaasamani") ? <CheckCircle2 size={11} className="text-pink-500" /> : <Tag size={11} className="text-indigo-500" />; };
             const labelFor = (f) => f.replace(/_/g, " ").replace(/\?/g, "").trim();
             const basicFields = dynamicFields.filter(f => !isQuestion(f) && !isCampaign(f));
             const questionFields = dynamicFields.filter(f => isQuestion(f));
@@ -295,16 +439,101 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
                 {basicFields.length > 0 && (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {basicFields.map(field => (
-                      <div key={field} className="space-y-1">
-                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+                      <div
+                        key={field}
+                        className={`space-y-1 ${
+                          field === "Tags"
+                            ? "col-span-2 md:col-span-4"
+                            : [
+                                "What do you want to get out of this call",
+                                "How Did You Hear About Us?",
+                                "What is stopping you from hitting results...",
+                                "Tentative Date of the Mini Shivir you attended",
+                                "Which Mini Shivir did you attend?",
+                                "Your Health issues",
+                                "What is your Tejstan/Center name"
+                              ].includes(field)
+                            ? "col-span-2 md:col-span-4"
+                            : [
+                                "Profession", "Source of Information", "When You want to attend the event:", 
+                                "Shivir/event category", "Guest Designation", "Platform Name:"
+                              ].includes(field) || field.length > 15
+                            ? "col-span-2 md:col-span-2"
+                            : "col-span-1 md:col-span-1"
+                        }`}
+                      >
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
                           {iconFor(field)} {field}
                         </label>
-                        <input
-                          value={edited[field] || ""}
-                          onChange={e => handleChange(field, e.target.value)}
-                          className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm font-semibold text-gray-800 placeholder:text-gray-300 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white transition"
-                          placeholder={`Enter ${field}...`}
-                        />
+                        {field === "Tags" ? (
+                          <div className="flex flex-wrap gap-1.5 py-1 min-h-[38px] items-center">
+                            {(() => {
+                              const tagList = (edited[field] || "")
+                                .split(",")
+                                .map(t => t.trim())
+                                .filter(Boolean);
+                              return tagList.length > 0 ? (
+                                tagList.map((tag, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="inline-flex items-center px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold border border-indigo-100"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-gray-400 text-xs italic">—</span>
+                              );
+                            })()}
+                          </div>
+                        ) : (field.toLowerCase().includes("mahaasmani") || field.toLowerCase().includes("mahaasamani") || field.toLowerCase().includes("maha asamani") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id"))) ? (
+                          <div className="flex gap-2 py-1 items-center min-h-[38px]">
+                            {(() => {
+                               const isYes = String(edited[field] || "").toLowerCase() === "yes";
+                               const isNo = String(edited[field] || "").toLowerCase() === "no";
+                               return (
+                                 <>
+                                   <button
+                                     type="button"
+                                     onClick={() => handleChange(field, "Yes")}
+                                     disabled={!["source", "called for"].includes(field.toLowerCase())}
+                                     className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
+                                       isYes
+                                         ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
+                                         : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                                     } ${!["source", "called for"].includes(field.toLowerCase()) ? "opacity-60 cursor-not-allowed" : ""}`}
+                                   >
+                                     Yes
+                                   </button>
+                                   <button
+                                     type="button"
+                                     onClick={() => handleChange(field, "No")}
+                                     disabled={!["source", "called for"].includes(field.toLowerCase())}
+                                     className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
+                                       isNo
+                                         ? "bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/20"
+                                         : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                                     } ${!["source", "called for"].includes(field.toLowerCase()) ? "opacity-60 cursor-not-allowed" : ""}`}
+                                   >
+                                     No
+                                   </button>
+                                 </>
+                               );
+                            })()}
+                          </div>
+                        ) : (
+                          <input
+                            value={edited[field] || ""}
+                            onChange={e => handleChange(field, e.target.value)}
+                            readOnly={!["source", "called for"].includes(field.toLowerCase())}
+                            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                              !["source", "called for"].includes(field.toLowerCase())
+                                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                                : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                            }`}
+                            placeholder={`Enter ${field}...`}
+                          />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -318,15 +547,7 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
                         <label className="text-[10px] font-semibold text-purple-700 leading-snug block">{labelFor(field)}</label>
                         <textarea
                           value={edited[field] || ""}
-                          onChange={e => {
-                            handleChange(field, e.target.value);
-                            e.target.style.height = 'inherit';
-                            e.target.style.height = `${e.target.scrollHeight}px`;
-                          }}
-                          onFocus={e => {
-                            e.target.style.height = 'inherit';
-                            e.target.style.height = `${e.target.scrollHeight}px`;
-                          }}
+                          readOnly={true}
                           ref={el => {
                             if (el) {
                               setTimeout(() => {
@@ -336,7 +557,7 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
                             }
                           }}
                           rows={1}
-                          className="w-full bg-white/80 border border-purple-100 rounded-lg px-3 py-2 text-sm text-gray-700 resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-purple-200 transition leading-relaxed placeholder:text-gray-300"
+                          className="w-full bg-gray-100/60 border border-purple-100/80 rounded-lg px-3 py-2 text-sm text-gray-500 cursor-not-allowed resize-none overflow-hidden focus:outline-none transition leading-relaxed placeholder:text-gray-300"
                           placeholder="No response..."
                         />
                       </div>
@@ -353,8 +574,8 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
                           <label className="text-[9px] font-black text-gray-300 uppercase tracking-widest block">{labelFor(field)}</label>
                           <input
                             value={edited[field] || ""}
-                            onChange={e => handleChange(field, e.target.value)}
-                            className="w-full px-2 py-1.5 bg-white border border-gray-100 rounded-lg text-xs font-mono text-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-200 transition"
+                            readOnly={true}
+                            className="w-full px-2 py-1.5 bg-gray-100/60 border border-gray-150 rounded-lg text-xs font-mono text-gray-400 cursor-not-allowed focus:outline-none transition"
                             placeholder="—"
                           />
                         </div>
@@ -633,6 +854,136 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
   );
 };
 
+const MyPerformanceDashboard = ({ stats }) => {
+  const COLORS = ["#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"];
+
+  return (
+    <div className="flex-1 overflow-y-auto bg-gray-50 p-6 space-y-6">
+      {/* Cards Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { label: "Assigned Contacts", value: stats.assignedCount, icon: <User size={18} />, color: "border-l-indigo-500", text: "text-indigo-600" },
+          { label: "Total Attempts", value: stats.totalAttempts, icon: <Phone size={18} />, color: "border-l-blue-500", text: "text-blue-600" },
+          { label: "Connection Rate", value: stats.connectionRate + "%", icon: <CheckCircle2 size={18} />, color: "border-l-emerald-500", text: "text-emerald-600" },
+          { label: "Conversion Rate", value: stats.registrationRate + "%", icon: <Flame size={18} />, color: "border-l-orange-500", text: "text-orange-500" },
+        ].map((k, i) => (
+          <div key={i} className={`bg-white rounded-2xl p-5 border border-gray-100 border-l-4 shadow-sm flex items-center justify-between ${k.color}`}>
+            <div>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{k.label}</p>
+              <p className="text-3xl font-black text-slate-800 mt-1">{k.value}</p>
+            </div>
+            <div className={`w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center ${k.text}`}>
+              {k.icon}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left column - Status distribution */}
+        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col h-[350px]">
+          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4">Status Distribution</h3>
+          {stats.statusChartData.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center text-gray-400 font-bold">No calls logged yet.</div>
+          ) : (
+            <div className="flex-1 relative">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={stats.statusChartData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {stats.statusChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value) => [`${value} contacts`, 'Status']} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-2xl font-black text-slate-800">{stats.connectedContacts}</span>
+                <span className="text-[10px] text-gray-400 uppercase font-black">Connected</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Middle column - Timeline */}
+        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col h-[350px] lg:col-span-2">
+          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4">Day-wise Timeline (Attempts)</h3>
+          {stats.dailyChartData.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center text-gray-400 font-bold">No activity recorded.</div>
+          ) : (
+            <div className="flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={stats.dailyChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fontWeight: 700, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 9, fontWeight: 700, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                  <Tooltip cursor={{ fill: 'rgba(226, 232, 240, 0.3)' }} formatter={(value) => [`${value} calls`, 'Attempts']} />
+                  <Bar dataKey="count" fill="#4f46e5" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Objection details */}
+        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm">
+          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4">Objections Logged</h3>
+          {stats.objectionChartData.length === 0 ? (
+            <p className="text-sm text-gray-400 font-bold py-4">No objections recorded for this period.</p>
+          ) : (
+            <div className="space-y-3">
+              {stats.objectionChartData.map((obj, i) => {
+                const percent = Math.round((obj.value / stats.assignedCount) * 100);
+                return (
+                  <div key={i} className="flex flex-col">
+                    <div className="flex justify-between items-center text-xs font-bold text-slate-700 mb-1">
+                      <span>{obj.name}</span>
+                      <span>{obj.value} ({percent}%)</span>
+                    </div>
+                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                      <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${percent}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Connection efficiency metrics */}
+        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-4">
+          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider">Call Sheet Performance Analysis</h3>
+          <div className="divide-y divide-gray-100">
+            {[
+              { label: "Average attempts per contact", value: stats.callsPerAssign, desc: "Total attempts divided by total unique assigned contacts." },
+              { label: "Successful Connections", value: stats.connectedContacts, desc: "Contacts that were successfully spoken to." },
+              { label: "Pending (Not called)", value: stats.assignedCount - stats.connectedContacts - stats.notConnectedContacts, desc: "Contacts waiting for first call or callback." },
+              { label: "Total Registrations", value: stats.registrations, desc: "Conversations that ended with successful registration." }
+            ].map((m, i) => (
+              <div key={i} className="py-3 flex justify-between items-start gap-4">
+                <div>
+                  <p className="text-xs font-black text-slate-700">{m.label}</p>
+                  <p className="text-[10px] text-gray-400 font-semibold mt-0.5">{m.desc}</p>
+                </div>
+                <span className="text-lg font-black text-slate-800 whitespace-nowrap">{m.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Main Attender View ───────────────────────
 export default function AttenderView({ attenderId, attenderName, onExit }) {
   const [programs, setPrograms] = useState([]);
@@ -656,14 +1007,19 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   const [filterObjectionReason, setFilterObjectionReason] = useState("All");
   const [filterCallbackStatus, setFilterCallbackStatus] = useState("All");
   const [filterCallCount, setFilterCallCount] = useState("All");
+  const [filterGeneralStatus, setFilterGeneralStatus] = useState("All");
+  const [filterAbhivyakti, setFilterAbhivyakti] = useState("All");
   const [filterDateType, setFilterDateType] = useState("All");
   const [filterDateRange, setFilterDateRange] = useState("All");
   const [customDateFrom, setCustomDateFrom] = useState("");
   const [customDateTo, setCustomDateTo] = useState("");
-  const [selectedMonth, setSelectedMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  });
+  const [customTimeFrom, setCustomTimeFrom] = useState("");
+  const [customTimeTo, setCustomTimeTo] = useState("");
+  const [activeView, setActiveView] = useState("sheet"); // "sheet" | "performance"
+  const [sortBy, setSortBy] = useState("activityDesc"); // "activityDesc" | "nameAsc" | "createdDesc"
+  const [selectedSheet, setSelectedSheet] = useState("");
+  const selectedMonth = selectedSheet;
+  const setSelectedMonth = setSelectedSheet;
   const rowsPerPage = 50;
   const unsubRef = useRef(null);
   const didDrag = useRef(false);
@@ -724,8 +1080,9 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
       return;
     }
     // U5 fix: Warn before re-requesting if the sheet already has entries
-    if (callLogs.length > 0) {
-      if (!window.confirm(`You already have ${callLogs.length} entries in this sheet.\nGet ${requestCount} more contacts?`)) return;
+    const currentSheetCount = monthFilteredLogs.length;
+    if (currentSheetCount > 0) {
+      if (!window.confirm(`You already have ${currentSheetCount} entries in this sheet.\nGet ${requestCount} more contacts?`)) return;
     }
     setIsRequesting(true);
     try {
@@ -746,15 +1103,17 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   };
 
   const handleAddIncoming = () => {
-    // Incoming calls don't require a program — they go into the month sheet directly
+    // Incoming calls are added directly to the active sheet
     setEditingRow({
       _isNew: true,
-      programId: null,
-      programName: null,
+      programId: selectedProgramId || null,
+      programName: selectedProgramName || null,
       attenderId,
       attenderName,
       Name: "", Phone: "", Source: "", City: "",
       callType: "incoming", status: "", remark: "",
+      "Sub Program": selectedSheet && selectedSheet !== "No Tag" ? selectedSheet : "",
+      subProgram: selectedSheet && selectedSheet !== "No Tag" ? selectedSheet : "",
     });
   };
 
@@ -768,30 +1127,97 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     }
   };
 
-  const handleExport = () => {
-    if (callLogs.length === 0) { toast.error("Nothing to export."); return; }
-    const rows = callLogs.map(l => {
-      const { id, _callbackDue, contactId, attenderId, history, isCallbackDue, isHotLead, _deleted, callCount, ...rest } = l;
-      const row = { ...rest };
-      if (row.callbackDate?.toDate) row.callbackDate = row.callbackDate.toDate().toLocaleDateString("en-IN");
-      if (row.createdAt?.toDate) row.createdAt = row.createdAt.toDate().toLocaleString("en-IN");
-      if (row.updatedAt?.toDate) row.updatedAt = row.updatedAt.toDate().toLocaleString("en-IN");
+const cleanExportRow = (log) => {
+  const INTERNAL_KEYS = [
+    "id", "programId", "programName", "contactId", "attenderId", "createdAt", "updatedAt",
+    "history", "_callbackDue", "_deleted", "isCallbackDue", "isHotLead", "callCount",
+    "callbackStatus", "lastCalledAt", "firstCalledAt", "registeredAt", "conversionSource",
+    "convertedBy", "subProgram", "objectionReason"
+  ];
 
-      let historyStr = "";
-      if (history && Array.isArray(history)) {
-        historyStr = history.map(h => `[${new Date(h.timestamp).toLocaleDateString("en-IN")}] ${h.attenderName}: ${h.status} - ${h.remark}`).join(" | ");
+  const row = {};
+  
+  // Find standard field mappings
+  const findValue = (obj, keysList) => {
+    const foundKey = Object.keys(obj).find(k => keysList.includes(k.toLowerCase()));
+    return foundKey ? obj[foundKey] : "";
+  };
+
+  const nameVal = findValue(log, ["name", "caller", "caller name", "lead name", "lead", "name of caller"]);
+  const phoneVal = findValue(log, ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"]);
+  const emailVal = findValue(log, ["email", "mail", "e-mail", "email id", "emailaddress"]);
+  const cityVal = findValue(log, ["city", "location", "khoji city", "place", "city name"]);
+  const countryVal = findValue(log, ["country", "nation"]);
+  const tagsVal = findValue(log, ["tags", "tag"]);
+  const statusVal = log.status || "Pending";
+  const remarkVal = log.remark || "";
+  const subProgramVal = log["Sub Program"] || log.subProgram || "";
+  const sourceVal = findValue(log, ["source", "sourse"]);
+  const calledForVal = findValue(log, ["called for", "called_for", "calledfor"]);
+  const callTypeVal = log.callType || "";
+  const callbackStatusVal = log.callbackStatus || "";
+  const objectionReasonVal = log.objectionReason || "";
+
+  let callbackDateStr = "";
+  if (log.callbackDate) {
+    const d = log.callbackDate.toDate ? log.callbackDate.toDate() : new Date(log.callbackDate);
+    if (d && !isNaN(d)) {
+      callbackDateStr = d.toLocaleDateString("en-IN");
+    }
+  }
+
+  row["Name"] = nameVal;
+  row["Phone"] = phoneVal;
+  row["Email"] = emailVal;
+  row["City"] = cityVal;
+  row["Country"] = countryVal;
+  row["Tags"] = tagsVal;
+  row["Sub Program"] = subProgramVal;
+  row["Source"] = sourceVal;
+  row["Called For"] = calledForVal;
+  row["Call Type"] = callTypeVal;
+  row["Status"] = statusVal;
+  row["Remark"] = remarkVal;
+  row["Callback Date"] = callbackDateStr;
+  row["Callback Status"] = callbackStatusVal;
+  row["Objection Reason"] = objectionReasonVal;
+
+  // Add all other dynamic/custom keys ONLY if they are explicitly present in the _mappedFields array metadata of the contact.
+  if (log._mappedFields && Array.isArray(log._mappedFields)) {
+    log._mappedFields.forEach(key => {
+      if (INTERNAL_KEYS.includes(key) || key.startsWith("_")) return;
+      
+      const isStandard = [
+        "name", "caller", "caller name", "lead name", "lead", "name of caller",
+        "phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number",
+        "email", "mail", "e-mail", "email id", "emailaddress",
+        "city", "location", "khoji city", "place", "city name",
+        "country", "nation", "tags", "tag", "status", "remark", "callbackdate", "sub program",
+        "source", "sourse", "called for", "called_for", "calledfor", "call type", "calltype", "callback status", "callbackstatus", "objection reason", "objectionreason"
+      ].includes(key.toLowerCase());
+      
+      if (!isStandard) {
+        row[key] = log[key];
       }
-
-      const nameKey = Object.keys(row).find(k => k.toLowerCase() === "name" || k.toLowerCase().includes("caller") || k.toLowerCase().includes("khoji")) || "Name";
-      const nameVal = row[nameKey] || "";
-      delete row[nameKey];
-
-      return {
-        [nameKey]: nameVal,
-        ...row,
-        "Call History": historyStr
-      };
     });
+  }
+
+  if (log.attenderName) {
+    row["Attended By"] = log.attenderName;
+  }
+
+  let historyStr = "";
+  if (log.history && Array.isArray(log.history)) {
+    historyStr = log.history.map(h => `[${new Date(h.timestamp).toLocaleDateString("en-IN")}] ${h.attenderName}: ${h.status} - ${h.remark}`).join(" | ");
+  }
+  row["Call History Timeline"] = historyStr;
+
+  return row;
+};
+
+  const handleExport = () => {
+    if (sortedLogs.length === 0) { toast.error("Nothing to export."); return; }
+    const rows = sortedLogs.map(cleanExportRow);
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "My Sheet");
@@ -819,41 +1245,58 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     if (scrollRef.current) scrollRef.current.style.cursor = "grab";
   }, []);
 
-  // ── Available months (derived from data) ──
-  const availableMonths = useMemo(() => {
-    const months = new Set();
-    // Always include current month
-    const now = new Date();
-    months.add(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+  // ── Available sheets (derived from data) ──
+  const availableSheets = useMemo(() => {
+    const sheets = new Set();
     callLogs.forEach(l => {
       if (l._deleted) return;
-      // From createdAt
-      const d = l.createdAt?.toDate ? l.createdAt.toDate() : l.createdAt ? new Date(l.createdAt) : null;
-      if (d && !isNaN(d)) months.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-      // From callbackDate (carryover)
-      const cb = l.callbackDate?.toDate ? l.callbackDate.toDate() : l.callbackDate ? new Date(l.callbackDate) : null;
-      if (cb && !isNaN(cb)) months.add(`${cb.getFullYear()}-${String(cb.getMonth() + 1).padStart(2, '0')}`);
+      const sh = l["Sub Program"] || l.subProgram || "No Tag";
+      sheets.add(sh);
     });
-    return Array.from(months).sort().reverse();
+    return Array.from(sheets).sort();
   }, [callLogs]);
 
-  // ── Monthly filtered logs ──
+  // Alias availableMonths for compatibility
+  const availableMonths = availableSheets;
+
+  // L4 fix: removed `selectedSheet` from deps — being in deps caused effect to re-run and override the user's manual selection
+  // "" is the "All Sheets" sentinel — don't auto-override it
+  useEffect(() => {
+    if (availableSheets.length > 0) {
+      // selectedSheet === "" means "All Sheets" — keep it
+      if (selectedSheet !== "" && !availableSheets.includes(selectedSheet)) {
+        setSelectedSheet(availableSheets[0]);
+      }
+    } else {
+      setSelectedSheet("");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableSheets]);
+
+  // Sync program details with currently selected sheet for "Get Numbers"
+  useEffect(() => {
+    if (!selectedSheet) return;
+    const match = callLogs.find(l => {
+      if (l._deleted) return false;
+      const sh = l["Sub Program"] || l.subProgram || "No Tag";
+      return sh === selectedSheet;
+    });
+    if (match && match.programId) {
+      setSelectedProgramId(match.programId);
+      setSelectedProgramName(match.programName || "");
+      setSelectedSubProgram(selectedSheet === "No Tag" ? "" : selectedSheet);
+    }
+  }, [selectedSheet, callLogs]);
+
+  // ── Sheet filtered logs ──
   const monthFilteredLogs = useMemo(() => {
-    if (!selectedMonth) return callLogs.filter(l => !l._deleted);
-    const [year, month] = selectedMonth.split('-').map(Number);
+    if (!selectedSheet) return callLogs.filter(l => !l._deleted);
     return callLogs.filter(l => {
       if (l._deleted) return false;
-      // Include if created in this month
-      const d = l.createdAt?.toDate ? l.createdAt.toDate() : l.createdAt ? new Date(l.createdAt) : null;
-      if (d && !isNaN(d) && d.getFullYear() === year && d.getMonth() + 1 === month) return true;
-      // Include if callback date is in this month (carryover from previous months)
-      const cb = l.callbackDate?.toDate ? l.callbackDate.toDate() : l.callbackDate ? new Date(l.callbackDate) : null;
-      if (cb && !isNaN(cb) && cb.getFullYear() === year && cb.getMonth() + 1 === month) return true;
-      // Include if status is not final and it's an ongoing contact (Interested, Info given) with no specific month
-      if (!d && !cb) return true;
-      return false;
+      const sh = l["Sub Program"] || l.subProgram || "No Tag";
+      return sh === selectedSheet;
     });
-  }, [callLogs, selectedMonth]);
+  }, [callLogs, selectedSheet]);
 
   // ── Stats (now uses monthly data) ──
   const stats = useMemo(() => {
@@ -871,7 +1314,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
 
   // ── Unique values for dropdowns dynamically computed from month data ──
   const uniqueSources = useMemo(() => {
-    const set = new Set();
+    const set = new Set(SOURCE_OPTIONS);
     monthFilteredLogs.forEach(log => {
       const k = Object.keys(log).find(key => key.toLowerCase().includes("source") || key.toLowerCase().includes("sourse"));
       if (k && log[k]) set.add(String(log[k]).trim());
@@ -889,7 +1332,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   }, [monthFilteredLogs]);
 
   const uniqueCalledFor = useMemo(() => {
-    const set = new Set();
+    const set = new Set(CALLED_FOR_OPTIONS);
     monthFilteredLogs.forEach(log => {
       const k = Object.keys(log).find(key => key.toLowerCase().includes("called for") || key.toLowerCase().includes("called_for") || key.toLowerCase().includes("calledfor"));
       if (k && log[k]) set.add(String(log[k]).trim());
@@ -925,12 +1368,17 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     if (filterObjectionReason !== "All") count++;
     if (filterCallbackStatus !== "All") count++;
     if (filterCallCount !== "All") count++;
+    if (filterGeneralStatus !== "All") count++;
+    if (filterAbhivyakti !== "All") count++;
     if (filterDateType !== "All" && filterDateRange !== "All") count++;
+    if (customTimeFrom) count++;
+    if (customTimeTo) count++;
     return count;
   }, [
     searchQuery, filterStatus, filterSource, filterCity, filterCalledFor,
     filterCallType, filterSubProgram, filterObjectionReason,
-    filterCallbackStatus, filterCallCount, filterDateType, filterDateRange
+    filterCallbackStatus, filterCallCount, filterGeneralStatus, filterAbhivyakti,
+    filterDateType, filterDateRange, customTimeFrom, customTimeTo
   ]);
 
   const handleClearAllFilters = () => {
@@ -944,10 +1392,14 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     setFilterObjectionReason("All");
     setFilterCallbackStatus("All");
     setFilterCallCount("All");
+    setFilterGeneralStatus("All");
+    setFilterAbhivyakti("All");
     setFilterDateType("All");
     setFilterDateRange("All");
     setCustomDateFrom("");
     setCustomDateTo("");
+    setCustomTimeFrom("");
+    setCustomTimeTo("");
     setPage(1);
     toast.success("All filters cleared!");
   };
@@ -1018,8 +1470,21 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
         }
       }
 
-      // 11. Date / Activity Range Filter
-      if (filterDateType !== "All" && filterDateRange !== "All") {
+      // 10b. General Result Status Filter
+      // L6 fix: if filterStatus AND filterGeneralStatus are both set to specific (conflicting) statuses, only use filterGeneralStatus (it's more specific)
+      if (filterGeneralStatus !== "All") {
+        // Don't double-filter if filterStatus already captures this status specifically
+        const quickIsSpecific = filterStatus !== "All" && filterStatus !== "Hot Leads" && filterStatus !== "Callback" && filterStatus !== "Follow up";
+        if (!quickIsSpecific && log.status !== filterGeneralStatus) return false;
+        if (quickIsSpecific && log.status !== filterGeneralStatus) return false;
+      }
+
+      // 10c. Abhivyakti Filter
+      if (filterAbhivyakti === "Yes" && log.status !== "Reg.Done") return false;
+      if (filterAbhivyakti === "No" && log.status === "Reg.Done") return false;
+
+      // 11. Date & Time / Activity Range Filter
+      if (filterDateType !== "All") {
         let logDate = null;
         if (filterDateType === "lastCalledAt") {
           logDate = log.lastCalledAt ? new Date(log.lastCalledAt) : null;
@@ -1029,24 +1494,45 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
 
         if (!logDate || isNaN(logDate)) return false;
 
-        const startOfDay = (d) => { const nd = new Date(d); nd.setHours(0, 0, 0, 0); return nd; };
-        const endOfDay = (d) => { const nd = new Date(d); nd.setHours(23, 59, 59, 999); return nd; };
+        // Date Range Filtering
+        if (filterDateRange !== "All") {
+          const startOfDay = (d) => { const nd = new Date(d); nd.setHours(0, 0, 0, 0); return nd; };
+          const endOfDay = (d) => { const nd = new Date(d); nd.setHours(23, 59, 59, 999); return nd; };
 
-        const today = new Date();
-        const yesterday = new Date();
-        yesterday.setDate(today.getDate() - 1);
+          const today = new Date();
+          const yesterday = new Date();
+          yesterday.setDate(today.getDate() - 1);
 
-        if (filterDateRange === "Today") {
-          if (logDate < startOfDay(today) || logDate > endOfDay(today)) return false;
-        } else if (filterDateRange === "Yesterday") {
-          if (logDate < startOfDay(yesterday) || logDate > endOfDay(yesterday)) return false;
-        } else if (filterDateRange === "This Week") {
-          const sevenDaysAgo = new Date();
-          sevenDaysAgo.setDate(today.getDate() - 7);
-          if (logDate < startOfDay(sevenDaysAgo)) return false;
-        } else if (filterDateRange === "Custom") {
-          if (customDateFrom && logDate < startOfDay(new Date(customDateFrom))) return false;
-          if (customDateTo && logDate > endOfDay(new Date(customDateTo))) return false;
+          if (filterDateRange === "Today") {
+            if (logDate < startOfDay(today) || logDate > endOfDay(today)) return false;
+          } else if (filterDateRange === "Yesterday") {
+            if (logDate < startOfDay(yesterday) || logDate > endOfDay(yesterday)) return false;
+          } else if (filterDateRange === "This Week") {
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(today.getDate() - 7);
+            if (logDate < startOfDay(sevenDaysAgo)) return false;
+          } else if (filterDateRange === "Custom") {
+            if (customDateFrom && logDate < startOfDay(new Date(customDateFrom))) return false;
+            if (customDateTo && logDate > endOfDay(new Date(customDateTo))) return false;
+          }
+        }
+
+        // Time of Day Filtering
+        if (customTimeFrom || customTimeTo) {
+          const logHours = logDate.getHours();
+          const logMinutes = logDate.getMinutes();
+          const logMinutesSinceMidnight = logHours * 60 + logMinutes;
+
+          if (customTimeFrom) {
+            const [h, m] = customTimeFrom.split(":").map(Number);
+            const fromMinutes = h * 60 + m;
+            if (logMinutesSinceMidnight < fromMinutes) return false;
+          }
+          if (customTimeTo) {
+            const [h, m] = customTimeTo.split(":").map(Number);
+            const toMinutes = h * 60 + m;
+            if (logMinutesSinceMidnight > toMinutes) return false;
+          }
         }
       }
 
@@ -1055,8 +1541,8 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   }, [
     monthFilteredLogs, searchQuery, filterStatus, filterSource, filterCalledFor,
     filterCity, filterCallType, filterSubProgram, filterObjectionReason,
-    filterCallbackStatus, filterCallCount, filterDateType, filterDateRange,
-    customDateFrom, customDateTo
+    filterCallbackStatus, filterCallCount, filterGeneralStatus, filterAbhivyakti,
+    filterDateType, filterDateRange, customDateFrom, customDateTo, customTimeFrom, customTimeTo
   ]);
 
   // ── Dynamic columns from data ──
@@ -1067,28 +1553,186 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     "status", "remark", "callbackdate", "calltype", "createdat", "updatedat",
     "_callbackdue", "_deleted", "iscallbackdue", "ishotlead", "registeredat",
     "type", "callback", "call type", "call_type", "followup", "followup date",
-    "history", "lastcalledat", "firstcalledat",
+    "history", "lastcalledat", "firstcalledat", "sub program", "subprogram",
+    "ghl_id", "_contactrefid", "objectionreason",
+    // Fields written by db.js that should never appear as columns
+    "normalizedphone", "contactrefid", "conversionSource", "conversionsource",
+    "convertedat", "convertedby", "isassigned"
   ]), []);
 
   const dynamicCols = useMemo(() => {
-    const allKeys = new Set();
+    const standardOrder = ["Name", "Phone", "Email", "City", "Country", "Tags", "Source", "Called For"];
+    
+    // Find all keys present across any of the monthFilteredLogs
+    const allKeysSet = new Set();
     monthFilteredLogs.forEach(log => {
-      Object.keys(log).forEach(k => {
-        if (!INTERNAL_KEYS_LOWER.has(k.toLowerCase()) && !k.startsWith("_")) allKeys.add(k);
+      Object.keys(log).forEach(key => {
+        const kLower = key.toLowerCase();
+        if (!INTERNAL_KEYS_LOWER.has(kLower) && !key.startsWith("_")) {
+          const isStandard = standardOrder.some(col => col.toLowerCase() === kLower);
+          if (isStandard) {
+            // Always show standard fields
+            allKeysSet.add(key);
+          } else if (log._mappedFields && Array.isArray(log._mappedFields)) {
+            // Log has mapping metadata — only show explicitly mapped custom fields.
+            // This prevents survey/unmapped fields from leaking in for new data.
+            if (log._mappedFields.includes(key)) {
+              allKeysSet.add(key);
+            }
+          } else {
+            // Log is OLD (pre-mapping feature) — no _mappedFields present.
+            // Fall back to isIgnoredField to filter known garbage fields.
+            if (!isIgnoredField(key)) {
+              allKeysSet.add(key);
+            }
+          }
+        }
       });
     });
-    // Sort: Name first, Phone second, then alphabetical
-    return Array.from(allKeys).sort((a, b) => {
-      const al = a.toLowerCase(), bl = b.toLowerCase();
-      const wA = al.includes("name") || al.includes("lead") ? 1 : al.includes("phone") || al.includes("cont") || al.includes("number") ? 2 : al.includes("source") ? 3 : al.includes("city") || al.includes("khoji") ? 4 : 5;
-      const wB = bl.includes("name") || bl.includes("lead") ? 1 : bl.includes("phone") || bl.includes("cont") || bl.includes("number") ? 2 : bl.includes("source") ? 3 : bl.includes("city") || bl.includes("khoji") ? 4 : 5;
-      if (wA !== wB) return wA - wB;
-      return a.localeCompare(b);
+
+    // Make sure standard order fields are present
+    standardOrder.forEach(col => {
+      const found = Array.from(allKeysSet).find(k => k.toLowerCase() === col.toLowerCase());
+      if (found) {
+        allKeysSet.delete(found);
+      }
     });
+
+    // Sort: standardOrder first, then the rest alphabetically
+    const sorted = [...standardOrder, ...Array.from(allKeysSet).sort()];
+    console.log("[DEBUG] dynamicCols:", sorted);
+    return sorted;
   }, [monthFilteredLogs, INTERNAL_KEYS_LOWER]);
 
-  const totalPages = Math.ceil(filteredLogs.length / rowsPerPage);
-  const paginated = filteredLogs.slice((page - 1) * rowsPerPage, page * rowsPerPage);
+  const duplicatePhoneMap = useMemo(() => {
+    const map = {};
+    callLogs.forEach(log => {
+      if (log._deleted) return;
+      const progId = log.programId || "incoming";
+      const keys = Object.keys(log);
+      const phoneKey = keys.find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno"].includes(k.toLowerCase()))
+        || keys.find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
+      const rawPhone = phoneKey ? String(log[phoneKey] || "").replace(/[\s\-\.\(\)\+]/g, "").trim() : "";
+      // Normalize to last 10 digits to catch +91XXXXXXXXXX vs XXXXXXXXXX variants
+      const phone = rawPhone.length >= 10 ? rawPhone.slice(-10) : rawPhone;
+      if (!phone || phone.length < 5) return;
+      if (!map[progId]) map[progId] = {};
+      map[progId][phone] = (map[progId][phone] || 0) + 1;
+    });
+    return map;
+  }, [callLogs]);
+
+  const sortedLogs = useMemo(() => {
+    const list = [...filteredLogs];
+    list.sort((a, b) => {
+      // 1. Keep overdue callbacks at the top
+      const aDue = a._callbackDue ? 1 : 0;
+      const bDue = b._callbackDue ? 1 : 0;
+      if (aDue !== bDue) return bDue - aDue;
+
+      // 2. Sort by selected method
+      if (sortBy === "nameAsc") {
+        const aKeys = Object.keys(a);
+        const bKeys = Object.keys(b);
+        const aNameKey = aKeys.find(k => k.toLowerCase() === "name" || k.toLowerCase().includes("caller") || k.toLowerCase().includes("khoji")) || "Name";
+        const bNameKey = bKeys.find(k => k.toLowerCase() === "name" || k.toLowerCase().includes("caller") || k.toLowerCase().includes("khoji")) || "Name";
+        const aName = String(a[aNameKey] || "").toLowerCase();
+        const bName = String(b[bNameKey] || "").toLowerCase();
+        return aName.localeCompare(bName);
+      } else if (sortBy === "createdDesc") {
+        const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : a.createdAt ? new Date(a.createdAt) : new Date(0);
+        const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : b.createdAt ? new Date(b.createdAt) : new Date(0);
+        return bDate - aDate;
+      } else {
+        // Default: activityDesc
+        const aDate = a.lastCalledAt ? new Date(a.lastCalledAt) : a.createdAt?.toDate ? a.createdAt.toDate() : a.createdAt ? new Date(a.createdAt) : new Date(0);
+        const bDate = b.lastCalledAt ? new Date(b.lastCalledAt) : b.createdAt?.toDate ? b.createdAt.toDate() : b.createdAt ? new Date(b.createdAt) : new Date(0);
+        return bDate - aDate;
+      }
+    });
+    return list;
+  }, [filteredLogs, sortBy]);
+
+  const totalPages = Math.ceil(sortedLogs.length / rowsPerPage);
+  const paginated = sortedLogs.slice((page - 1) * rowsPerPage, page * rowsPerPage);
+
+  const performanceStats = useMemo(() => {
+    let totalAttempts = 0;
+    let connectedContacts = 0;
+    let notConnectedContacts = 0;
+    let registrations = 0;
+    let infoGiven = 0;
+    let interested = 0;
+    
+    const statusCounts = {};
+    const objectionCounts = {};
+    const dailyActivity = {}; // date string -> attempts count
+
+    monthFilteredLogs.forEach(log => {
+      const hist = log.history || [];
+      const status = log.status;
+
+      // Calculate total attempts from history
+      const attemptsCount = hist.length || (status ? 1 : 0);
+      totalAttempts += attemptsCount;
+
+      // Group history items by day for timeline
+      hist.forEach(h => {
+        const dStr = new Date(h.timestamp).toLocaleDateString("en-IN");
+        dailyActivity[dStr] = (dailyActivity[dStr] || 0) + 1;
+      });
+      // If no history but status is present, count as today
+      if (hist.length === 0 && status && log.updatedAt) {
+        const dStr = log.updatedAt.toDate ? log.updatedAt.toDate().toLocaleDateString("en-IN") : new Date(log.updatedAt).toLocaleDateString("en-IN");
+        dailyActivity[dStr] = (dailyActivity[dStr] || 0) + 1;
+      }
+
+      if (status) {
+        statusCounts[status] = (statusCounts[status] || 0) + 1;
+        if (CONNECTED_STATUSES.includes(status)) {
+          connectedContacts++;
+          if (status === "Reg.Done") registrations++;
+          else if (status === "Info given") infoGiven++;
+          else if (status === "Interested") interested++;
+        } else if (NOT_CONNECTED_STATUSES.includes(status)) {
+          notConnectedContacts++;
+        }
+      }
+
+      if (log.objectionReason) {
+        objectionCounts[log.objectionReason] = (objectionCounts[log.objectionReason] || 0) + 1;
+      }
+    });
+
+    const statusChartData = Object.entries(statusCounts).map(([name, value]) => ({ name, value }));
+    const objectionChartData = Object.entries(objectionCounts).map(([name, value]) => ({ name, value }));
+    const dailyChartData = Object.entries(dailyActivity)
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => {
+        const [da, ma, ya] = a.date.split("/").map(Number);
+        const [db, mb, yb] = b.date.split("/").map(Number);
+        return new Date(ya, ma - 1, da) - new Date(yb, mb - 1, db);
+      })
+      .slice(-15); // Show last 15 active days
+
+    const assignedCount = monthFilteredLogs.length;
+
+    return {
+      totalAttempts,
+      assignedCount,
+      connectedContacts,
+      notConnectedContacts,
+      registrations,
+      infoGiven,
+      interested,
+      statusChartData,
+      objectionChartData,
+      dailyChartData,
+      connectionRate: assignedCount > 0 ? Math.round((connectedContacts / assignedCount) * 100) : 0,
+      registrationRate: assignedCount > 0 ? Math.round((registrations / assignedCount) * 100) : 0,
+      callsPerAssign: assignedCount > 0 ? (totalAttempts / assignedCount).toFixed(1) : "0.0"
+    };
+  }, [monthFilteredLogs]);
 
   // U11 fix: Unified StatusBadge function — consistent pill style matching AdminPanel
   const getStatusBadge = (status) => {
@@ -1117,13 +1761,39 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
 
       {/* Top Bar */}
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shrink-0 shadow-sm">
-        <div className="flex items-center gap-4">
-          <button onClick={onExit} className="p-2 hover:bg-gray-100 rounded-xl transition">
-            <ArrowLeft size={18} className="text-gray-500" />
-          </button>
-          <div>
-            <h1 className="font-black text-gray-900 text-lg leading-none">My Call Sheet</h1>
-            <p className="text-xs text-gray-400 font-medium">{attenderName}</p>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
+            <button onClick={onExit} className="p-2 hover:bg-gray-100 rounded-xl transition">
+              <ArrowLeft size={18} className="text-gray-500" />
+            </button>
+            <div>
+              <h1 className="font-black text-gray-900 text-lg leading-none">My Call Sheet</h1>
+              <p className="text-xs text-gray-400 font-medium">{attenderName}</p>
+            </div>
+          </div>
+
+          {/* View Toggle tabs */}
+          <div className="flex items-center bg-gray-100 p-0.5 rounded-xl border border-gray-200 shrink-0">
+            <button
+              onClick={() => setActiveView("sheet")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                activeView === "sheet"
+                  ? "bg-slate-800 text-white shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              Call Sheet
+            </button>
+            <button
+              onClick={() => setActiveView("performance")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                activeView === "performance"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              My Performance
+            </button>
           </div>
         </div>
 
@@ -1181,64 +1851,40 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
         </div>
       </header>
 
-      {/* Month Selector — always shown, this is the primary scope */}
-      {availableMonths.length > 0 && (
+      {/* Sheet Selector — always shown, this is the primary scope */}
+      {availableSheets.length > 0 && (
         <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-3 shrink-0">
-          <Calendar size={14} className="text-indigo-500 shrink-0" />
-          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest shrink-0">Month</span>
+          <FileSpreadsheet size={14} className="text-indigo-500 shrink-0" />
+          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest shrink-0">Sheet</span>
           <select
-            value={selectedMonth}
-            onChange={e => { setSelectedMonth(e.target.value); setPage(1); setFilterStatus("All"); }}
-            className="px-4 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl font-black text-sm text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            value={selectedSheet}
+            onChange={e => {
+              const val = e.target.value;
+              setSelectedSheet(val);
+              setPage(1);
+              setFilterStatus("All");
+              setFilterSource("All"); setFilterCity("All"); setFilterCalledFor("All");
+              setFilterCallType("All"); setFilterSubProgram("All"); setFilterObjectionReason("All");
+              setFilterCallbackStatus("All"); setFilterCallCount("All"); setFilterGeneralStatus("All");
+              setFilterAbhivyakti("All"); setFilterDateType("All"); setFilterDateRange("All");
+              setCustomDateFrom(""); setCustomDateTo(""); setSearchQuery("");
+            }}
+            className="px-4 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl font-black text-sm text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer min-w-[180px]"
           >
-            {availableMonths.map(m => {
-              const [y, mo] = m.split('-').map(Number);
-              const label = new Date(y, mo - 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-              return <option key={m} value={m}>{label}</option>;
-            })}
+            <option value="">— All Sheets —</option>
+            {availableSheets.map(sh => (
+              <option key={sh} value={sh}>{sh}</option>
+            ))}
           </select>
-          <span className="text-xs font-bold text-gray-400">{monthFilteredLogs.length} contacts</span>
+          <span className="text-xs font-bold text-gray-400 shrink-0">
+            {monthFilteredLogs.length} contacts{selectedSheet === "" ? " · all sheets" : ""}
+          </span>
         </div>
       )}
 
-      {/* Stats Bar */}
-      <div className="bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-6 text-sm shrink-0 overflow-x-auto">
-        {[
-          { label: "Total", value: stats.total, color: "text-gray-700" },
-          { label: "Called", value: stats.called, color: "text-blue-600" },
-          { label: "Pending", value: stats.total - stats.called, color: "text-amber-600" },
-          { label: "Interested", value: stats.interested, color: "text-indigo-600" },
-          { label: "Reg.Done", value: stats.regDone, color: "text-emerald-600" },
-          { label: "Callbacks Due", value: stats.callbacks, color: "text-red-500" },
-          { label: "Outgoing", value: stats.outgoing, color: "text-gray-500" },
-          { label: "Incoming", value: stats.incoming, color: "text-green-600" },
-          { label: "Hot Leads", value: stats.hotLeads, color: "text-orange-500" },
-        ].map(s => (
-          <div key={s.label} className="flex items-center gap-2 whitespace-nowrap">
-            <span className="text-gray-400 text-xs uppercase tracking-wider">{s.label}</span>
-            <span className={`font-black text-base ${s.color}`}>{s.value}</span>
-            {s.label === "Callbacks Due" && s.value > 0 && <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />}
-          </div>
-        ))}
 
-        {/* Progress bar */}
-        {stats.total > 0 && (
-          <div className="ml-auto flex items-center gap-3 min-w-[200px]">
-            <span className="text-xs text-gray-400 whitespace-nowrap">Progress</span>
-            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-500"
-                style={{ width: `${Math.round((stats.called / stats.total) * 100)}%` }}
-              />
-            </div>
-            <span className="text-xs font-bold text-gray-600 whitespace-nowrap">
-              {Math.round((stats.called / stats.total) * 100)}%
-            </span>
-          </div>
-        )}
-      </div>
 
-      {/* Callback Reminder Banner — U4 fix: hidden when already viewing callbacks */}
+      {/* A8 fix: banner now correctly says "due today or overdue" */}
       {stats.callbacks > 0 && filterStatus !== "Callback" && (
         <div className="bg-gradient-to-r from-red-600 to-rose-600 px-6 py-3 flex items-center justify-between shrink-0 shadow-lg shadow-red-600/10 cursor-pointer" onClick={() => { setFilterStatus("Callback"); setPage(1); }}>
           <div className="flex items-center gap-3 text-white">
@@ -1246,7 +1892,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
               <AlertCircle size={22} />
             </div>
             <div>
-              <p className="font-black text-sm leading-none">You have {stats.callbacks} overdue callback{stats.callbacks > 1 ? "s" : ""}!</p>
+              <p className="font-black text-sm leading-none">You have {stats.callbacks} callback{stats.callbacks > 1 ? "s" : ""} due today or overdue!</p>
               <p className="text-white/70 text-xs font-medium mt-0.5">Click here to view them. These people are waiting for your call.</p>
             </div>
           </div>
@@ -1268,6 +1914,19 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
               onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
               className="bg-transparent text-sm outline-none w-36"
             />
+          </div>
+
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5 shrink-0">
+            <SlidersHorizontal size={13} className="text-gray-400" />
+            <select
+              value={sortBy}
+              onChange={e => { setSortBy(e.target.value); setPage(1); }}
+              className="bg-transparent text-xs font-bold text-gray-600 focus:outline-none cursor-pointer"
+            >
+              <option value="activityDesc">Sort: Latest Activity</option>
+              <option value="createdDesc">Sort: Date Assigned</option>
+              <option value="nameAsc">Sort: Name (A-Z)</option>
+            </select>
           </div>
 
           <button
@@ -1441,14 +2100,58 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
             </select>
           </div>
 
-          {/* Date Type Filter */}
+          {/* General Result Status Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
-              <CalendarDays size={11} className="text-teal-500" /> Date Filter By
+              <CheckCircle2 size={11} className="text-indigo-500" /> Gen. Status
+            </label>
+            <select
+              value={filterGeneralStatus}
+              onChange={e => { setFilterGeneralStatus(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All Statuses</option>
+              {STATUS_OPTIONS.filter(opt => opt !== "Reg.Done").map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Abhivyakti Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <Flame size={11} className="text-emerald-500" /> Abhivyakti
+            </label>
+            <select
+              value={filterAbhivyakti}
+              onChange={e => { setFilterAbhivyakti(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All</option>
+              <option value="Yes">Yes (Registered)</option>
+              <option value="No">No (Not Registered)</option>
+            </select>
+          </div>
+
+          {/* ── Date Filters ── */}
+          {/* Step 1: choose which date field to filter on */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <CalendarDays size={11} className="text-teal-500" /> Filter By Date
             </label>
             <select
               value={filterDateType}
-              onChange={e => { setFilterDateType(e.target.value); setPage(1); if (e.target.value === "All") setFilterDateRange("All"); }}
+              onChange={e => {
+                setFilterDateType(e.target.value);
+                setPage(1);
+                if (e.target.value === "All") {
+                  setFilterDateRange("All");
+                  setCustomDateFrom("");
+                  setCustomDateTo("");
+                  setCustomTimeFrom("");
+                  setCustomTimeTo("");
+                }
+              }}
               className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
             >
               <option value="All">No Date Filter</option>
@@ -1457,11 +2160,11 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
             </select>
           </div>
 
-          {/* Date Range Selector */}
+          {/* Step 2: quick preset range */}
           {filterDateType !== "All" && (
             <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
-                <Calendar size={11} className="text-teal-500" /> Date Range
+                <Calendar size={11} className="text-teal-500" /> Quick Range
               </label>
               <select
                 value={filterDateRange}
@@ -1477,32 +2180,73 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
             </div>
           )}
 
-          {/* Custom Date Range Picker */}
-          {filterDateType !== "All" && filterDateRange === "Custom" && (
-            <>
-              <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
-                  Start Date
+          {/* Step 3: After / Before date pickers — visible whenever a date type is selected */}
+          {filterDateType !== "All" && (
+            <div className="col-span-2 grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-1 duration-150">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-teal-600 uppercase tracking-widest leading-none flex items-center gap-1">
+                  <Calendar size={10} /> After Date
                 </label>
                 <input
                   type="date"
                   value={customDateFrom}
-                  onChange={e => { setCustomDateFrom(e.target.value); setPage(1); }}
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition font-sans"
+                  onChange={e => {
+                    setCustomDateFrom(e.target.value);
+                    // Auto-switch to Custom mode when a date is typed directly
+                    if (e.target.value) setFilterDateRange("Custom");
+                    setPage(1);
+                  }}
+                  className={`w-full px-3 py-2 border rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:bg-white transition font-sans ${
+                    customDateFrom ? "bg-teal-50 border-teal-300" : "bg-gray-50 border-gray-200"
+                  }`}
                 />
               </div>
-              <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
-                  End Date
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-teal-600 uppercase tracking-widest leading-none flex items-center gap-1">
+                  <Calendar size={10} /> Before Date
                 </label>
                 <input
                   type="date"
                   value={customDateTo}
-                  onChange={e => { setCustomDateTo(e.target.value); setPage(1); }}
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition font-sans"
+                  onChange={e => {
+                    setCustomDateTo(e.target.value);
+                    if (e.target.value) setFilterDateRange("Custom");
+                    setPage(1);
+                  }}
+                  className={`w-full px-3 py-2 border rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:bg-white transition font-sans ${
+                    customDateTo ? "bg-teal-50 border-teal-300" : "bg-gray-50 border-gray-200"
+                  }`}
                 />
               </div>
-            </>
+            </div>
+          )}
+
+          {/* Time of day range — shown when date type is active */}
+          {filterDateType !== "All" && (
+            <div className="col-span-2 grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-1 duration-150">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+                  <Clock size={10} /> After Time
+                </label>
+                <input
+                  type="time"
+                  value={customTimeFrom}
+                  onChange={e => { setCustomTimeFrom(e.target.value); setPage(1); }}
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition font-sans cursor-pointer"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+                  <Clock size={10} /> Before Time
+                </label>
+                <input
+                  type="time"
+                  value={customTimeTo}
+                  onChange={e => { setCustomTimeTo(e.target.value); setPage(1); }}
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition font-sans cursor-pointer"
+                />
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -1538,6 +2282,8 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
             </div>
           ))}
         </div>
+      ) : activeView === "performance" ? (
+        <MyPerformanceDashboard stats={performanceStats} />
       ) : (
         <div className="flex-1 flex flex-col overflow-hidden">
           <div ref={scrollRef} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
@@ -1577,18 +2323,42 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
                     <tr
                       key={log.id}
                       className={`cursor-pointer transition-colors ${rowBg}`}
-                      onClick={() => { if (!didDrag.current) setEditingRow(log); }}
+                      onClick={() => {
+                        if (!didDrag.current) {
+                          console.log("[DEBUG] Selected Row:", log);
+                          setEditingRow(log);
+                        }
+                      }}
                     >
                       <td className="py-4 px-4 text-xs font-bold text-gray-400 text-center bg-[#f8f9fa] border-r border-gray-200 align-top">
                         {(page - 1) * rowsPerPage + idx + 1}
                       </td>
                       {dynamicCols.map((col, ci) => {
-                        const val = String(log[col] || "");
+                        const getVal = (item, column) => {
+                          if (item[column] !== undefined && item[column] !== null) return String(item[column]);
+                          const keys = Object.keys(item);
+                          const matchingKey = keys.find(k => k.toLowerCase() === column.toLowerCase());
+                          return matchingKey ? String(item[matchingKey]) : "";
+                        };
+                        const val = getVal(log, col);
                         const isName = col.toLowerCase().includes("name") || col.toLowerCase().includes("lead");
+
+                        // Check duplicate phone number in program queue
+                        const logKeys = Object.keys(log);
+                        const phoneKey = logKeys.find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno"].includes(k.toLowerCase()))
+                          || logKeys.find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
+                        const phone = phoneKey ? normalizePhone(log[phoneKey]) : "";
+                        const isDupInProg = isName && phone && duplicatePhoneMap[log.programId || "incoming"]?.[phone] > 1;
+
                         return (
                           <td key={col} className={`py-4 px-4 border-r border-gray-100 text-sm ${isName ? "font-bold text-gray-900" : "text-gray-700"} min-w-[140px] whitespace-normal align-top`}>
                             {ci === 0 && log.isHotLead && <Flame size={15} className="text-orange-500 shrink-0 inline mr-1" fill="currentColor" />}
                             {val || "\u2014"}
+                            {isDupInProg && (
+                              <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200">
+                                Same Person
+                              </span>
+                            )}
                           </td>
                         );
                       })}
