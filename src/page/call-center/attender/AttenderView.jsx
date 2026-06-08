@@ -165,6 +165,27 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
   const [globalDup, setGlobalDup] = useState(null);
   const timerRef = useRef(null);
   const handleDismissRef = useRef(null); // B3 fix: stable ref for ESC key handler
+  const [addedFields, setAddedFields] = useState([]);
+
+  const handleAddField = () => {
+    const name = window.prompt("Enter new field name:");
+    if (!name) return;
+    const cleanName = name.trim();
+    if (!cleanName) return;
+
+    // Check if standard or already exists
+    const existingKeys = Object.keys(edited).map(k => k.toLowerCase());
+    if (existingKeys.includes(cleanName.toLowerCase())) {
+      toast.error("Field already exists!");
+      return;
+    }
+
+    setAddedFields(prev => [...prev, cleanName]);
+    setEdited(prev => ({
+      ...prev,
+      [cleanName]: ""
+    }));
+  };
 
   // Identify fields from the contact that aren't internal bookkeeping fields
   const dynamicFields = useMemo(() => {
@@ -183,6 +204,9 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
       
       // Always show standard fields
       if (standardOrder.includes(k)) return true;
+
+      // Always show newly added fields in this modal session
+      if (addedFields.includes(k)) return true;
 
       // If the contact has recorded mapped fields list, only allow if explicitly mapped.
       if (edited._mappedFields && Array.isArray(edited._mappedFields)) {
@@ -213,7 +237,7 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
     });
 
     return sortedKeys;
-  }, [edited]);
+  }, [edited, addedFields]);
 
   // Debounced duplicate check — only on phone value change, not every keystroke
   const dupTimerRef = useRef(null);
@@ -280,6 +304,17 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
           delete updates[key];
         }
       });
+
+      // Ensure any newly added fields are marked as mapped so they show up in the table/attender view
+      if (addedFields.length > 0) {
+        const currentMapped = Array.isArray(updates._mappedFields) ? [...updates._mappedFields] : [];
+        addedFields.forEach(f => {
+          if (!currentMapped.includes(f)) {
+            currentMapped.push(f);
+          }
+        });
+        updates._mappedFields = currentMapped;
+      }
 
       // Track call timestamp — always record when attender touched this contact
       updates.lastCalledAt = new Date().toISOString();
@@ -433,109 +468,140 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
             const basicFields = dynamicFields.filter(f => !isQuestion(f) && !isCampaign(f));
             const questionFields = dynamicFields.filter(f => isQuestion(f));
             const campaignFields = dynamicFields.filter(f => isCampaign(f));
+
+            const isIncoming = edited._isNew || edited.callType === "incoming" || edited.callType === "incoming f";
+            const getEditable = (field) => {
+              if (isIncoming) return true;
+              if (addedFields.includes(field)) return true;
+              return ["source", "called for"].includes(field.toLowerCase());
+            };
+
             return (
               <>
                 {/* Standard contact fields – 4-col grid */}
                 {basicFields.length > 0 && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {basicFields.map(field => (
-                      <div
-                        key={field}
-                        className={`space-y-1 ${
-                          field === "Tags"
-                            ? "col-span-2 md:col-span-4"
-                            : [
-                                "What do you want to get out of this call",
-                                "How Did You Hear About Us?",
-                                "What is stopping you from hitting results...",
-                                "Tentative Date of the Mini Shivir you attended",
-                                "Which Mini Shivir did you attend?",
-                                "Your Health issues",
-                                "What is your Tejstan/Center name"
-                              ].includes(field)
-                            ? "col-span-2 md:col-span-4"
-                            : [
-                                "Profession", "Source of Information", "When You want to attend the event:", 
-                                "Shivir/event category", "Guest Designation", "Platform Name:"
-                              ].includes(field) || field.length > 15
-                            ? "col-span-2 md:col-span-2"
-                            : "col-span-1 md:col-span-1"
-                        }`}
-                      >
-                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                          {iconFor(field)} {field}
-                        </label>
-                        {field === "Tags" ? (
-                          <div className="flex flex-wrap gap-1.5 py-1 min-h-[38px] items-center">
-                            {(() => {
-                              const tagList = (edited[field] || "")
-                                .split(",")
-                                .map(t => t.trim())
-                                .filter(Boolean);
-                              return tagList.length > 0 ? (
-                                tagList.map((tag, idx) => (
-                                  <span
-                                    key={idx}
-                                    className="inline-flex items-center px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold border border-indigo-100"
-                                  >
-                                    {tag}
-                                  </span>
-                                ))
-                              ) : (
-                                <span className="text-gray-400 text-xs italic">—</span>
-                              );
-                            })()}
-                          </div>
-                        ) : (field.toLowerCase().includes("mahaasmani") || field.toLowerCase().includes("mahaasamani") || field.toLowerCase().includes("maha asamani") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id"))) ? (
-                          <div className="flex gap-2 py-1 items-center min-h-[38px]">
-                            {(() => {
-                               const isYes = String(edited[field] || "").toLowerCase() === "yes";
-                               const isNo = String(edited[field] || "").toLowerCase() === "no";
-                               return (
-                                 <>
-                                   <button
-                                     type="button"
-                                     onClick={() => handleChange(field, "Yes")}
-                                     disabled={!["source", "called for"].includes(field.toLowerCase())}
-                                     className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
-                                       isYes
-                                         ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
-                                         : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                                     } ${!["source", "called for"].includes(field.toLowerCase()) ? "opacity-60 cursor-not-allowed" : ""}`}
-                                   >
-                                     Yes
-                                   </button>
-                                   <button
-                                     type="button"
-                                     onClick={() => handleChange(field, "No")}
-                                     disabled={!["source", "called for"].includes(field.toLowerCase())}
-                                     className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
-                                       isNo
-                                         ? "bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/20"
-                                         : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                                     } ${!["source", "called for"].includes(field.toLowerCase()) ? "opacity-60 cursor-not-allowed" : ""}`}
-                                   >
-                                     No
-                                   </button>
-                                 </>
-                               );
-                            })()}
-                          </div>
-                        ) : (
-                          <input
-                            value={edited[field] || ""}
-                            onChange={e => handleChange(field, e.target.value)}
-                            readOnly={!["source", "called for"].includes(field.toLowerCase())}
-                            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                              !["source", "called for"].includes(field.toLowerCase())
-                                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                                : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {basicFields.map(field => {
+                        const editable = getEditable(field);
+                        return (
+                          <div
+                            key={field}
+                            className={`space-y-1 ${
+                              field === "Tags"
+                                ? "col-span-2 md:col-span-4"
+                                : [
+                                    "What do you want to get out of this call",
+                                    "How Did You Hear About Us?",
+                                    "What is stopping you from hitting results...",
+                                    "Tentative Date of the Mini Shivir you attended",
+                                    "Which Mini Shivir did you attend?",
+                                    "Your Health issues",
+                                    "What is your Tejstan/Center name"
+                                  ].includes(field)
+                                ? "col-span-2 md:col-span-4"
+                                : [
+                                    "Profession", "Source of Information", "When You want to attend the event:", 
+                                    "Shivir/event category", "Guest Designation", "Platform Name:"
+                                  ].includes(field) || field.length > 15
+                                ? "col-span-2 md:col-span-2"
+                                : "col-span-1 md:col-span-1"
                             }`}
-                            placeholder={`Enter ${field}...`}
-                          />
-                        )}
-                      </div>
-                    ))}
+                          >
+                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                              {iconFor(field)} {field}
+                            </label>
+                            {field === "Tags" ? (
+                              editable ? (
+                                <input
+                                  value={edited[field] || ""}
+                                  onChange={e => handleChange(field, e.target.value)}
+                                  className="w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                                  placeholder="Enter tags (comma separated)..."
+                                />
+                              ) : (
+                                <div className="flex flex-wrap gap-1.5 py-1 min-h-[38px] items-center">
+                                  {(() => {
+                                    const tagList = (edited[field] || "")
+                                      .split(",")
+                                      .map(t => t.trim())
+                                      .filter(Boolean);
+                                    return tagList.length > 0 ? (
+                                      tagList.map((tag, idx) => (
+                                        <span
+                                          key={idx}
+                                          className="inline-flex items-center px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold border border-indigo-100"
+                                        >
+                                          {tag}
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <span className="text-gray-400 text-xs italic">—</span>
+                                    );
+                                  })()}
+                                </div>
+                              )
+                            ) : (field.toLowerCase().includes("mahaasmani") || field.toLowerCase().includes("mahaasamani") || field.toLowerCase().includes("maha asamani") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id"))) ? (
+                              <div className="flex gap-2 py-1 items-center min-h-[38px]">
+                                {(() => {
+                                   const isYes = String(edited[field] || "").toLowerCase() === "yes";
+                                   const isNo = String(edited[field] || "").toLowerCase() === "no";
+                                   return (
+                                     <>
+                                       <button
+                                         type="button"
+                                         onClick={() => handleChange(field, "Yes")}
+                                         disabled={!editable}
+                                         className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
+                                           isYes
+                                             ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
+                                             : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                                         } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
+                                       >
+                                         Yes
+                                       </button>
+                                       <button
+                                         type="button"
+                                         onClick={() => handleChange(field, "No")}
+                                         disabled={!editable}
+                                         className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
+                                           isNo
+                                             ? "bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/20"
+                                             : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                                         } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
+                                       >
+                                         No
+                                       </button>
+                                     </>
+                                   );
+                                })()}
+                              </div>
+                            ) : (
+                              <input
+                                value={edited[field] || ""}
+                                onChange={e => handleChange(field, e.target.value)}
+                                readOnly={!editable}
+                                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                                  !editable
+                                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                                }`}
+                                placeholder={`Enter ${field}...`}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleAddField}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-700 rounded-xl text-xs font-black transition-all border border-indigo-100/80 shadow-sm hover:shadow-md cursor-pointer"
+                      >
+                        <Plus size={14} className="stroke-[3]" /> Add Custom Field
+                      </button>
+                    </div>
                   </div>
                 )}
                 {/* Lead form question responses – full-width textareas */}
