@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "react-hot-toast";
 import { 
   Database, RefreshCw, Check, AlertCircle, Search, Sparkles, 
-  Calendar, Phone, Mail, MapPin, Tag, ArrowRight, ShieldCheck, HelpCircle, X
+  Phone, Mail, MapPin, Tag, ArrowRight, ShieldCheck, HelpCircle, X
 } from "lucide-react";
 import { createProgram, importContacts } from "../../lib/db";
 import { testConnection, fetchContactsGroupedByTag, searchContacts, fetchLocationTags } from "../../lib/ghl";
@@ -37,13 +37,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
   const [crmFetchProgress, setCrmFetchProgress] = useState("");
   const abortControllerRef = useRef(null);
 
-  // Advanced Dynamic Filters
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [requirePhone, setRequirePhone] = useState(true);
-  const [requireEmail, setRequireEmail] = useState(false);
-  const [sourceFilter, setSourceFilter] = useState("");
-  const [cityFilter, setCityFilter] = useState("");
+
 
   // Discovered tags from CRM scanning
   const [discoveredTags, setDiscoveredTags] = useState([]);
@@ -223,64 +217,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
     ).slice(0, 15);
   }, [crmQuery, allSuggestions]);
 
-  // Dynamic Live Client-side Filter Calculation (Updates Instantly on state change!)
-  const filteredGroups = useMemo(() => {
-    if (!crmFetchedGroups) return null;
-
-    const result = {};
-    Object.entries(crmFetchedGroups).forEach(([tag, contacts]) => {
-      const filtered = contacts.filter(contact => {
-        // Date range validation
-        if (startDate) {
-          const start = new Date(startDate);
-          const added = new Date(contact["Date Added"]);
-          if (isNaN(added.getTime()) || added < start) return false;
-        }
-        if (endDate) {
-          const end = new Date(endDate);
-          end.setHours(23, 59, 59, 999);
-          const added = new Date(contact["Date Added"]);
-          if (isNaN(added.getTime()) || added > end) return false;
-        }
-
-        // Phone quality checks
-        if (requirePhone) {
-          const phone = contact["Phone"] || "";
-          const clean = phone.replace(/[\s\-\.\(\)\+]/g, "").trim();
-          if (clean.length < 5) return false;
-        }
-
-        // Email quality check
-        if (requireEmail) {
-          const email = contact["Email"] || "";
-          if (!email.includes("@")) return false;
-        }
-
-        // Source search
-        if (sourceFilter.trim()) {
-          const src = (contact["Source"] || contact["Sourse"] || "").toLowerCase();
-          if (!src.includes(sourceFilter.trim().toLowerCase())) return false;
-        }
-
-        // Location / City search
-        if (cityFilter.trim()) {
-          const city = (contact["City"] || "").toLowerCase();
-          const state = (contact["State"] || "").toLowerCase();
-          const combined = `${city} ${state}`;
-          if (!combined.includes(cityFilter.trim().toLowerCase())) return false;
-        }
-
-        return true;
-      });
-
-      // Only include tags that have leads matching the filters
-      if (filtered.length > 0) {
-        result[tag] = filtered;
-      }
-    });
-
-    return result;
-  }, [crmFetchedGroups, startDate, endDate, requirePhone, requireEmail, sourceFilter, cityFilter]);
+  const filteredGroups = crmFetchedGroups;
 
   const allMatchingLeads = useMemo(() => {
     if (!filteredGroups) return [];
@@ -540,13 +477,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
       <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 p-8 rounded-3xl text-white shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative overflow-hidden">
         <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-64 h-64 bg-white/5 rounded-full blur-2xl"></div>
         <div className="space-y-2 z-10">
-          <div className="flex items-center gap-2 bg-white/10 px-3 py-1 rounded-full text-xs font-extrabold uppercase tracking-widest w-fit border border-white/10">
-            <Sparkles size={12} className="text-amber-300" /> GoHighLevel CRM Sync Center
-          </div>
           <h2 className="text-3xl md:text-4xl font-black tracking-tight">Lead Sync & Distribution 📂</h2>
-          <p className="text-blue-100 font-medium text-sm md:text-base max-w-xl">
-            Query CRM tags directly. The system automatically structures matched contacts into dialing programs. No spreadsheets required.
-          </p>
         </div>
 
         {/* Live CRM Status Health Badge */}
@@ -672,85 +603,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
           )}
         </div>
 
-        {/* Section 2: Landscape Advanced Filters Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-5 border-t border-gray-100">
-          {/* Col 1: Date Range */}
-          <div className="space-y-2">
-            <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block flex items-center gap-1.5">
-              <Calendar size={12} className="text-blue-500" /> Lead Created Date Range
-            </span>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="relative">
-                <span className="absolute left-3 top-2.5 text-[9px] font-bold text-gray-400 uppercase">After</span>
-                <input 
-                  type="date"
-                  value={startDate}
-                  onChange={e => setStartDate(e.target.value)}
-                  className="w-full pl-12 pr-2.5 py-2 bg-gray-50 border border-gray-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-              <div className="relative">
-                <span className="absolute left-3 top-2.5 text-[9px] font-bold text-gray-400 uppercase">Before</span>
-                <input 
-                  type="date"
-                  value={endDate}
-                  onChange={e => setEndDate(e.target.value)}
-                  className="w-full pl-12 pr-2.5 py-2 bg-gray-50 border border-gray-200 rounded-xl font-bold text-xs focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-            </div>
-          </div>
 
-          {/* Col 2: Quality Requirements */}
-          <div className="space-y-2 md:pl-4 md:border-l border-gray-150">
-            <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block flex items-center gap-1.5">
-              <Phone size={12} className="text-emerald-500" /> Validation & Quality Standards
-            </span>
-            <div className="space-y-2 pt-0.5">
-              <label className="flex items-center gap-2.5 cursor-pointer select-none text-[11px] font-extrabold text-gray-755 hover:text-gray-900">
-                <input 
-                  type="checkbox"
-                  checked={requirePhone}
-                  onChange={e => setRequirePhone(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 transition cursor-pointer"
-                />
-                <span>Require Valid Phone Number</span>
-              </label>
-              <label className="flex items-center gap-2.5 cursor-pointer select-none text-[11px] font-extrabold text-gray-755 hover:text-gray-900">
-                <input 
-                  type="checkbox"
-                  checked={requireEmail}
-                  onChange={e => setRequireEmail(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 transition cursor-pointer"
-                />
-                <span>Require Valid Email Address</span>
-              </label>
-            </div>
-          </div>
-
-          {/* Col 3: Demographics Filter */}
-          <div className="space-y-2 md:pl-4 md:border-l border-gray-150">
-            <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block">
-              Lead Source & Origin Filters
-            </span>
-            <div className="grid grid-cols-2 gap-2">
-              <input 
-                type="text"
-                placeholder="Source (e.g. Meta Ads)"
-                value={sourceFilter}
-                onChange={e => setSourceFilter(e.target.value)}
-                className="w-full px-2.5 py-2 bg-gray-50 border border-gray-200 rounded-xl font-bold text-[10px] focus:ring-2 focus:ring-blue-500 outline-none placeholder-gray-400"
-              />
-              <input 
-                type="text"
-                placeholder="City/State (e.g. Pune)"
-                value={cityFilter}
-                onChange={e => setCityFilter(e.target.value)}
-                className="w-full px-2.5 py-2 bg-gray-50 border border-gray-200 rounded-xl font-bold text-[10px] focus:ring-2 focus:ring-blue-500 outline-none placeholder-gray-400"
-              />
-            </div>
-          </div>
-        </div>
 
         {/* Section 3: Discovered CRM Tags (Badge Panel) */}
         <div className="pt-4 border-t border-gray-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -864,24 +717,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
               </div>
             )}
 
-            <div className="w-full space-y-2 pt-5 border-t border-gray-100 max-w-3xl mx-auto">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block text-center">Quick Suggestions</span>
-              <div className="flex flex-wrap justify-center gap-1.5 max-h-36 overflow-y-auto pr-1">
-                {allSuggestions.slice(0, 15).map(tag => (
-                  <button
-                    key={tag}
-                    onClick={() => {
-                      setCrmQuery(tag);
-                      setShowDiagnosticTip(false);
-                      searchInputRef.current?.focus();
-                    }}
-                    className="px-3 py-1.5 bg-white border hover:bg-blue-50 border-gray-200 text-gray-755 hover:text-blue-600 text-[10px] font-black rounded-xl transition shadow-sm animate-in zoom-in-95 duration-150"
-                  >
-                    #{tag}
-                  </button>
-                ))}
-              </div>
-            </div>
+
           </div>
         ) : (
           /* Dynamic Sync Workspace (Full-Width, One-Below-Another) */
@@ -1006,11 +842,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
 
                 {allMatchingLeads.length === 0 && (
                   <div className="p-10 text-center bg-gray-50 rounded-2xl border border-dashed text-gray-500 text-xs font-semibold">
-                    {Object.keys(filteredGroups || {}).length > 0 ? (
-                      <span>⚠️ No target programs selected. Toggle the target program checkboxes above to include leads for syncing.</span>
-                    ) : (
-                      <span>⚠️ No contacts match the dynamic filter rules above. Try relaxing date, source, or validation requirements.</span>
-                    )}
+                    <span>⚠️ No target programs selected. Toggle the target program checkboxes above to include leads for syncing.</span>
                   </div>
                 )}
               </div>
