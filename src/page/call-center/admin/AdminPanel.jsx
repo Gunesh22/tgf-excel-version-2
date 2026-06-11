@@ -563,22 +563,21 @@ function DashboardTab({ programs, attenders }) {
 
 // ─── Programs Tab ─────────────────────────────
 // Standard mapping targets for the field mapping modal
-const STANDARD_TARGETS = ["Name", "Phone", "Email", "City", "Country", "Tags", "Source", "Called For", "Custom", "Ignore"];
+const STANDARD_TARGETS = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Source", "Tags", "Ignore"];
 
 function getDefaultExcelMapping(colName) {
   const c = colName.trim().toLowerCase();
   if (["name", "caller", "caller name", "lead name", "lead", "name of caller", "first name", "last name", "contact name"].includes(c)) return "Name";
-  if (["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number", "cont no"].includes(c)) return "Phone";
+  if (["mobile", "mobile no", "mobile number"].includes(c)) return "Mobile";
+  if (["phone", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "cont no", "contact no", "contact_no"].includes(c)) return "Phone";
   if (["email", "mail", "e-mail", "email id", "emailaddress"].includes(c)) return "Email";
   if (["city", "location", "khoji city", "place", "city name"].includes(c)) return "City";
-  if (["country", "nation"].includes(c)) return "Country";
+  if (["state", "state name", "province", "region"].includes(c)) return "State";
+  if (["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(c) || c.includes("asmani") || c.includes("aasmani") || c.includes("आसमानी")) return "Khoji";
   if (["tags", "tag"].includes(c)) return "Tags";
-  if (["source", "sourse", "origin"].includes(c)) return "Source";
-  if (["called for", "called_for", "calledfor"].includes(c)) return "Called For";
-  if (["sub program", "subprogram", "sheet"].includes(c)) return "Ignore";
-  // Long survey questions → auto-ignore
-  if (colName.length > 40 || colName.includes("?") || colName.toLowerCase().includes("how ") || colName.toLowerCase().includes("enter ") || colName.toLowerCase().includes("please ")) return "Ignore";
-  return "Custom";
+  if (["source of informiton", "source of information"].includes(c)) return "Source";
+  if (["source", "sourse", "origin"].includes(c)) return "Ignore";
+  return "Ignore";
 }
 
 function ProgramsTab({ programs, attenders, onRefresh }) {
@@ -690,6 +689,17 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
       initSkipEmpty[col] = true; // skip empty by default
     });
 
+    cols.sort((a, b) => {
+      const mapA = initMappings[a];
+      const mapB = initMappings[b];
+      const isMappedA = mapA !== "Ignore";
+      const isMappedB = mapB !== "Ignore";
+      
+      if (isMappedA && !isMappedB) return -1;
+      if (!isMappedA && isMappedB) return 1;
+      return a.localeCompare(b);
+    });
+
     setExcelColumns(cols);
     setExcelSampleRows(samples);
     setColumnMappings(initMappings);
@@ -726,6 +736,17 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
       cols.forEach(col => {
         initMappings[col] = getDefaultExcelMapping(col);
         initSkipEmpty[col] = true;
+      });
+
+      cols.sort((a, b) => {
+        const mapA = initMappings[a];
+        const mapB = initMappings[b];
+        const isMappedA = mapA !== "Ignore";
+        const isMappedB = mapB !== "Ignore";
+        
+        if (isMappedA && !isMappedB) return -1;
+        if (!isMappedA && isMappedB) return 1;
+        return a.localeCompare(b);
       });
 
       toast.dismiss(toastId);
@@ -769,7 +790,7 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
       const mappedFieldsList = [];
       Object.entries(columnMappings).forEach(([col, target]) => {
         if (col === "Sub Program" || target === "Ignore") return;
-        mappedFieldsList.push(target === "Custom" ? col : target);
+        mappedFieldsList.push(target);
       });
       const uniqueMappedFields = Array.from(new Set(mappedFieldsList));
 
@@ -788,22 +809,18 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
 
           Object.entries(row).forEach(([col, val]) => {
             if (col === "Sub Program") return;
-            const target = columnMappings[col] ?? "Custom";
+            const target = columnMappings[col] ?? "Ignore";
             const skipEmpty = !!skipEmptySettings[col];
             const strVal = String(val ?? "").trim();
             if (skipEmpty && !strVal) return;
             if (target === "Ignore") return;
 
-            if (target === "Custom") {
-              newRow[col] = strVal;
+            // Standard target (Name, Phone, Email, etc.)
+            if (newRow[target]) {
+              // Concatenate if already set (e.g. first+last name)
+              newRow[target] = `${newRow[target]} ${strVal}`.trim();
             } else {
-              // Standard target (Name, Phone, Email, etc.)
-              if (newRow[target]) {
-                // Concatenate if already set (e.g. first+last name)
-                newRow[target] = `${newRow[target]} ${strVal}`.trim();
-              } else {
-                newRow[target] = strVal;
-              }
+              newRow[target] = strVal;
             }
           });
 
@@ -1010,16 +1027,15 @@ function ProgramsTab({ programs, attenders, onRefresh }) {
                             <optgroup label="Standard Fields">
                               <option value="Name">Name (Caller Name)</option>
                               <option value="Phone">Phone</option>
+                              <option value="Mobile">Mobile No</option>
                               <option value="Email">Email</option>
                               <option value="City">City</option>
-                              <option value="Country">Country</option>
+                              <option value="State">State</option>
+                              <option value="Khoji">Khoji (Yes/No / Have you done Maha Asmani)</option>
+                              <option value="Source">Source of Information</option>
                               <option value="Tags">Tags</option>
-                              <option value="Source">Source</option>
-                              <option value="Called For">Called For</option>
-                              <option value="Date Added">Date Added</option>
                             </optgroup>
                             <optgroup label="Options">
-                              <option value="Custom">Keep as Custom Field</option>
                               <option value="Ignore">Don't Import (Ignore)</option>
                             </optgroup>
                           </select>

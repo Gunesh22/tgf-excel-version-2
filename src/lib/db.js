@@ -133,7 +133,7 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
   const activeMappedFields = [];
   Object.entries(columnMappings).forEach(([col, target]) => {
     if (col === "Sub Program" || target === "Ignore") return;
-    activeMappedFields.push(target === "Custom" ? col : target);
+    activeMappedFields.push(target);
   });
 
   snap.docs.forEach(chunkDoc => {
@@ -161,10 +161,7 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
 
         const mappingLookup = getCaseInsensitiveProp(columnMappings, key);
         if (!mappingLookup.found) {
-          // Unknown col (not in mapping dialog) — keep as-is
-          newContact[key] = val;
-          const strVal = val === null || val === undefined ? "" : String(val).trim();
-          if (strVal) contactMappedFields.push(key);
+          // Ignore by default!
           return;
         }
 
@@ -178,22 +175,18 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
         if (skipEmpty && !strVal) return;
         if (target === "Ignore") return;
 
-        if (target === "Custom") {
-          newContact[canonicalKey] = strVal || val;
+        // Standard target
+        if (newContact[target]) {
+          newContact[target] = `${newContact[target]} ${strVal}`.trim();
         } else {
-          // Standard target
-          if (newContact[target]) {
-            newContact[target] = `${newContact[target]} ${strVal}`.trim();
-          } else {
-            newContact[target] = strVal || val;
-          }
+          newContact[target] = strVal || val;
         }
       });
 
       newContact._mappedFields = Array.from(new Set(contactMappedFields));
 
       // Re-compute normalizedPhone
-      const phoneVal = newContact.Phone || newContact["Cont No"] || newContact.phone || newContact.Number || newContact.Mobile || "";
+      const phoneVal = newContact.Phone || "";
       newContact.normalizedPhone = normalizePhone(String(phoneVal));
 
       return newContact;
@@ -219,7 +212,7 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
     "_contactrefid", "_mappedfields", "sub program", "subprogram", "ghl_id", "normalizedphone"
   ]);
 
-  const STANDARD_FIELDS = new Set(["Name", "Phone", "Email", "City", "Country", "Tags", "Source", "Called For"]);
+  const STANDARD_FIELDS = new Set(["Name", "Phone", "Email", "City", "State", "Khoji", "Source", "Tags"]);
 
   logsSnap.docs.forEach(logDoc => {
     const logData = logDoc.data();
@@ -247,11 +240,9 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
         if (isStandard) {
           const canonicalStandard = Array.from(STANDARD_FIELDS).find(f => f.toLowerCase() === keyLower);
           logMappedFields.push(canonicalStandard);
-        } else if (!isIgnoredField(key)) {
-          // Keep custom fields if they have value and are not ignored
-          if (strVal) {
-            logMappedFields.push(key);
-          }
+        } else {
+          // Delete other fields to ignore by default
+          logUpdate[key] = deleteField();
         }
         return;
       }
@@ -266,22 +257,14 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
         if (key !== canonicalKey) {
           logUpdate[key] = deleteField();
         }
-        const tField = target === "Custom" ? canonicalKey : target;
-        const idx = logMappedFields.indexOf(tField);
+        const idx = logMappedFields.indexOf(target);
         if (idx !== -1) logMappedFields.splice(idx, 1);
         return;
       }
 
-      if (target === "Custom") {
-        logUpdate[canonicalKey] = strVal || val;
-        if (key !== canonicalKey) {
-          logUpdate[key] = deleteField();
-        }
-      } else {
-        logUpdate[target] = strVal || val;
-        if (key !== target) {
-          logUpdate[key] = deleteField();
-        }
+      logUpdate[target] = strVal || val;
+      if (key !== target) {
+        logUpdate[key] = deleteField();
       }
     });
 
@@ -339,7 +322,9 @@ const cleanImportRow = (row) => {
       Phone: "",
       Email: "",
       City: "",
-      Country: "",
+      State: "",
+      Khoji: "",
+      Source: "",
       Tags: ""
     };
     if (row["Sub Program"] !== undefined) {
@@ -349,12 +334,14 @@ const cleanImportRow = (row) => {
       clean.GHL_ID = row.GHL_ID;
     }
     row._mappedFields.forEach(field => {
-      clean[field] = row[field] !== undefined && row[field] !== null ? String(row[field]) : "";
+      if (["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Source", "Tags"].includes(field)) {
+        clean[field] = row[field] !== undefined && row[field] !== null ? String(row[field]) : "";
+      }
     });
-    clean._mappedFields = row._mappedFields;
+    clean._mappedFields = row._mappedFields.filter(f => ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Source", "Tags"].includes(f));
     
     // Always ensure normalizedPhone is populated
-    const phoneVal = clean.Phone || clean["Cont No"] || clean.phone || clean.Number || clean.Mobile || "";
+    const phoneVal = clean.Phone || clean.Mobile || "";
     clean.normalizedPhone = normalizePhone(phoneVal);
     
     return clean;
@@ -363,9 +350,12 @@ const cleanImportRow = (row) => {
   const clean = {
     Name: "",
     Phone: "",
+    Mobile: "",
     Email: "",
     City: "",
-    Country: "",
+    State: "",
+    Khoji: "",
+    Source: "",
     Tags: ""
   };
   
@@ -391,7 +381,11 @@ const cleanImportRow = (row) => {
       }
       mappedFields.push("Name");
     }
-    else if (["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"].includes(k)) {
+    else if (["mobile", "mobile no", "mobile number"].includes(k)) {
+      clean.Mobile = strVal;
+      mappedFields.push("Mobile");
+    }
+    else if (["phone", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "contact no", "contact_no"].includes(k)) {
       clean.Phone = strVal;
       mappedFields.push("Phone");
     }
@@ -399,47 +393,25 @@ const cleanImportRow = (row) => {
       clean.Email = strVal;
       mappedFields.push("Email");
     }
-    else if (["city", "khoji city", "place", "city name"].includes(k)) {
+    else if (["city", "khoji city", "place", "city name", "location"].includes(k)) {
       clean.City = strVal;
       mappedFields.push("City");
     }
-    else if (["country", "nation"].includes(k)) {
-      clean.Country = strVal;
-      mappedFields.push("Country");
+    else if (["state", "state name", "province", "region"].includes(k)) {
+      clean.State = strVal;
+      mappedFields.push("State");
+    }
+    else if (["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(k) || k.includes("asmani") || k.includes("aasmani") || k.includes("आसमानी")) {
+      clean.Khoji = strVal;
+      mappedFields.push("Khoji");
     }
     else if (["tags", "tag"].includes(k)) {
       clean.Tags = strVal;
       mappedFields.push("Tags");
     }
-    else if (["source", "sourse"].includes(k)) {
+    else if (["source of informiton", "source of information"].includes(k)) {
       clean.Source = strVal;
       mappedFields.push("Source");
-    }
-    else if (["called for", "called_for", "calledfor"].includes(k)) {
-      clean["Called For"] = strVal;
-      mappedFields.push("Called For");
-    }
-  });
-
-  // Preserve all other custom fields as-is
-  const excludeKeys = [
-    "name", "caller", "caller name", "lead name", "lead", "name of caller", "first name", "last name",
-    "phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number",
-    "email", "mail", "e-mail", "email id", "emailaddress",
-    "city", "khoji city", "place", "city name",
-    "country", "nation", "tags", "tag", "sub program",
-    "source", "sourse", "called for", "called_for", "calledfor"
-  ];
-
-  Object.entries(row).forEach(([key, val]) => {
-    const k = key.trim().toLowerCase();
-    const strVal = val === null || val === undefined ? "" : String(val).trim();
-    
-    if (!excludeKeys.includes(k) && !key.startsWith("_")) {
-      if (!isIgnoredField(k) && strVal) {
-        clean[key] = strVal;
-        mappedFields.push(key);
-      }
     }
   });
 
@@ -448,7 +420,7 @@ const cleanImportRow = (row) => {
   }
 
   // Always ensure normalizedPhone is populated
-  const phoneVal = clean.Phone || clean["Cont No"] || clean.phone || clean.Number || clean.Mobile || "";
+  const phoneVal = clean.Phone || "";
   clean.normalizedPhone = normalizePhone(phoneVal);
 
   return clean;
@@ -475,7 +447,7 @@ export const importContacts = async (programId, programName, rows, subPrograms =
   logsSnap.docs.forEach(d => {
     const data = d.data();
     if (data._deleted) return;
-    const phoneVal = data.Phone || data["Cont No"] || data.phone || data.Number || data.Mobile || "";
+    const phoneVal = data.Phone || "";
     const norm = normalizePhone(phoneVal);
     if (norm) {
       assignedLogs.set(norm, { ref: d.ref, data });
@@ -505,7 +477,7 @@ export const importContacts = async (programId, programName, rows, subPrograms =
 
     spRows.forEach((r, idx) => {
       const cleaned = cleanImportRow(r);
-      const phoneVal = cleaned.Phone || cleaned["Cont No"] || cleaned.phone || cleaned.Number || cleaned.Mobile || "";
+      const phoneVal = cleaned.Phone || "";
       const norm = normalizePhone(phoneVal);
 
       if (norm) {

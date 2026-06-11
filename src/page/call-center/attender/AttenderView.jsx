@@ -105,6 +105,23 @@ const isIgnoredField = (key) => {
   });
 };
 
+const getKhojiValue = (log) => {
+  if (log.Khoji !== undefined && log.Khoji !== null) return String(log.Khoji).trim();
+  const k = Object.keys(log).find(key => 
+    ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(key.toLowerCase()) || 
+    key.toLowerCase().includes("asmani") || 
+    key.toLowerCase().includes("aasmani") || 
+    key.toLowerCase().includes("आसमानी")
+  );
+  return k ? String(log[k] || "").trim() : "";
+};
+
+const isKhojiAffirmative = (val) => {
+  if (!val) return false;
+  const v = String(val).toLowerCase().trim();
+  return v === "yes" || v === "y" || v === "true" || v === "khoji" || v.includes("dew d") || v.includes("done") || v.includes("completed") || (v.includes("khoji") && !v.includes("not") && !v.includes("new"));
+};
+
 // ─── Edit Modal ───────────────────────────────
 const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose }) => {
   const [edited, setEdited] = useState(() => {
@@ -113,6 +130,8 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
     // Normalize alternate spellings first to avoid duplicates or missing fields
     const sourceAliases = ["source", "sourse"];
     const calledForAliases = ["called for", "called_for", "calledfor"];
+    const stateAliases = ["state", "state name", "province", "region"];
+    const khojiAliases = ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"];
     
     let sourceVal = "";
     let sourceKeyToClean = null;
@@ -144,7 +163,37 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
     }
     normalized["Called For"] = calledForVal;
 
-    const whitelist = ["Name", "Phone", "Email", "City", "Country", "Tags", "Source", "Called For"];
+    let stateVal = "";
+    let stateKeyToClean = null;
+    Object.keys(normalized).forEach(k => {
+      if (stateAliases.includes(k.toLowerCase())) {
+        if (normalized[k]) {
+          stateVal = normalized[k];
+        }
+        stateKeyToClean = k;
+      }
+    });
+    if (stateKeyToClean) {
+      delete normalized[stateKeyToClean];
+    }
+    normalized["State"] = stateVal;
+
+    let khojiVal = "";
+    let khojiKeyToClean = null;
+    Object.keys(normalized).forEach(k => {
+      if (khojiAliases.includes(k.toLowerCase()) || k.toLowerCase().includes("asmani") || k.toLowerCase().includes("aasmani") || k.toLowerCase().includes("आसमानी")) {
+        if (normalized[k]) {
+          khojiVal = normalized[k];
+        }
+        khojiKeyToClean = k;
+      }
+    });
+    if (khojiKeyToClean) {
+      delete normalized[khojiKeyToClean];
+    }
+    normalized["Khoji"] = khojiVal;
+
+    const whitelist = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
     whitelist.forEach(col => {
       if (normalized[col] === undefined || normalized[col] === null) {
         const foundKey = Object.keys(normalized).find(k => k.toLowerCase() === col.toLowerCase());
@@ -189,7 +238,7 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
 
   // Identify fields from the contact that aren't internal bookkeeping fields
   const dynamicFields = useMemo(() => {
-    const standardOrder = ["Name", "Phone", "Email", "City", "Country", "Tags", "Source", "Called For"];
+    const standardOrder = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
     const internalKeys = [
       "id", "contactId", "programId", "programName", "attenderId", "attenderName",
       "callType", "status", "remark", "callbackDate", "callbackStatus", "isCallbackDue",
@@ -463,7 +512,7 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
           {(() => {
             const isQuestion = (f) => f.length > 40 || /^(what|how|why|describe|tell)[\s_]/i.test(f);
             const isCampaign = (f) => { const k = f.toLowerCase().replace(/[_\s]/g, ""); return k.includes("adid") || k.includes("adname") || k.includes("adsetid") || k.includes("adsetname") || k.includes("campaignid") || k.includes("campaignname") || k.includes("formid") || k.includes("formname") || k.includes("isorganic") || k.includes("createdtime"); };
-            const iconFor = (f) => { const k = f.toLowerCase(); return k.includes("name") || k.includes("lead") || k.includes("khoji") || k.includes("caller") ? <User size={11} className="text-emerald-500" /> : k.includes("phone") || k.includes("mobile") ? <Phone size={11} className="text-blue-500" /> : k.includes("city") || k.includes("location") ? <MapPin size={11} className="text-red-500" /> : k.includes("email") ? <Hash size={11} className="text-purple-500" /> : k.includes("when") || k.includes("suitable") ? <Clock size={11} className="text-amber-500" /> : k.includes("mahaasmani") || k.includes("mahaasamani") ? <CheckCircle2 size={11} className="text-pink-500" /> : <Tag size={11} className="text-indigo-500" />; };
+            const iconFor = (f) => { const k = f.toLowerCase(); return k.includes("name") || k.includes("lead") || k.includes("khoji") || k.includes("caller") ? <User size={11} className="text-emerald-500" /> : k.includes("phone") || k.includes("mobile") ? <Phone size={11} className="text-blue-500" /> : k.includes("city") || k.includes("location") ? <MapPin size={11} className="text-red-500" /> : k.includes("email") ? <Hash size={11} className="text-purple-500" /> : k.includes("when") || k.includes("suitable") ? <Clock size={11} className="text-amber-500" /> : k.includes("asmani") || k.includes("aasmani") || k.includes("आसमानी") ? <CheckCircle2 size={11} className="text-pink-500" /> : <Tag size={11} className="text-indigo-500" />; };
             const labelFor = (f) => f.replace(/_/g, " ").replace(/\?/g, "").trim();
             const basicFields = dynamicFields.filter(f => !isQuestion(f) && !isCampaign(f));
             const questionFields = dynamicFields.filter(f => isQuestion(f));
@@ -541,7 +590,7 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
                                   })()}
                                 </div>
                               )
-                            ) : (field.toLowerCase().includes("mahaasmani") || field.toLowerCase().includes("mahaasamani") || field.toLowerCase().includes("maha asamani") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id"))) ? (
+                            ) : (field.toLowerCase().includes("asmani") || field.toLowerCase().includes("aasmani") || field.toLowerCase().includes("आसमानी") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id"))) ? (
                               <div className="flex gap-2 py-1 items-center min-h-[38px]">
                                 {(() => {
                                    const isYes = String(edited[field] || "").toLowerCase() === "yes";
@@ -1075,6 +1124,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   const [filterCallCount, setFilterCallCount] = useState("All");
   const [filterGeneralStatus, setFilterGeneralStatus] = useState("All");
   const [filterAbhivyakti, setFilterAbhivyakti] = useState("All");
+  const [filterKhoji, setFilterKhoji] = useState("All");
   const [filterDateType, setFilterDateType] = useState("All");
   const [filterDateRange, setFilterDateRange] = useState("All");
   const [customDateFrom, setCustomDateFrom] = useState("");
@@ -1176,8 +1226,19 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
       programName: selectedProgramName || null,
       attenderId,
       attenderName,
-      Name: "", Phone: "", Source: "", City: "",
-      callType: "incoming", status: "", remark: "",
+      Name: "", 
+      Phone: "", 
+      Mobile: "",
+      Email: "",
+      City: "", 
+      State: "", 
+      Khoji: "", 
+      Source: "", 
+      Tags: "",
+      "Called For": "",
+      callType: "incoming", 
+      status: "", 
+      remark: "",
       "Sub Program": selectedSheet && selectedSheet !== "No Tag" ? selectedSheet : "",
       subProgram: selectedSheet && selectedSheet !== "No Tag" ? selectedSheet : "",
     });
@@ -1213,6 +1274,8 @@ const cleanExportRow = (log) => {
   const phoneVal = findValue(log, ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"]);
   const emailVal = findValue(log, ["email", "mail", "e-mail", "email id", "emailaddress"]);
   const cityVal = findValue(log, ["city", "location", "khoji city", "place", "city name"]);
+  const stateVal = findValue(log, ["state", "state name", "province", "region"]);
+  const khojiVal = findValue(log, ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"]);
   const countryVal = findValue(log, ["country", "nation"]);
   const tagsVal = findValue(log, ["tags", "tag"]);
   const statusVal = log.status || "Pending";
@@ -1236,6 +1299,8 @@ const cleanExportRow = (log) => {
   row["Phone"] = phoneVal;
   row["Email"] = emailVal;
   row["City"] = cityVal;
+  row["State"] = stateVal;
+  row["Khoji"] = khojiVal;
   row["Country"] = countryVal;
   row["Tags"] = tagsVal;
   row["Sub Program"] = subProgramVal;
@@ -1258,6 +1323,8 @@ const cleanExportRow = (log) => {
         "phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number",
         "email", "mail", "e-mail", "email id", "emailaddress",
         "city", "location", "khoji city", "place", "city name",
+        "state", "state name", "province", "region",
+        "khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani",
         "country", "nation", "tags", "tag", "status", "remark", "callbackdate", "sub program",
         "source", "sourse", "called for", "called_for", "calledfor", "call type", "calltype", "callback status", "callbackstatus", "objection reason", "objectionreason"
       ].includes(key.toLowerCase());
@@ -1436,6 +1503,7 @@ const cleanExportRow = (log) => {
     if (filterCallCount !== "All") count++;
     if (filterGeneralStatus !== "All") count++;
     if (filterAbhivyakti !== "All") count++;
+    if (filterKhoji !== "All") count++;
     if (filterDateType !== "All" && filterDateRange !== "All") count++;
     if (customTimeFrom) count++;
     if (customTimeTo) count++;
@@ -1444,6 +1512,7 @@ const cleanExportRow = (log) => {
     searchQuery, filterStatus, filterSource, filterCity, filterCalledFor,
     filterCallType, filterSubProgram, filterObjectionReason,
     filterCallbackStatus, filterCallCount, filterGeneralStatus, filterAbhivyakti,
+    filterKhoji,
     filterDateType, filterDateRange, customTimeFrom, customTimeTo
   ]);
 
@@ -1460,6 +1529,7 @@ const cleanExportRow = (log) => {
     setFilterCallCount("All");
     setFilterGeneralStatus("All");
     setFilterAbhivyakti("All");
+    setFilterKhoji("All");
     setFilterDateType("All");
     setFilterDateRange("All");
     setCustomDateFrom("");
@@ -1549,6 +1619,14 @@ const cleanExportRow = (log) => {
       if (filterAbhivyakti === "Yes" && log.status !== "Reg.Done") return false;
       if (filterAbhivyakti === "No" && log.status === "Reg.Done") return false;
 
+      // 10d. Khoji Filter
+      if (filterKhoji !== "All") {
+        const val = getKhojiValue(log);
+        const affirmative = isKhojiAffirmative(val);
+        if (filterKhoji === "Yes" && !affirmative) return false;
+        if (filterKhoji === "No" && affirmative) return false;
+      }
+
       // 11. Date & Time / Activity Range Filter
       if (filterDateType !== "All") {
         let logDate = null;
@@ -1608,6 +1686,7 @@ const cleanExportRow = (log) => {
     monthFilteredLogs, searchQuery, filterStatus, filterSource, filterCalledFor,
     filterCity, filterCallType, filterSubProgram, filterObjectionReason,
     filterCallbackStatus, filterCallCount, filterGeneralStatus, filterAbhivyakti,
+    filterKhoji,
     filterDateType, filterDateRange, customDateFrom, customDateTo, customTimeFrom, customTimeTo
   ]);
 
@@ -1627,7 +1706,7 @@ const cleanExportRow = (log) => {
   ]), []);
 
   const dynamicCols = useMemo(() => {
-    const standardOrder = ["Name", "Phone", "Email", "City", "Country", "Tags", "Source", "Called For"];
+    const standardOrder = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
     
     // Find all keys present across any of the monthFilteredLogs
     const allKeysSet = new Set();
@@ -2196,6 +2275,22 @@ const cleanExportRow = (log) => {
               <option value="All">All</option>
               <option value="Yes">Yes (Registered)</option>
               <option value="No">No (Not Registered)</option>
+            </select>
+          </div>
+
+          {/* Khoji Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
+              <CheckSquare size={11} className="text-pink-500" /> Khoji Status
+            </label>
+            <select
+              value={filterKhoji}
+              onChange={e => { setFilterKhoji(e.target.value); setPage(1); }}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition cursor-pointer font-sans"
+            >
+              <option value="All">All Contacts</option>
+              <option value="Yes">Yes (Khoji)</option>
+              <option value="No">No (New)</option>
             </select>
           </div>
 

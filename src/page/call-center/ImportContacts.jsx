@@ -228,66 +228,14 @@ export default function ImportContacts({ programs, onImportComplete }) {
 
   const getDefaultMapping = (colName) => {
     const c = colName.toLowerCase().trim();
-    const cClean = c.replace(/_/g, " ");
-
-    const ignoreFields = [
-      "consent",
-      "consent in hindi",
-      "current date",
-      "current_date",
-      "21day current date",
-      "21day_current date",
-      "21day challenge day",
-      "21day_challenge_day",
-      "date added",
-      "date_added",
-      "program name",
-      "razorpay",
-      "program payment status",
-      "payment status",
-      "payment event",
-      "khoji status",
-      "possibility",
-      "understand that this is an offline event and agree to attend in person",
-      "have completed 15 days of meditation nonstop without fail",
-      "confirm that i will definitely attend this event",
-      "event startdate",
-      "event type",
-      "base amount",
-      "acknowledgement",
-      "d2e payment status",
-      "total registrations",
-      
-      // Underscore variants
-      "program_payment_status",
-      "payment_status",
-      "payment_event",
-      "khoji_status",
-      "event_startdate",
-      "event_type",
-      "base_amount",
-      "d2e_payment_status",
-      "total_registrations",
-
-      // New ignored fields from user feedback
-      "organization type",
-      "organization_type",
-      "total number of registration",
-      "total_number_of_registration",
-      "a serious business person...",
-      "a serious business person",
-      "form ai tools",
-      "form_ai_tools"
-    ];
-
-    if (ignoreFields.includes(c) || ignoreFields.includes(cClean)) {
-      return "Ignore";
-    }
 
     if (["name", "caller", "caller name", "lead name", "lead", "name of caller", "first name", "last name", "contact name"].includes(c)) {
       return "Name";
     }
-    if (["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number", "contact no", "contact_no"].includes(c)) {
+    if (["mobile", "mobile no", "mobile number"].includes(c)) {
+      return "Mobile";
+    }
+    if (["phone", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "contact no", "contact_no"].includes(c)) {
       return "Phone";
     }
     if (["email", "mail", "e-mail", "email id", "emailaddress"].includes(c)) {
@@ -296,20 +244,20 @@ export default function ImportContacts({ programs, onImportComplete }) {
     if (["city", "location", "khoji city", "place", "city name"].includes(c)) {
       return "City";
     }
-    if (["country", "nation"].includes(c)) {
-      return "Country";
+    if (["state", "state name", "province", "region"].includes(c)) {
+      return "State";
+    }
+    if (["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(c) || c.includes("asmani") || c.includes("aasmani") || c.includes("आसमानी")) {
+      return "Khoji";
     }
     if (["tags", "tag"].includes(c)) {
       return "Tags";
     }
-    if (["source", "sourse", "origin"].includes(c)) {
+    if (["source of informiton", "source of information"].includes(c)) {
       return "Source";
     }
-    if (["called for", "called_for", "calledfor"].includes(c)) {
-      return "Called For";
-    }
-    if (["date added", "created", "created at", "date_added", "createdat"].includes(c)) {
-      return "Date Added";
+    if (["source", "sourse", "origin"].includes(c)) {
+      return "Ignore";
     }
     return "Ignore";
   };
@@ -336,21 +284,22 @@ export default function ImportContacts({ programs, onImportComplete }) {
       });
     });
 
-    const sortedFields = Array.from(fields).sort((a, b) => {
-      const isStdA = ["name", "phone", "email", "city", "country", "tags", "source", "called for", "called_for", "calledfor", "date added"].includes(a.toLowerCase());
-      const isStdB = ["name", "phone", "email", "city", "country", "tags", "source", "called for", "called_for", "calledfor", "date added"].includes(b.toLowerCase());
-      
-      if (isStdA && !isStdB) return -1;
-      if (!isStdA && isStdB) return 1;
-      return a.localeCompare(b);
-    });
-
     const initialMappings = {};
     const initialSkipEmpty = {};
-
-    sortedFields.forEach(field => {
+    Array.from(fields).forEach(field => {
       initialMappings[field] = getDefaultMapping(field);
-      initialSkipEmpty[field] = true; // Checked by default
+      initialSkipEmpty[field] = true;
+    });
+
+    const sortedFields = Array.from(fields).sort((a, b) => {
+      const mapA = initialMappings[a];
+      const mapB = initialMappings[b];
+      const isMappedA = mapA !== "Ignore";
+      const isMappedB = mapB !== "Ignore";
+      
+      if (isMappedA && !isMappedB) return -1;
+      if (!isMappedA && isMappedB) return 1;
+      return a.localeCompare(b);
     });
 
     setColumnMappings(initialMappings);
@@ -387,7 +336,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
       const mappedFieldsList = [];
       Object.entries(columnMappings).forEach(([col, target]) => {
         if (col === "Sub Program" || target === "Ignore") return;
-        mappedFieldsList.push(target === "Custom" ? col : target);
+        mappedFieldsList.push(target);
       });
       const uniqueMappedFields = Array.from(new Set(mappedFieldsList));
 
@@ -417,19 +366,11 @@ export default function ImportContacts({ programs, onImportComplete }) {
             if (skipEmpty && !strVal) return;
             if (target === "Ignore") return;
             
-            if (target === "Custom") {
-              newContact[key] = strVal;
+            // Standard field target
+            if (newContact[target]) {
+              newContact[target] = `${newContact[target]} ${strVal}`.trim();
             } else {
-              // Standard field target
-              if (target === "Phone" || target === "Email") {
-                newContact[target] = strVal;
-              } else {
-                if (newContact[target]) {
-                  newContact[target] = `${newContact[target]} ${strVal}`.trim();
-                } else {
-                  newContact[target] = strVal;
-                }
-              }
+              newContact[target] = strVal;
             }
           });
           
@@ -970,16 +911,15 @@ export default function ImportContacts({ programs, onImportComplete }) {
                             <optgroup label="Standard Fields">
                               <option value="Name">Name (Caller Name)</option>
                               <option value="Phone">Phone</option>
+                              <option value="Mobile">Mobile No</option>
                               <option value="Email">Email</option>
                               <option value="City">City</option>
-                              <option value="Country">Country</option>
+                              <option value="State">State</option>
+                              <option value="Khoji">Khoji (Yes/No / Have you done Maha Asmani)</option>
+                              <option value="Source">Source of Information</option>
                               <option value="Tags">Tags</option>
-                              <option value="Source">Source</option>
-                              <option value="Called For">Called For</option>
-                              <option value="Date Added">Date Added</option>
                             </optgroup>
                             <optgroup label="Options">
-                              <option value="Custom">Keep as Custom Field</option>
                               <option value="Ignore">Don't Import (Ignore)</option>
                             </optgroup>
                           </select>
