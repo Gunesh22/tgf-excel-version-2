@@ -53,6 +53,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
   const [isMappingOpen, setIsMappingOpen] = useState(false);
   const [columnMappings, setColumnMappings] = useState({});
   const [skipEmptySettings, setSkipEmptySettings] = useState({});
+  const [mappingFields, setMappingFields] = useState([]);
 
   useEffect(() => {
     checkCRMConnection();
@@ -304,6 +305,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
 
     setColumnMappings(initialMappings);
     setSkipEmptySettings(initialSkipEmpty);
+    setMappingFields(sortedFields);
     setIsMappingOpen(true);
   };
 
@@ -856,7 +858,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {Object.keys(columnMappings).map(field => {
+                  {mappingFields.map(field => {
                     const samples = getSampleValues(field);
                     const target = columnMappings[field];
                     const isMapped = target && target !== "Ignore";

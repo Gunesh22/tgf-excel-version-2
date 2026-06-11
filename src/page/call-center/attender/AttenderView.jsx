@@ -105,15 +105,48 @@ const isIgnoredField = (key) => {
   });
 };
 
+const getFieldWithFallback = (log, fieldName) => {
+  if (!log) return "";
+  const name = fieldName.toLowerCase();
+  
+  // 1. Direct match check (case-insensitive key match)
+  const keys = Object.keys(log);
+  const directKey = keys.find(k => k.toLowerCase() === name);
+  const directVal = directKey !== undefined ? String(log[directKey] || "").trim() : "";
+  
+  // 2. If direct key exists and is non-empty, use it
+  if (directVal) return directVal;
+  
+  // 3. Fallback to aliases
+  let aliases = [];
+  if (name === "name") aliases = ["caller", "caller name", "lead name", "lead", "name of caller"];
+  else if (name === "phone") aliases = ["whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "contact no", "contact_no"];
+  else if (name === "mobile") aliases = ["mobile no", "mobile number"];
+  else if (name === "email") aliases = ["mail", "e-mail", "email id", "emailaddress"];
+  else if (name === "city") aliases = ["location", "khoji city", "place", "city name"];
+  else if (name === "state") aliases = ["state name", "province", "region"];
+  else if (name === "khoji") {
+    // special handling: check khoji aliases and partial matches for asmani
+    const k = keys.find(key => {
+      const kl = key.toLowerCase();
+      return ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(kl) ||
+             kl.includes("asmani") || kl.includes("aasmani") || kl.includes("आसमानी");
+    });
+    if (k) return String(log[k] || "").trim();
+  }
+  else if (name === "source") aliases = ["sourse", "source of informiton", "source of information"];
+  else if (name === "tags") aliases = ["tag"];
+  else if (name === "called for") aliases = ["called_for", "calledfor"];
+
+  const foundKey = keys.find(k => aliases.includes(k.toLowerCase()));
+  if (foundKey) return String(log[foundKey] || "").trim();
+  
+  // Return direct value (which might be empty string) if absolutely no match
+  return directVal;
+};
+
 const getKhojiValue = (log) => {
-  if (log.Khoji !== undefined && log.Khoji !== null) return String(log.Khoji).trim();
-  const k = Object.keys(log).find(key => 
-    ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(key.toLowerCase()) || 
-    key.toLowerCase().includes("asmani") || 
-    key.toLowerCase().includes("aasmani") || 
-    key.toLowerCase().includes("आसमानी")
-  );
-  return k ? String(log[k] || "").trim() : "";
+  return getFieldWithFallback(log, "Khoji");
 };
 
 const isKhojiAffirmative = (val) => {
@@ -127,83 +160,51 @@ const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose })
   const [edited, setEdited] = useState(() => {
     const normalized = { ...row };
     
-    // Normalize alternate spellings first to avoid duplicates or missing fields
-    const sourceAliases = ["source", "sourse"];
-    const calledForAliases = ["called for", "called_for", "calledfor"];
-    const stateAliases = ["state", "state name", "province", "region"];
-    const khojiAliases = ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"];
+    // Whitelist fields to normalize
+    const standardFields = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
     
-    let sourceVal = "";
-    let sourceKeyToClean = null;
-    Object.keys(normalized).forEach(k => {
-      if (sourceAliases.includes(k.toLowerCase())) {
-        if (normalized[k]) {
-          sourceVal = normalized[k];
-        }
-        sourceKeyToClean = k;
-      }
+    // 1. Get fallback values for all standard fields
+    const standardVals = {};
+    standardFields.forEach(col => {
+      standardVals[col] = getFieldWithFallback(row, col);
     });
-    if (sourceKeyToClean) {
-      delete normalized[sourceKeyToClean];
-    }
-    normalized["Source"] = sourceVal;
 
-    let calledForVal = "";
-    let calledForKeyToClean = null;
-    Object.keys(normalized).forEach(k => {
-      if (calledForAliases.includes(k.toLowerCase())) {
-        if (normalized[k]) {
-          calledForVal = normalized[k];
-        }
-        calledForKeyToClean = k;
-      }
+    // 2. Delete all aliases of standard fields from the normalized object to avoid duplicate keys
+    const keysToDelete = new Set();
+    const keys = Object.keys(row);
+    
+    keys.forEach(k => {
+      const kLower = k.toLowerCase();
+      // Name aliases
+      if (["name", "caller", "caller name", "lead name", "lead", "name of caller"].includes(kLower)) keysToDelete.add(k);
+      // Phone aliases
+      if (["phone", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "contact no", "contact_no"].includes(kLower)) keysToDelete.add(k);
+      // Mobile aliases
+      if (["mobile", "mobile no", "mobile number"].includes(kLower)) keysToDelete.add(k);
+      // Email aliases
+      if (["email", "mail", "e-mail", "email id", "emailaddress"].includes(kLower)) keysToDelete.add(k);
+      // City aliases
+      if (["city", "location", "khoji city", "place", "city name"].includes(kLower)) keysToDelete.add(k);
+      // State aliases
+      if (["state", "state name", "province", "region"].includes(kLower)) keysToDelete.add(k);
+      // Khoji aliases
+      if (["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(kLower) || kLower.includes("asmani") || kLower.includes("aasmani") || kLower.includes("आसमानी")) keysToDelete.add(k);
+      // Source aliases
+      if (["source", "sourse", "source of informiton", "source of information"].includes(kLower)) keysToDelete.add(k);
+      // Tags aliases
+      if (["tags", "tag"].includes(kLower)) keysToDelete.add(k);
+      // Called For aliases
+      if (["called for", "called_for", "calledfor"].includes(kLower)) keysToDelete.add(k);
     });
-    if (calledForKeyToClean) {
-      delete normalized[calledForKeyToClean];
-    }
-    normalized["Called For"] = calledForVal;
 
-    let stateVal = "";
-    let stateKeyToClean = null;
-    Object.keys(normalized).forEach(k => {
-      if (stateAliases.includes(k.toLowerCase())) {
-        if (normalized[k]) {
-          stateVal = normalized[k];
-        }
-        stateKeyToClean = k;
-      }
+    // Delete keys
+    keysToDelete.forEach(k => {
+      delete normalized[k];
     });
-    if (stateKeyToClean) {
-      delete normalized[stateKeyToClean];
-    }
-    normalized["State"] = stateVal;
 
-    let khojiVal = "";
-    let khojiKeyToClean = null;
-    Object.keys(normalized).forEach(k => {
-      if (khojiAliases.includes(k.toLowerCase()) || k.toLowerCase().includes("asmani") || k.toLowerCase().includes("aasmani") || k.toLowerCase().includes("आसमानी")) {
-        if (normalized[k]) {
-          khojiVal = normalized[k];
-        }
-        khojiKeyToClean = k;
-      }
-    });
-    if (khojiKeyToClean) {
-      delete normalized[khojiKeyToClean];
-    }
-    normalized["Khoji"] = khojiVal;
-
-    const whitelist = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
-    whitelist.forEach(col => {
-      if (normalized[col] === undefined || normalized[col] === null) {
-        const foundKey = Object.keys(normalized).find(k => k.toLowerCase() === col.toLowerCase());
-        if (foundKey) {
-          normalized[col] = normalized[foundKey];
-          if (foundKey !== col) delete normalized[foundKey];
-        } else {
-          normalized[col] = "";
-        }
-      }
+    // 3. Set standard fields with normalized values
+    standardFields.forEach(col => {
+      normalized[col] = standardVals[col];
     });
     return {
       ...normalized,
@@ -2496,6 +2497,10 @@ const cleanExportRow = (log) => {
                       </td>
                       {dynamicCols.map((col, ci) => {
                         const getVal = (item, column) => {
+                          const standardOrder = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
+                          if (standardOrder.includes(column)) {
+                            return getFieldWithFallback(item, column);
+                          }
                           if (item[column] !== undefined && item[column] !== null) return String(item[column]);
                           const keys = Object.keys(item);
                           const matchingKey = keys.find(k => k.toLowerCase() === column.toLowerCase());

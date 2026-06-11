@@ -186,7 +186,7 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
       newContact._mappedFields = Array.from(new Set(contactMappedFields));
 
       // Re-compute normalizedPhone
-      const phoneVal = newContact.Phone || "";
+      const phoneVal = newContact.Phone || newContact.Mobile || "";
       newContact.normalizedPhone = normalizePhone(String(phoneVal));
 
       return newContact;
@@ -272,12 +272,18 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
 
     // Recompute normalizedPhone safely (without evaluating Firestore delete field token)
     const newPhoneLookup = getCaseInsensitiveProp(logUpdate, "Phone");
+    const newMobileLookup = getCaseInsensitiveProp(logUpdate, "Mobile");
     const oldPhoneLookup = getCaseInsensitiveProp(logData, "Phone");
+    const oldMobileLookup = getCaseInsensitiveProp(logData, "Mobile");
     let phoneVal = "";
-    if (newPhoneLookup.found && typeof newPhoneLookup.val === "string") {
+    if (newPhoneLookup.found && typeof newPhoneLookup.val === "string" && newPhoneLookup.val.trim()) {
       phoneVal = newPhoneLookup.val;
-    } else if (oldPhoneLookup.found && typeof oldPhoneLookup.val === "string") {
+    } else if (newMobileLookup.found && typeof newMobileLookup.val === "string" && newMobileLookup.val.trim()) {
+      phoneVal = newMobileLookup.val;
+    } else if (oldPhoneLookup.found && typeof oldPhoneLookup.val === "string" && oldPhoneLookup.val.trim()) {
       phoneVal = oldPhoneLookup.val;
+    } else if (oldMobileLookup.found && typeof oldMobileLookup.val === "string" && oldMobileLookup.val.trim()) {
+      phoneVal = oldMobileLookup.val;
     }
     if (phoneVal) {
       logUpdate.normalizedPhone = normalizePhone(String(phoneVal));
@@ -320,6 +326,7 @@ const cleanImportRow = (row) => {
     const clean = {
       Name: "",
       Phone: "",
+      Mobile: "",
       Email: "",
       City: "",
       State: "",
@@ -420,7 +427,7 @@ const cleanImportRow = (row) => {
   }
 
   // Always ensure normalizedPhone is populated
-  const phoneVal = clean.Phone || "";
+  const phoneVal = clean.Phone || clean.Mobile || "";
   clean.normalizedPhone = normalizePhone(phoneVal);
 
   return clean;
@@ -447,7 +454,7 @@ export const importContacts = async (programId, programName, rows, subPrograms =
   logsSnap.docs.forEach(d => {
     const data = d.data();
     if (data._deleted) return;
-    const phoneVal = data.Phone || "";
+    const phoneVal = data.Phone || data.Mobile || "";
     const norm = normalizePhone(phoneVal);
     if (norm) {
       assignedLogs.set(norm, { ref: d.ref, data });
@@ -477,7 +484,7 @@ export const importContacts = async (programId, programName, rows, subPrograms =
 
     spRows.forEach((r, idx) => {
       const cleaned = cleanImportRow(r);
-      const phoneVal = cleaned.Phone || "";
+      const phoneVal = cleaned.Phone || cleaned.Mobile || "";
       const norm = normalizePhone(phoneVal);
 
       if (norm) {
