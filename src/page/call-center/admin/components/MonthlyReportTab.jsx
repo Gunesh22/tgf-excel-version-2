@@ -5,7 +5,7 @@ import {
   Download, ChevronRight, ChevronDown, Calendar, TrendingUp, UserCheck, Smile, Info
 } from "lucide-react";
 import { subscribeToAllCallLogs } from "../../../../lib/db";
-import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES } from "../utils";
+import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES } from "../utils.jsx";
 
 function MonthlySection({ title, children, defaultOpen = true }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);

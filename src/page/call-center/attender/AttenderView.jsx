@@ -9,7 +9,8 @@ import {
 } from "lucide-react";
 import {
   subscribeToCallLogs, updateCallLog, addIncomingCallLog,
-  assignContactsToAttender, getPrograms, normalizePhone
+  assignContactsToAttender, getPrograms, normalizePhone,
+  INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME, ensureIncomingProgram,
 } from "../../../lib/db";
 import {
   STATUS_OPTIONS,
@@ -62,6 +63,12 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   const [selectedSheet, setSelectedSheet] = useState("");
   const selectedMonth = selectedSheet;
   const setSelectedMonth = setSelectedSheet;
+
+  // ── Add Call Entry dialog state ──
+  const [callEntryDialog, setCallEntryDialog] = useState(false);     // step 1: type picker
+  const [callEntryType, setCallEntryType] = useState(null);          // chosen call type
+  const [programPickerOpen, setProgramPickerOpen] = useState(false); // step 2: program picker (outgoing only)
+  const [pickedProgramId, setPickedProgramId] = useState("");
   const rowsPerPage = 50;
   const unsubRef = useRef(null);
   const didDrag = useRef(false);
@@ -107,6 +114,8 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   }, []);
 
   const loadPrograms = async () => {
+    // Ensure the default Incoming Calls program always exists in Firestore
+    await ensureIncomingProgram();
     const progs = await getPrograms();
     setPrograms(progs);
   };
@@ -142,29 +151,60 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     }
   };
 
-  const handleAddIncoming = () => {
-    // Incoming calls are added directly to the active sheet
+  // ── "Add Call Entry" multi-step flow ──────────────────────
+  const openCallEntryDialog = () => {
+    setCallEntryDialog(true);
+    setCallEntryType(null);
+    setPickedProgramId("");
+  };
+
+  // Step 1: user picked a call type
+  const handleCallTypeSelected = async (type) => {
+    setCallEntryType(type);
+    setCallEntryDialog(false);
+
+    const isIncoming = type === "incoming" || type === "incoming f";
+
+    if (isIncoming) {
+      // Auto-route to dedicated Incoming Calls program with its own sheet tab
+      setEditingRow({
+        _isNew: true,
+        programId: INCOMING_PROGRAM_ID,
+        programName: INCOMING_PROGRAM_NAME,
+        attenderId,
+        attenderName,
+        Name: "", Phone: "", Mobile: "", Email: "",
+        City: "", State: "", Khoji: "", Source: "", Tags: "",
+        "Called For": "",
+        callType: type,
+        "Sub Program": "Incoming Calls",
+        subProgram: "Incoming Calls",
+        status: "", remark: "",
+      });
+    } else {
+      // Outgoing — ask which program this belongs to
+      setProgramPickerOpen(true);
+    }
+  };
+
+  // Step 2 (outgoing only): user picked a program
+  const handleProgramPicked = () => {
+    const prog = programs.find(p => p.id === pickedProgramId);
+    if (!prog) return;
+    setProgramPickerOpen(false);
     setEditingRow({
       _isNew: true,
-      programId: selectedProgramId || null,
-      programName: selectedProgramName || null,
+      programId: prog.id,
+      programName: prog.name,
       attenderId,
       attenderName,
-      Name: "", 
-      Phone: "", 
-      Mobile: "",
-      Email: "",
-      City: "", 
-      State: "", 
-      Khoji: "", 
-      Source: "", 
-      Tags: "",
+      Name: "", Phone: "", Mobile: "", Email: "",
+      City: "", State: "", Khoji: "", Source: "", Tags: "",
       "Called For": "",
-      callType: "incoming", 
-      status: "", 
-      remark: "",
-      "Sub Program": selectedSheet && selectedSheet !== "No Tag" ? selectedSheet : "",
-      subProgram: selectedSheet && selectedSheet !== "No Tag" ? selectedSheet : "",
+      callType: callEntryType,
+      "Sub Program": prog.name,
+      subProgram: prog.name,
+      status: "", remark: "",
     });
   };
 
@@ -879,8 +919,8 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
             </button>
           </div>
 
-          <button onClick={handleAddIncoming} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition shadow-lg shadow-emerald-500/20">
-            <PhoneIncoming size={15} /> Add Incoming
+          <button onClick={openCallEntryDialog} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition shadow-lg shadow-emerald-500/20">
+            <PhoneIncoming size={15} /> Add Call Entry
           </button>
           <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-[#217346] text-[#217346] rounded-xl font-bold text-sm hover:bg-[#217346] hover:text-white transition">
             <Download size={15} /> Export
@@ -1281,6 +1321,75 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+
+      {/* ── Step 1: Call Type Picker Dialog ───────────────────── */}
+      {callEntryDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-[340px] animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-base font-black text-gray-900">Add Call Entry</h2>
+                <p className="text-xs text-gray-400 font-medium mt-0.5">What type of call is this?</p>
+              </div>
+              <button onClick={() => setCallEntryDialog(false)} className="p-1.5 hover:bg-gray-100 rounded-lg transition">
+                <X size={16} className="text-gray-400" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { type: "incoming",   label: "Incoming",   icon: <PhoneIncoming size={18} />,  color: "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100" },
+                { type: "outgoing",   label: "Outgoing",   icon: <PhoneOutgoing size={18} />,  color: "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100" },
+                { type: "incoming f", label: "Incoming F", icon: <PhoneIncoming size={18} />,  color: "bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100" },
+                { type: "outgoing f", label: "Outgoing F", icon: <PhoneOutgoing size={18} />,  color: "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100" },
+              ].map(({ type, label, icon, color }) => (
+                <button
+                  key={type}
+                  onClick={() => handleCallTypeSelected(type)}
+                  className={`flex flex-col items-center gap-2 py-4 px-3 rounded-xl border-2 font-bold text-sm transition ${color}`}
+                >
+                  {icon}
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 2: Program Picker Dialog (outgoing only) ─────── */}
+      {programPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-[360px] animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-base font-black text-gray-900">Select Program</h2>
+                <p className="text-xs text-gray-400 font-medium mt-0.5">Which sheet does this outgoing call belong to?</p>
+              </div>
+              <button onClick={() => setProgramPickerOpen(false)} className="p-1.5 hover:bg-gray-100 rounded-lg transition">
+                <X size={16} className="text-gray-400" />
+              </button>
+            </div>
+            <select
+              value={pickedProgramId}
+              onChange={e => setPickedProgramId(e.target.value)}
+              className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition mb-4"
+            >
+              <option value="">Pick a program...</option>
+              {programs.filter(p => p.id !== INCOMING_PROGRAM_ID).map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <button
+              onClick={handleProgramPicked}
+              disabled={!pickedProgramId}
+              className="w-full py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 disabled:opacity-40 transition"
+            >
+              Continue
+            </button>
+          </div>
         </div>
       )}
 

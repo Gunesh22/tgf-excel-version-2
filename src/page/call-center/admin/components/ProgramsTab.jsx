@@ -9,7 +9,7 @@ import {
   importContacts, getProgramChunkContacts, remapProgramContacts,
   getProgramCallLogs
 } from "../../../../lib/db";
-import { getDefaultExcelMapping, STANDARD_TARGETS, cleanExportRow } from "../utils";
+import { getDefaultExcelMapping, STANDARD_TARGETS, cleanExportRow } from "../utils.jsx";
 
 export default function ProgramsTab({ programs, attenders, onReloadPrograms }) {
   const [newProgramName, setNewProgramName] = useState("");

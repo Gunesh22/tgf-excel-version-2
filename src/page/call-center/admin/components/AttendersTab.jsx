@@ -9,7 +9,7 @@ import {
   reassignContactsToPool, reassignContactsBetweenAttenders,
   subscribeToCallLogs
 } from "../../../../lib/db";
-import { cleanExportRow } from "../utils";
+import { cleanExportRow } from "../utils.jsx";
 
 export default function AttendersTab({ programs, attenders, onReloadAttenders }) {
   const [newAttenderName, setNewAttenderName] = useState("");

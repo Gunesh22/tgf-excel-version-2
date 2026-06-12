@@ -76,6 +76,22 @@ const isIgnoredField = (key) => {
 // ─────────────────────────────────────────────
 // PROGRAMS (Folders)
 // ─────────────────────────────────────────────
+
+// Fixed ID for the dedicated "Incoming Calls" program — never changes
+export const INCOMING_PROGRAM_ID = "incoming-calls";
+export const INCOMING_PROGRAM_NAME = "Incoming Calls";
+
+// Upsert the Incoming Calls program document — safe to call multiple times
+export const ensureIncomingProgram = async () => {
+  const ref = doc(db, "programs", INCOMING_PROGRAM_ID);
+  await setDoc(ref, {
+    name: INCOMING_PROGRAM_NAME,
+    isSystem: true,       // marks it as a system/reserved program
+    contactCount: 0,
+    createdAt: serverTimestamp(),
+  }, { merge: true });   // merge:true so we never overwrite existing data
+};
+
 export const getPrograms = async () => {
   const snap = await getDocs(collection(db, "programs"));
   const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));

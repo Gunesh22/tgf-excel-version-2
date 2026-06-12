@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { subscribeToAllCallLogs } from "../../../../lib/db";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, LineChart, Line, Legend } from "recharts";
-import { COLORS, cleanExportRow } from "../utils";
+import { COLORS, cleanExportRow } from "../utils.jsx";
 
 export default function DashboardTab({ programs, attenders }) {
   const [selectedProgramId, setSelectedProgramId] = useState("");

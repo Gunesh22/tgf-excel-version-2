@@ -3,7 +3,7 @@ import { toast } from "react-hot-toast";
 import { Settings, ArrowLeft, ChevronRight, Loader } from "lucide-react";
 import { getPrograms, getAttenders } from "../../../lib/db";
 import ImportContacts from "../ImportContacts";
-import { TAB_ITEMS } from "./utils";
+import { TAB_ITEMS } from "./utils.jsx";
 import DashboardTab from "./components/DashboardTab";
 import MonthlyReportTab from "./components/MonthlyReportTab";
 import ProgramsTab from "./components/ProgramsTab";
