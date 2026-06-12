@@ -4,1101 +4,26 @@ import { toast } from "react-hot-toast";
 import {
   Phone, ArrowLeft, Plus, Download, Search, ChevronLeft, ChevronRight,
   Edit3, X, Save, FileText, Calendar, Tag, User, MapPin, MessageSquare,
-  Hash, Check, Clock, PhoneOff, CheckCircle2, AlertCircle, Trash2,
+  Hash, Clock, PhoneOff, CheckCircle2, AlertCircle, Trash2,
   PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame, SlidersHorizontal, FileSpreadsheet, CheckSquare
 } from "lucide-react";
 import {
   subscribeToCallLogs, updateCallLog, addIncomingCallLog,
   assignContactsToAttender, getPrograms, normalizePhone
 } from "../../../lib/db";
-
-const STATUS_OPTIONS = [
-  "Interested", "Reg.Done", "Not interested", "NA", "Busy",
-  "Call Cut", "switched off", "Invalid No", "Already Reg.d",
-  "Info given", "Next time", "reminder", "Query", "Called by mistake",
-  "Not possible", "Shivir done"
-];
-
-const OBJECTION_REASONS = [
-  "Too Expensive", "Wrong Dates", "Location Too Far", "No Time", "Other"
-];
-
-const SOURCE_OPTIONS = [
-  "Facebook", "Instagram", "WhatsApp", "YouTube", "Google",
-  "Website", "Books", "Call Centre", "Program", "Other", "NA"
-];
-
-const CALLED_FOR_OPTIONS = [
-  "TGF Info", "Course", "Dhyan", "Pranayam", "Program", "Shravan",
-  "Books", "App", "Reminder", "SHSH", "Spiritual H", "Other", "NA"
-];
-
-const CALL_TYPE_OPTIONS = ["outgoing", "incoming", "outgoing f", "incoming f"];
-
-const CONNECTED_STATUSES = ["Info given", "Interested", "Reg.Done", "reminder", "Query", "Already Reg.d", "Next time", "Shivir done", "Not possible"];
-const NOT_CONNECTED_STATUSES = ["NA", "Busy", "Call Cut", "switched off", "Invalid No", "Not interested", "Called by mistake", "no network", "wrong no.", "no answer"];
-
-const DEFAULT_COLUMNS = ["Name", "Phone", "Source", "City", "Called For", "Call Type", "Status", "Remark", "Callback Date"];
-
-import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from "recharts";
-
-const IGNORED_FIELDS = [
-  "consent", "consent in hindi", "current date", "current_date",
-  "21day current date", "21day_current date", "21day challenge day", "21day_challenge_day",
-  "date added", "date_added", "program name", "razorpay", "program payment status",
-  "payment status", "payment event", "khoji status", "possibility",
-  "understand that this is an offline event and agree to attend in person",
-  "have completed 15 days of meditation nonstop without fail",
-  "confirm that i will definitely attend this event",
-  "acknowledgement",
-  "event startdate", "event type", "base amount",
-  "program_payment_status", "payment_status", "payment_event", "khoji_status",
-  "event_startdate", "event_type", "base_amount",
-  "d2e payment status", "d2e_payment_status", "total registrations", "total_registrations",
-  "organization type", "organization_type", "total number of registration", "total_number_of_registration",
-  "total number of registrations", "total_number_of_registrations",
-  "a serious business person", "form ai tools", "form_ai_tools",
-  "ai टूल से", "from ai tools", "aapne kaise convice kiya",
-  "actual online event count", "adhar card", "age", "your age",
-  "attended", "not attended-reason", "attendy", "attender",
-  "be 100% honest", "stopping you", "closed airport to venue",
-  "company", "consent in gujarati", "cont no", "mobile number",
-  "estimated budget", "event address", "event day", "event name", "event details",
-  "guest category", "guest designation", "guest email id", "guest name",
-  "have you done maha aasmani param gyan shivir", "how did you hear about us",
-  "how would you like to attend the retreat", "ioc-ppc", "incremental challenge day",
-  "khoji id", "khoji, new", "khoji/ new", "last run time",
-  "ma not possible reason", "mahaasmani", "middle name", "number of students",
-  "organization", "other video editing tool", "pan card number", "person - label",
-  "person - phone", "person - closed deals", "person - open deals", "person - next activity date",
-  "position/title", "position", "title", "profession", "profession details", "profession info",
-  "prog. feedback", "projected budget", "registration_count_group", "registration count group",
-  "school name", "select service", "shivir done", "shivir name", "shivir/event category",
-  "shivir_code", "source of information", "specialization", "specific month",
-  "tejasthan", "what is your tejstan/center name", "tell me briefly about your business",
-  "tentative date of the mini shivir", "the preferred language of the retreat",
-  "todays_date_25daychallenge", "todays date 25daychallenge", "type of the event",
-  "what are you looking to achieve or explore", "what do you want to get out of this call",
-  "what interests you the most about joining this retreat", "what is stopping you from hitting results",
-  "what is your time slot", "what makes you different from the other applications",
-  "whats the business", "whats your message", "when you want to attend the event",
-  "where will you attend the program", "which mini shivir did you attend",
-  "your area of living", "your city name", "your current monthly revenue",
-  "your health issues", "your message", "your selfless service is a gift",
-  "zone", "अन्य टूल", "other tool", "अपना प्रश्न यहाँ लिखें",
-  "आप कितने समय से अध्यात्म की खोज में हैं", "ग्राफ़िक डिजाइनिंग", "graphic designing",
-  "फोटोग्राफी और वीडियो शूटिंग", "photography & video shooting", "वीडियो एडिटिंग", "video editing",
-  "वेबसाइट और लैंडिंग पेज", "website & landing page",
-  "date", "content", "enter trainer name", "how would you like to attend the shivir", "how would you like to attend"
-];
-
-const isIgnoredField = (key) => {
-  if (!key) return true;
-  const k = key.toLowerCase().trim().replace(/_/g, " ");
-  return IGNORED_FIELDS.some(ignored => {
-    // Only allow substring matching for longer ignored terms,
-    // require exact match for short terms like "date" and "content" to prevent blocking valid fields like "Registration Date"
-    if (ignored === "date" || ignored === "content") {
-      return k === ignored;
-    }
-    return k === ignored || k.includes(ignored);
-  });
-};
-
-const getFieldWithFallback = (log, fieldName) => {
-  if (!log) return "";
-  const name = fieldName.toLowerCase();
-  
-  // 1. Direct match check (case-insensitive key match)
-  const keys = Object.keys(log);
-  const directKey = keys.find(k => k.toLowerCase() === name);
-  const directVal = directKey !== undefined ? String(log[directKey] || "").trim() : "";
-  
-  // 2. If direct key exists and is non-empty, use it
-  if (directVal) return directVal;
-  
-  // 3. Fallback to aliases
-  let aliases = [];
-  if (name === "name") aliases = ["caller", "caller name", "lead name", "lead", "name of caller"];
-  else if (name === "phone") aliases = ["whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "contact no", "contact_no"];
-  else if (name === "mobile") aliases = ["mobile no", "mobile number"];
-  else if (name === "email") aliases = ["mail", "e-mail", "email id", "emailaddress"];
-  else if (name === "city") aliases = ["location", "khoji city", "place", "city name"];
-  else if (name === "state") aliases = ["state name", "province", "region"];
-  else if (name === "khoji") {
-    // special handling: check khoji aliases and partial matches for asmani
-    const k = keys.find(key => {
-      const kl = key.toLowerCase();
-      return ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(kl) ||
-             kl.includes("asmani") || kl.includes("aasmani") || kl.includes("आसमानी");
-    });
-    if (k) return String(log[k] || "").trim();
-  }
-  else if (name === "source") aliases = ["sourse", "source of informiton", "source of information"];
-  else if (name === "tags") aliases = ["tag"];
-  else if (name === "called for") aliases = ["called_for", "calledfor"];
-
-  const foundKey = keys.find(k => aliases.includes(k.toLowerCase()));
-  if (foundKey) return String(log[foundKey] || "").trim();
-  
-  // Return direct value (which might be empty string) if absolutely no match
-  return directVal;
-};
-
-const getKhojiValue = (log) => {
-  return getFieldWithFallback(log, "Khoji");
-};
-
-const isKhojiAffirmative = (val) => {
-  if (!val) return false;
-  const v = String(val).toLowerCase().trim();
-  return v === "yes" || v === "y" || v === "true" || v === "khoji" || v.includes("dew d") || v.includes("done") || v.includes("completed") || (v.includes("khoji") && !v.includes("not") && !v.includes("new"));
-};
-
-// ─── Edit Modal ───────────────────────────────
-const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose }) => {
-  const [edited, setEdited] = useState(() => {
-    const normalized = { ...row };
-    
-    // Whitelist fields to normalize
-    const standardFields = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
-    
-    // 1. Get fallback values for all standard fields
-    const standardVals = {};
-    standardFields.forEach(col => {
-      standardVals[col] = getFieldWithFallback(row, col);
-    });
-
-    // 2. Delete all aliases of standard fields from the normalized object to avoid duplicate keys
-    const keysToDelete = new Set();
-    const keys = Object.keys(row);
-    
-    keys.forEach(k => {
-      const kLower = k.toLowerCase();
-      // Name aliases
-      if (["name", "caller", "caller name", "lead name", "lead", "name of caller"].includes(kLower)) keysToDelete.add(k);
-      // Phone aliases
-      if (["phone", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "contact no", "contact_no"].includes(kLower)) keysToDelete.add(k);
-      // Mobile aliases
-      if (["mobile", "mobile no", "mobile number"].includes(kLower)) keysToDelete.add(k);
-      // Email aliases
-      if (["email", "mail", "e-mail", "email id", "emailaddress"].includes(kLower)) keysToDelete.add(k);
-      // City aliases
-      if (["city", "location", "khoji city", "place", "city name"].includes(kLower)) keysToDelete.add(k);
-      // State aliases
-      if (["state", "state name", "province", "region"].includes(kLower)) keysToDelete.add(k);
-      // Khoji aliases
-      if (["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(kLower) || kLower.includes("asmani") || kLower.includes("aasmani") || kLower.includes("आसमानी")) keysToDelete.add(k);
-      // Source aliases
-      if (["source", "sourse", "source of informiton", "source of information"].includes(kLower)) keysToDelete.add(k);
-      // Tags aliases
-      if (["tags", "tag"].includes(kLower)) keysToDelete.add(k);
-      // Called For aliases
-      if (["called for", "called_for", "calledfor"].includes(kLower)) keysToDelete.add(k);
-    });
-
-    // Delete keys
-    keysToDelete.forEach(k => {
-      delete normalized[k];
-    });
-
-    // 3. Set standard fields with normalized values
-    standardFields.forEach(col => {
-      normalized[col] = standardVals[col];
-    });
-    return {
-      ...normalized,
-      remark: (row.history && row.history.length > 0) ? "" : (row.remark || ""),
-    };
-  });
-  const [saving, setSaving] = useState(false);
-  const [globalDup, setGlobalDup] = useState(null);
-  const timerRef = useRef(null);
-  const handleDismissRef = useRef(null); // B3 fix: stable ref for ESC key handler
-  const [addedFields, setAddedFields] = useState([]);
-
-  const handleAddField = () => {
-    const name = window.prompt("Enter new field name:");
-    if (!name) return;
-    const cleanName = name.trim();
-    if (!cleanName) return;
-
-    // Check if standard or already exists
-    const existingKeys = Object.keys(edited).map(k => k.toLowerCase());
-    if (existingKeys.includes(cleanName.toLowerCase())) {
-      toast.error("Field already exists!");
-      return;
-    }
-
-    setAddedFields(prev => [...prev, cleanName]);
-    setEdited(prev => ({
-      ...prev,
-      [cleanName]: ""
-    }));
-  };
-
-  // Identify fields from the contact that aren't internal bookkeeping fields
-  const dynamicFields = useMemo(() => {
-    const standardOrder = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
-    const internalKeys = [
-      "id", "contactId", "programId", "programName", "attenderId", "attenderName",
-      "callType", "status", "remark", "callbackDate", "callbackStatus", "isCallbackDue",
-      "isHotLead", "createdAt", "updatedAt", "lastCalledAt", "firstCalledAt", "history",
-      "_callbackDue", "_deleted", "_isNew", "registeredAt", "conversionSource", "convertedBy",
-      "GHL_ID", "Sub Program", "subProgram", "objectionReason"
-    ];
-
-    const contactKeys = Object.keys(edited).filter(k => {
-      if (internalKeys.includes(k)) return false;
-      if (k.startsWith("_")) return false;
-      
-      // Always show standard fields
-      if (standardOrder.includes(k)) return true;
-
-      // Always show newly added fields in this modal session
-      if (addedFields.includes(k)) return true;
-
-      // If the contact has recorded mapped fields list, only allow if explicitly mapped.
-      if (edited._mappedFields && Array.isArray(edited._mappedFields)) {
-        return edited._mappedFields.includes(k);
-      }
-
-      if (isIgnoredField(k)) return false;
-      
-      // Only show other fields if they have a non-empty, non-dummy value
-      const val = edited[k];
-      if (val === null || val === undefined) return false;
-      const strVal = String(val).trim();
-      if (!strVal) return false;
-      
-      const lowerVal = strVal.toLowerCase();
-      if (["none", "n/a", "null", "undefined", "false"].includes(lowerVal)) return false;
-      
-      return true;
-    });
-
-    const sortedKeys = [...contactKeys].sort((a, b) => {
-      const idxA = standardOrder.indexOf(a);
-      const idxB = standardOrder.indexOf(b);
-      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-      if (idxA !== -1) return -1;
-      if (idxB !== -1) return 1;
-      return a.localeCompare(b);
-    });
-
-    return sortedKeys;
-  }, [edited, addedFields]);
-
-  // Debounced duplicate check — only on phone value change, not every keystroke
-  const dupTimerRef = useRef(null);
-  useEffect(() => {
-    if (dupTimerRef.current) clearTimeout(dupTimerRef.current);
-    const pKey = Object.keys(edited).find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("number") || k.toLowerCase().includes("cont"));
-    const phoneVal = pKey ? String(edited[pKey] || "").trim() : null;
-    if (!phoneVal || phoneVal.length < 5) { setGlobalDup(null); return; }
-    dupTimerRef.current = setTimeout(() => {
-      import("../../../lib/db").then(({ checkGlobalDuplicate }) => {
-        checkGlobalDuplicate(phoneVal, edited.contactId || row.id).then(setGlobalDup);
-      });
-    }, 1000);
-    return () => { if (dupTimerRef.current) clearTimeout(dupTimerRef.current); };
-  }, [edited]);
-  // A7 fix: used `edited` not `edited.contactId` so dep is correct; fallback to row.id prevents self-match on undefined contactId
-
-  // Identity helpers
-  const getLogName = () => {
-    const key = Object.keys(edited).find(k => k.toLowerCase().includes("name") || k.toLowerCase().includes("lead"));
-    return key ? edited[key] : "";
-  };
-
-  const handleChange = (key, val) => {
-    setEdited(prev => ({ ...prev, [key]: val }));
-  };
-
-  // Smart field matching: find actual key name in data that matches an alias list
-  const findField = (aliases) => {
-    const keys = Object.keys(edited);
-    return keys.find(k => aliases.some(a => k.toLowerCase().includes(a))) || aliases[0].charAt(0).toUpperCase() + aliases[0].slice(1);
-  };
-  const sourceField = findField(["source", "sourse", "from"]);
-  const calledForField = findField(["called for", "called_for", "calledfor"]);
-
-  const handleSaveAndClose = async () => {
-    if (saving) return; // Prevent double save
-
-    // Objection Tracker Validation
-    if ((edited.status === "Not interested" || edited.status === "Not possible") && !edited.objectionReason) {
-      toast.error(`Please select a reason for "${edited.status}" before saving.`, { duration: 4000, position: 'top-center' });
-      return;
-    }
-
-    setSaving(true);
-
-    // We update the local state for a snappy feel, but keep the modal open till DB confirms
-    if (onSave) onSave(edited, true); // (true = optimistic flag, doesn't close modal yet)
-
-    try {
-      const { id, _callbackDue, ...rest } = edited;
-      const updates = { ...rest };
-      if (updates.callbackDate) {
-        if (typeof updates.callbackDate === "string") {
-          updates.callbackDate = new Date(updates.callbackDate);
-        }
-      } else {
-        updates.callbackDate = null;
-      }
-
-      // Clean undefined values out of updates because Firebase will CRASH if any field is undefined.
-      Object.keys(updates).forEach(key => {
-        if (updates[key] === undefined) {
-          delete updates[key];
-        }
-      });
-
-      // Ensure any newly added fields are marked as mapped so they show up in the table/attender view
-      if (addedFields.length > 0) {
-        const currentMapped = Array.isArray(updates._mappedFields) ? [...updates._mappedFields] : [];
-        addedFields.forEach(f => {
-          if (!currentMapped.includes(f)) {
-            currentMapped.push(f);
-          }
-        });
-        updates._mappedFields = currentMapped;
-      }
-
-      // Track call timestamp — always record when attender touched this contact
-      updates.lastCalledAt = new Date().toISOString();
-      if (!row.firstCalledAt && !edited.firstCalledAt) {
-        updates.firstCalledAt = new Date().toISOString();
-      }
-
-      // Maintain a timeline of interactions
-      if ((row.status !== updates.status) || (row.remark !== updates.remark)) {
-        if (updates.status || updates.remark) {
-          const safeName = attenderName || "Unknown";
-          const newHist = {
-            status: updates.status || "",
-            remark: updates.remark || "",
-            attenderName: safeName,
-            timestamp: new Date().toISOString()
-          };
-          updates.history = [...(row.history || []), newHist];
-        }
-      }
-
-      console.log("🔥 Attempting to save updates: ", updates);
-
-      // If this is a NEW incoming entry (opened via Add Incoming), create it in Firebase
-      if (row._isNew) {
-        delete updates._isNew;
-        await addIncomingCallLog(
-          row.attenderId, row.attenderName, updates, row.programId, row.programName
-        );
-      } else {
-        await updateCallLog(id, updates, rest.contactId || null);
-      }
-
-      console.log("✅ Save successful!");
-      toast.success("Saved!", { duration: 4000, position: 'top-center' });
-
-      // Now close the modal securely
-      if (onClose) onClose();
-    } catch (err) {
-      console.error("❌ CRTICAL SAVE ERROR:", err.message || err);
-      // Fallback alert because Toaster might be hidden/unmounted
-      alert("FIREBASE REFUSED TO SAVE: " + (err.message || "Unknown Error"));
-      toast.error("Save failed - Check network & rules.", { duration: 6000, position: 'top-center' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // A6 fix: handleDismiss is now a TRUE cancel — does NOT save.
-  // The X button, backdrop click, and ESC all discard changes.
-  // Only the "Save & Close" button (or handleSaveAndClose) actually saves.
-  const handleDismiss = () => {
-    if (saving) return; // Don't close mid-save
-    if (onClose) onClose();
-  };
-  handleDismissRef.current = handleDismiss;
-
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") handleDismissRef.current?.(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const handleDelete = async () => {
-    if (!window.confirm("Remove this entry?")) return;
-    onDelete(row.id);
-    onClose();
-  };
-
-  const getCallbackDateStr = () => {
-    if (!edited.callbackDate) return "";
-    if (typeof edited.callbackDate === "string") return edited.callbackDate;
-    if (edited.callbackDate?.toDate) return edited.callbackDate.toDate().toISOString().split("T")[0];
-    return "";
-  };
-
-  // U3 fix: Reset scroll position to top when modal opens with a new entry
-  const modalScrollRef = useRef(null);
-  useEffect(() => {
-    if (modalScrollRef.current) modalScrollRef.current.scrollTop = 0;
-  }, [row?.id]);
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={handleDismiss}>
-      <div
-        className="bg-white rounded-3xl w-full max-w-4xl max-h-[95vh] flex flex-col overflow-hidden shadow-2xl"
-        onClick={e => e.stopPropagation()}
-        style={{ animation: "slideUp 0.15s ease-out" }}
-      >
-        {/* Modal Header */}
-        <div className={`px-6 py-4 flex items-center justify-between ${edited._callbackDue ? "bg-red-600" : "bg-indigo-600 shadow-lg shadow-indigo-600/20"}`}>
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-white">
-              {edited.callType === "incoming" ? <PhoneIncoming size={20} /> : <PhoneOutgoing size={20} />}
-            </div>
-            <div>
-              <h3 className="text-white font-black text-xl leading-none">{getLogName() || "Unknown Entry"}</h3>
-              <div className="flex items-center gap-3 mt-1">
-                {edited.createdAt && (
-                  <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">
-                    Assigned: {(edited.createdAt?.toDate ? edited.createdAt.toDate() : new Date(edited.createdAt)).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-                  </span>
-                )}
-                {edited.lastCalledAt && (
-                  <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">
-                    Last called: {new Date(edited.lastCalledAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                  </span>
-                )}
-                {edited.history && edited.history.length > 0 && (
-                  <span className="text-[10px] font-bold bg-white/20 px-1.5 py-0.5 rounded text-white/80">
-                    {edited.history.length} call{edited.history.length > 1 ? "s" : ""}
-                  </span>
-                )}
-                {globalDup && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-400 text-amber-950 font-bold text-[10px] rounded uppercase animate-pulse">
-                    <AlertCircle size={10} /> Duplicate in: {globalDup.programName}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => handleChange("isHotLead", !edited.isHotLead)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition ${edited.isHotLead ? "bg-orange-500 text-white shadow-lg shadow-orange-500/30" : "bg-white/10 text-white/50 hover:bg-white/20"}`}
-            >
-              <Flame size={14} className={edited.isHotLead ? "animate-pulse" : ""} /> {edited.isHotLead ? "HOT LEAD" : "Mark Hot"}
-            </button>
-            {saving && <Loader size={16} className="text-white animate-spin" />}
-            <button onClick={handleDismiss} className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center text-white hover:bg-white/30 transition" title="Discard changes & close">
-              <X size={18} />
-            </button>
-            <button
-              onClick={handleSaveAndClose}
-              disabled={saving}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-white/20 hover:bg-white/30 rounded-xl text-white text-xs font-black transition disabled:opacity-50"
-              title="Save changes & close"
-            >
-              {saving ? <Loader size={13} className="animate-spin" /> : <Save size={13} />} Save
-            </button>
-          </div>
-        </div>
-
-        <div ref={modalScrollRef} className="overflow-y-auto flex-1 p-8 space-y-8">
-          {/* ── Smart Field Groups ── */}
-          {(() => {
-            const isQuestion = (f) => f.length > 40 || /^(what|how|why|describe|tell)[\s_]/i.test(f);
-            const isCampaign = (f) => { const k = f.toLowerCase().replace(/[_\s]/g, ""); return k.includes("adid") || k.includes("adname") || k.includes("adsetid") || k.includes("adsetname") || k.includes("campaignid") || k.includes("campaignname") || k.includes("formid") || k.includes("formname") || k.includes("isorganic") || k.includes("createdtime"); };
-            const iconFor = (f) => { const k = f.toLowerCase(); return k.includes("name") || k.includes("lead") || k.includes("khoji") || k.includes("caller") ? <User size={11} className="text-emerald-500" /> : k.includes("phone") || k.includes("mobile") ? <Phone size={11} className="text-blue-500" /> : k.includes("city") || k.includes("location") ? <MapPin size={11} className="text-red-500" /> : k.includes("email") ? <Hash size={11} className="text-purple-500" /> : k.includes("when") || k.includes("suitable") ? <Clock size={11} className="text-amber-500" /> : k.includes("asmani") || k.includes("aasmani") || k.includes("आसमानी") ? <CheckCircle2 size={11} className="text-pink-500" /> : <Tag size={11} className="text-indigo-500" />; };
-            const labelFor = (f) => f.replace(/_/g, " ").replace(/\?/g, "").trim();
-            const basicFields = dynamicFields.filter(f => !isQuestion(f) && !isCampaign(f));
-            const questionFields = dynamicFields.filter(f => isQuestion(f));
-            const campaignFields = dynamicFields.filter(f => isCampaign(f));
-
-            const isIncoming = edited._isNew || edited.callType === "incoming" || edited.callType === "incoming f";
-            const getEditable = (field) => {
-              if (isIncoming) return true;
-              if (addedFields.includes(field)) return true;
-              return ["source", "called for"].includes(field.toLowerCase());
-            };
-
-            return (
-              <>
-                {/* Standard contact fields – 4-col grid */}
-                {basicFields.length > 0 && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {basicFields.map(field => {
-                        const editable = getEditable(field);
-                        return (
-                          <div
-                            key={field}
-                            className={`space-y-1 ${
-                              field === "Tags"
-                                ? "col-span-2 md:col-span-4"
-                                : [
-                                    "What do you want to get out of this call",
-                                    "How Did You Hear About Us?",
-                                    "What is stopping you from hitting results...",
-                                    "Tentative Date of the Mini Shivir you attended",
-                                    "Which Mini Shivir did you attend?",
-                                    "Your Health issues",
-                                    "What is your Tejstan/Center name"
-                                  ].includes(field)
-                                ? "col-span-2 md:col-span-4"
-                                : [
-                                    "Profession", "Source of Information", "When You want to attend the event:", 
-                                    "Shivir/event category", "Guest Designation", "Platform Name:"
-                                  ].includes(field) || field.length > 15
-                                ? "col-span-2 md:col-span-2"
-                                : "col-span-1 md:col-span-1"
-                            }`}
-                          >
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                              {iconFor(field)} {field}
-                            </label>
-                            {field === "Tags" ? (
-                              editable ? (
-                                <input
-                                  value={edited[field] || ""}
-                                  onChange={e => handleChange(field, e.target.value)}
-                                  className="w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                                  placeholder="Enter tags (comma separated)..."
-                                />
-                              ) : (
-                                <div className="flex flex-wrap gap-1.5 py-1 min-h-[38px] items-center">
-                                  {(() => {
-                                    const tagList = (edited[field] || "")
-                                      .split(",")
-                                      .map(t => t.trim())
-                                      .filter(Boolean);
-                                    return tagList.length > 0 ? (
-                                      tagList.map((tag, idx) => (
-                                        <span
-                                          key={idx}
-                                          className="inline-flex items-center px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold border border-indigo-100"
-                                        >
-                                          {tag}
-                                        </span>
-                                      ))
-                                    ) : (
-                                      <span className="text-gray-400 text-xs italic">—</span>
-                                    );
-                                  })()}
-                                </div>
-                              )
-                            ) : (field.toLowerCase().includes("asmani") || field.toLowerCase().includes("aasmani") || field.toLowerCase().includes("आसमानी") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id"))) ? (
-                              <div className="flex gap-2 py-1 items-center min-h-[38px]">
-                                {(() => {
-                                   const isYes = String(edited[field] || "").toLowerCase() === "yes";
-                                   const isNo = String(edited[field] || "").toLowerCase() === "no";
-                                   return (
-                                     <>
-                                       <button
-                                         type="button"
-                                         onClick={() => handleChange(field, "Yes")}
-                                         disabled={!editable}
-                                         className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
-                                           isYes
-                                             ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
-                                             : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                                         } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
-                                       >
-                                         Yes
-                                       </button>
-                                       <button
-                                         type="button"
-                                         onClick={() => handleChange(field, "No")}
-                                         disabled={!editable}
-                                         className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
-                                           isNo
-                                             ? "bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/20"
-                                             : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                                         } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
-                                       >
-                                         No
-                                       </button>
-                                     </>
-                                   );
-                                })()}
-                              </div>
-                            ) : (
-                              <input
-                                value={edited[field] || ""}
-                                onChange={e => handleChange(field, e.target.value)}
-                                readOnly={!editable}
-                                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                                  !editable
-                                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                                }`}
-                                placeholder={`Enter ${field}...`}
-                              />
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={handleAddField}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-700 rounded-xl text-xs font-black transition-all border border-indigo-100/80 shadow-sm hover:shadow-md cursor-pointer"
-                      >
-                        <Plus size={14} className="stroke-[3]" /> Add Custom Field
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {/* Lead form question responses – full-width textareas */}
-                {questionFields.length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-[10px] font-black text-purple-400 uppercase tracking-widest flex items-center gap-1.5"><MessageSquare size={11} /> Lead Form Responses</p>
-                    {questionFields.map(field => (
-                      <div key={field} className="bg-purple-50/40 border border-purple-100 rounded-xl p-3 space-y-1.5">
-                        <label className="text-[10px] font-semibold text-purple-700 leading-snug block">{labelFor(field)}</label>
-                        <textarea
-                          value={edited[field] || ""}
-                          readOnly={true}
-                          ref={el => {
-                            if (el) {
-                              setTimeout(() => {
-                                el.style.height = 'inherit';
-                                el.style.height = `${el.scrollHeight}px`;
-                              }, 0);
-                            }
-                          }}
-                          rows={1}
-                          className="w-full bg-gray-100/60 border border-purple-100/80 rounded-lg px-3 py-2 text-sm text-gray-500 cursor-not-allowed resize-none overflow-hidden focus:outline-none transition leading-relaxed placeholder:text-gray-300"
-                          placeholder="No response..."
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {/* Campaign & Ads metadata – compact 3-col grid, always visible */}
-                {campaignFields.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5"><Tag size={10} /> Campaign / Ads Data</p>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-3 bg-gray-50/50 border border-gray-100 rounded-xl">
-                      {campaignFields.map(field => (
-                        <div key={field} className="space-y-1">
-                          <label className="text-[9px] font-black text-gray-300 uppercase tracking-widest block">{labelFor(field)}</label>
-                          <input
-                            value={edited[field] || ""}
-                            readOnly={true}
-                            className="w-full px-2 py-1.5 bg-gray-100/60 border border-gray-150 rounded-lg text-xs font-mono text-gray-400 cursor-not-allowed focus:outline-none transition"
-                            placeholder="—"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            );
-          })()}
-
-          {/* ── Quick Select: Source ── */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <Tag size={13} className="text-amber-500" /> Source ({sourceField})
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {SOURCE_OPTIONS.map(opt => (
-                <button key={opt} onClick={() => handleChange(sourceField, String(edited[sourceField] || "") === opt ? "" : opt)}
-                  className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${String(edited[sourceField] || "") === opt ? "bg-amber-600 text-white border-amber-600 shadow scale-105" : "bg-amber-50 text-amber-700 border-amber-100 hover:bg-amber-100"
-                    }`}>{opt}</button>
-              ))}
-            </div>
-          </div>
-
-          {/* ── Quick Select: Called For ── */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <Phone size={13} className="text-blue-500" /> Called For ({calledForField})
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {CALLED_FOR_OPTIONS.map(opt => (
-                <button key={opt} onClick={() => handleChange(calledForField, String(edited[calledForField] || "") === opt ? "" : opt)}
-                  className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${String(edited[calledForField] || "") === opt ? "bg-blue-600 text-white border-blue-600 shadow scale-105" : "bg-blue-50 text-blue-700 border-blue-100 hover:bg-blue-100"
-                    }`}>{opt}</button>
-              ))}
-            </div>
-          </div>
-
-          {/* ── Quick Select: Call Type ── */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              {edited.callType === "incoming" ? <PhoneIncoming size={13} className="text-green-500" /> : <PhoneOutgoing size={13} className="text-blue-500" />} Call Type
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {CALL_TYPE_OPTIONS.map(opt => (
-                <button key={opt} onClick={() => handleChange("callType", opt)}
-                  className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${edited.callType === opt ? "bg-slate-800 text-white border-slate-800 shadow scale-105" : "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-200"
-                    }`}>{opt}</button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-8">
-            {/* Abhivyakti Quick Action & Call Status */}
-            <div className="space-y-6">
-              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col gap-3">
-                <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm uppercase tracking-wider">
-                  <Flame size={16} /> Fast Registration
-                </div>
-                <button
-                  onClick={() => handleChange("status", "Reg.Done")}
-                  className={`w-full py-3 rounded-xl font-bold transition flex items-center justify-center gap-2 ${edited.status === "Reg.Done" ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 scale-[1.02]" : "bg-white text-emerald-700 border-2 border-emerald-500 hover:bg-emerald-50"}`}
-                >
-                  <CheckCircle2 size={18} />
-                  {edited.status === "Reg.Done" ? "Added to Abhivyakti Report" : "Add to Abhivyakti Report"}
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <CheckCircle2 size={13} className="text-indigo-500" /> General Result Status
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {STATUS_OPTIONS.map(opt => {
-                    if (opt === "Reg.Done") return null; // Handled strictly above
-                    return (
-                      <button
-                        key={opt}
-                        onClick={() => handleChange("status", edited.status === opt ? "" : opt)}
-                        className={`px-3 py-2.5 rounded-xl text-[11px] font-black border transition-all ${edited.status === opt
-                          ? opt === "Interested" ? "bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-500/30 scale-105" :
-                            "bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-500/30 scale-105"
-                          : "bg-gray-50 text-gray-500 border-gray-100 hover:border-gray-300"
-                          }`}
-                      >
-                        {opt}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* ── Objection Tracker (Conditional) ── */}
-              {(edited.status === "Not interested" || edited.status === "Not possible") && (
-                <div className="space-y-3 p-4 bg-red-50 border border-red-100 rounded-2xl animate-in fade-in zoom-in duration-200">
-                  <label className="text-[10px] font-black text-red-500 uppercase tracking-widest flex items-center gap-2">
-                    <AlertCircle size={13} /> Why are they {edited.status.toLowerCase()}?
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {OBJECTION_REASONS.map(reason => (
-                      <button
-                        key={reason}
-                        onClick={() => handleChange("objectionReason", edited.objectionReason === reason ? "" : reason)}
-                        className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${edited.objectionReason === reason
-                            ? "bg-red-500 text-white border-red-500 shadow-lg shadow-red-500/20 scale-105"
-                            : "bg-white text-red-600 border-red-200 hover:bg-red-100"
-                          }`}
-                      >
-                        {reason}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Note + Callback */}
-            <div className="space-y-6">
-
-              {/* ── Call Notes Timeline ── */}
-              <div className="space-y-3">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <MessageSquare size={13} className="text-indigo-500" /> Call Notes
-                  {edited.history && edited.history.length > 0 && (
-                    <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-600 rounded text-[9px] font-black">{edited.history.length} past</span>
-                  )}
-                </label>
-
-                {/* Past history entries — newest first, editable */}
-                {edited.history && edited.history.length > 0 && (
-                  <div className="space-y-2 pr-1 border border-gray-100 rounded-2xl p-3 bg-gray-50/50">
-                    {[...edited.history].reverse().map((h, revIdx) => {
-                      const origIdx = edited.history.length - 1 - revIdx;
-                      return (
-                        <div key={origIdx} className="flex gap-2.5">
-                          <div className="shrink-0 flex flex-col items-center pt-2">
-                            <div className="w-2 h-2 rounded-full bg-indigo-300 shrink-0" />
-                            {revIdx < edited.history.length - 1 && <div className="w-px flex-1 bg-gray-200 mt-1" />}
-                          </div>
-                          <div className="flex-1 bg-white rounded-xl p-3 border border-gray-100 shadow-sm mb-1">
-                            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                              <span className="text-[10px] font-black text-gray-500 uppercase tracking-wide">
-                                📅 {new Date(h.timestamp).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-                              </span>
-                              {h.status && (
-                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${h.status === "Interested" ? "bg-blue-100 text-blue-700" :
-                                  h.status === "Reg.Done" ? "bg-emerald-100 text-emerald-700" :
-                                    "bg-gray-100 text-gray-600"
-                                  }`}>{h.status}</span>
-                              )}
-                              <span className="text-[9px] text-gray-300 font-bold ml-auto truncate max-w-[80px]">{h.attenderName}</span>
-                            </div>
-                            <textarea
-                              value={h.remark || ""}
-                              onChange={e => {
-                                const updatedHistory = [...edited.history];
-                                updatedHistory[origIdx] = { ...updatedHistory[origIdx], remark: e.target.value };
-                                handleChange("history", updatedHistory);
-                                e.target.style.height = 'inherit';
-                                e.target.style.height = `${e.target.scrollHeight}px`;
-                              }}
-                              onFocus={e => {
-                                e.target.style.height = 'inherit';
-                                e.target.style.height = `${e.target.scrollHeight}px`;
-                              }}
-                              ref={el => {
-                                if (el) {
-                                  // Setup initial height
-                                  setTimeout(() => {
-                                    el.style.height = 'inherit';
-                                    el.style.height = `${el.scrollHeight}px`;
-                                  }, 0);
-                                }
-                              }}
-                              rows={1}
-                              className="w-full bg-transparent text-sm text-gray-700 resize-none overflow-hidden focus:outline-none focus:bg-slate-50 focus:ring-2 focus:ring-indigo-100 rounded-lg px-1 py-0.5 transition leading-relaxed placeholder:text-gray-300"
-                              placeholder="No note for this call..."
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* New note for current call */}
-                <div className="relative">
-                  <textarea
-                    value={edited.remark || ""}
-                    onChange={e => {
-                      handleChange("remark", e.target.value);
-                      e.target.style.height = 'inherit';
-                      e.target.style.height = `${e.target.scrollHeight}px`;
-                    }}
-                    onFocus={e => {
-                      e.target.style.height = 'inherit';
-                      e.target.style.height = `${e.target.scrollHeight}px`;
-                    }}
-                    ref={el => {
-                      if (el) {
-                        setTimeout(() => {
-                          el.style.height = 'inherit';
-                          el.style.height = `${el.scrollHeight}px`;
-                        }, 0);
-                      }
-                    }}
-                    rows={2}
-                    className="w-full px-4 py-3 bg-white border-2 border-indigo-200 rounded-2xl text-sm font-medium resize-none overflow-hidden focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition leading-relaxed"
-                    placeholder="✏️ Add note for today's call..."
-                  />
-                  <span className="absolute bottom-3 right-3 text-[9px] text-indigo-300 font-black uppercase tracking-wider pointer-events-none">New Note</span>
-                </div>
-              </div>
-
-              {/* ── Follow-up / Callback ── */}
-              <div className="space-y-2">
-                <label className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-2 ${edited.callbackDate ? "text-amber-500" : "text-slate-400"}`}>
-                  <CalendarDays size={13} /> {edited.callbackDate ? "Follow-up Scheduled" : "Schedule Follow-up"}
-                </label>
-                <div className="flex gap-3">
-                  <input
-                    type="date"
-                    value={getCallbackDateStr()}
-                    onChange={e => {
-                      handleChange("callbackDate", e.target.value);
-                      if (e.target.value && !edited.callbackStatus) handleChange("callbackStatus", "pending");
-                    }}
-                    className={`flex-1 px-4 py-3 border rounded-2xl text-sm font-bold focus:outline-none transition ${edited.callbackDate ? "bg-amber-50 border-amber-200 text-amber-700 ring-4 ring-amber-500/10" : "bg-gray-50 border-gray-100 text-gray-700"}`}
-                  />
-                  {edited.callbackDate && (
-                    <button onClick={() => { handleChange("callbackDate", null); handleChange("callbackStatus", null); }} className="px-4 py-2 bg-red-50 text-red-500 font-bold rounded-xl text-xs hover:bg-red-100 transition">Remove</button>
-                  )}
-                </div>
-
-                {/* Follow-up status selector */}
-                {edited.callbackDate && (
-                  <div className="flex gap-2 flex-wrap pt-1">
-                    {[
-                      { value: "pending", label: "⏳ Pending", activeClass: "bg-amber-500 text-white border-amber-500 shadow-lg shadow-amber-400/20", inactiveClass: "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100" },
-                      { value: "done", label: "✅ Done", activeClass: "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-400/20", inactiveClass: "bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100" },
-                      { value: "rescheduled", label: "🔄 Rescheduled", activeClass: "bg-blue-500 text-white border-blue-500 shadow-lg shadow-blue-400/20", inactiveClass: "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100" },
-                      { value: "cancelled", label: "❌ Cancelled", activeClass: "bg-red-500 text-white border-red-500 shadow-lg shadow-red-400/20", inactiveClass: "bg-red-50 text-red-500 border-red-200 hover:bg-red-100" },
-                    ].map(opt => (
-                      <button
-                        key={opt.value}
-                        onClick={() => handleChange("callbackStatus", opt.value)}
-                        className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all ${(edited.callbackStatus || "pending") === opt.value
-                          ? opt.activeClass + " scale-105"
-                          : opt.inactiveClass + " scale-95 hover:scale-100"
-                          }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-6 border-t border-gray-100 bg-gray-50 flex items-center justify-between shadow-inner">
-          <button onClick={handleDelete} className="flex items-center gap-2 text-xs font-bold text-red-400 hover:text-red-600 transition">
-            <Trash2 size={14} /> Remove Entry
-          </button>
-          <div className="flex items-center gap-4 text-xs font-bold text-gray-400 tracking-tighter uppercase">
-            {saving ? "Saving..." : "All exits auto-save"}
-          </div>
-          <button disabled={saving} onClick={handleSaveAndClose} className="px-8 py-3 bg-indigo-600 border border-indigo-600 text-white font-black rounded-2xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition active:scale-95 leading-none flex items-center justify-center gap-2 disabled:opacity-50">
-            {saving && <Loader size={14} className="animate-spin" />} Save & Close
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const MyPerformanceDashboard = ({ stats }) => {
-  const COLORS = ["#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"];
-
-  return (
-    <div className="flex-1 overflow-y-auto bg-gray-50 p-6 space-y-6">
-      {/* Cards Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: "Assigned Contacts", value: stats.assignedCount, icon: <User size={18} />, color: "border-l-indigo-500", text: "text-indigo-600" },
-          { label: "Total Attempts", value: stats.totalAttempts, icon: <Phone size={18} />, color: "border-l-blue-500", text: "text-blue-600" },
-          { label: "Connection Rate", value: stats.connectionRate + "%", icon: <CheckCircle2 size={18} />, color: "border-l-emerald-500", text: "text-emerald-600" },
-          { label: "Conversion Rate", value: stats.registrationRate + "%", icon: <Flame size={18} />, color: "border-l-orange-500", text: "text-orange-500" },
-        ].map((k, i) => (
-          <div key={i} className={`bg-white rounded-2xl p-5 border border-gray-100 border-l-4 shadow-sm flex items-center justify-between ${k.color}`}>
-            <div>
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{k.label}</p>
-              <p className="text-3xl font-black text-slate-800 mt-1">{k.value}</p>
-            </div>
-            <div className={`w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center ${k.text}`}>
-              {k.icon}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left column - Status distribution */}
-        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col h-[350px]">
-          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4">Status Distribution</h3>
-          {stats.statusChartData.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center text-gray-400 font-bold">No calls logged yet.</div>
-          ) : (
-            <div className="flex-1 relative">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={stats.statusChartData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={2}
-                    dataKey="value"
-                  >
-                    {stats.statusChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => [`${value} contacts`, 'Status']} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <span className="text-2xl font-black text-slate-800">{stats.connectedContacts}</span>
-                <span className="text-[10px] text-gray-400 uppercase font-black">Connected</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Middle column - Timeline */}
-        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col h-[350px] lg:col-span-2">
-          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4">Day-wise Timeline (Attempts)</h3>
-          {stats.dailyChartData.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center text-gray-400 font-bold">No activity recorded.</div>
-          ) : (
-            <div className="flex-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.dailyChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fontWeight: 700, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9, fontWeight: 700, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                  <Tooltip cursor={{ fill: 'rgba(226, 232, 240, 0.3)' }} formatter={(value) => [`${value} calls`, 'Attempts']} />
-                  <Bar dataKey="count" fill="#4f46e5" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Objection details */}
-        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm">
-          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4">Objections Logged</h3>
-          {stats.objectionChartData.length === 0 ? (
-            <p className="text-sm text-gray-400 font-bold py-4">No objections recorded for this period.</p>
-          ) : (
-            <div className="space-y-3">
-              {stats.objectionChartData.map((obj, i) => {
-                const percent = Math.round((obj.value / stats.assignedCount) * 100);
-                return (
-                  <div key={i} className="flex flex-col">
-                    <div className="flex justify-between items-center text-xs font-bold text-slate-700 mb-1">
-                      <span>{obj.name}</span>
-                      <span>{obj.value} ({percent}%)</span>
-                    </div>
-                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                      <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${percent}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Connection efficiency metrics */}
-        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-4">
-          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider">Call Sheet Performance Analysis</h3>
-          <div className="divide-y divide-gray-100">
-            {[
-              { label: "Average attempts per contact", value: stats.callsPerAssign, desc: "Total attempts divided by total unique assigned contacts." },
-              { label: "Successful Connections", value: stats.connectedContacts, desc: "Contacts that were successfully spoken to." },
-              { label: "Pending (Not called)", value: stats.assignedCount - stats.connectedContacts - stats.notConnectedContacts, desc: "Contacts waiting for first call or callback." },
-              { label: "Total Registrations", value: stats.registrations, desc: "Conversations that ended with successful registration." }
-            ].map((m, i) => (
-              <div key={i} className="py-3 flex justify-between items-start gap-4">
-                <div>
-                  <p className="text-xs font-black text-slate-700">{m.label}</p>
-                  <p className="text-[10px] text-gray-400 font-semibold mt-0.5">{m.desc}</p>
-                </div>
-                <span className="text-lg font-black text-slate-800 whitespace-nowrap">{m.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+import {
+  STATUS_OPTIONS,
+  SOURCE_OPTIONS,
+  CALLED_FOR_OPTIONS,
+  CONNECTED_STATUSES,
+  NOT_CONNECTED_STATUSES,
+  getFieldWithFallback,
+  getKhojiValue,
+  isKhojiAffirmative,
+  isIgnoredField
+} from "./utils";
+import { EditModal } from "./components/EditModal";
+import { MyPerformanceDashboard } from "./components/MyPerformanceDashboard";
 
 // ─── Main Attender View ───────────────────────
 export default function AttenderView({ attenderId, attenderName, onExit }) {
@@ -1108,7 +33,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   const [selectedSubProgram, setSelectedSubProgram] = useState("");
   const [callLogs, setCallLogs] = useState([]);
   const [editingRow, setEditingRow] = useState(null);
-  const [isLoadingProgram, setIsLoadingProgram] = useState(false); // U1: skeleton state
+  const [isLoadingProgram, setIsLoadingProgram] = useState(false); // skeleton state
   const [requestCount, setRequestCount] = useState(10);
   const [isRequesting, setIsRequesting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1159,8 +84,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [attenderId]);
 
-  // L4 fix: Refresh callback-due flags every 60 seconds for long-running sessions
-  // Without this, callbacks don't become "due" if the app stays open overnight
+  // Refresh callback-due flags every 60 seconds for long-running sessions
   useEffect(() => {
     const interval = setInterval(() => {
       setCallLogs(prev => {
@@ -1196,7 +120,6 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
       toast.error("Please select a specific sheet first.");
       return;
     }
-    // U5 fix: Warn before re-requesting if the sheet already has entries
     const currentSheetCount = monthFilteredLogs.length;
     if (currentSheetCount > 0) {
       if (!window.confirm(`You already have ${currentSheetCount} entries in this sheet.\nGet ${requestCount} more contacts?`)) return;
@@ -1246,7 +169,6 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   };
 
   const handleDeleteRow = async (id) => {
-    // Soft delete — just clear the log (contact goes back automatically via db if contactId)
     try {
       await updateCallLog(id, { _deleted: true });
       toast.success("Entry removed.");
@@ -1255,99 +177,99 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     }
   };
 
-const cleanExportRow = (log) => {
-  const INTERNAL_KEYS = [
-    "id", "programId", "programName", "contactId", "attenderId", "createdAt", "updatedAt",
-    "history", "_callbackDue", "_deleted", "isCallbackDue", "isHotLead", "callCount",
-    "callbackStatus", "lastCalledAt", "firstCalledAt", "registeredAt", "conversionSource",
-    "convertedBy", "subProgram", "objectionReason"
-  ];
+  const cleanExportRow = (log) => {
+    const INTERNAL_KEYS = [
+      "id", "programId", "programName", "contactId", "attenderId", "createdAt", "updatedAt",
+      "history", "_callbackDue", "_deleted", "isCallbackDue", "isHotLead", "callCount",
+      "callbackStatus", "lastCalledAt", "firstCalledAt", "registeredAt", "conversionSource",
+      "convertedBy", "subProgram", "objectionReason"
+    ];
 
-  const row = {};
-  
-  // Find standard field mappings
-  const findValue = (obj, keysList) => {
-    const foundKey = Object.keys(obj).find(k => keysList.includes(k.toLowerCase()));
-    return foundKey ? obj[foundKey] : "";
-  };
+    const row = {};
+    
+    // Find standard field mappings
+    const findValue = (obj, keysList) => {
+      const foundKey = Object.keys(obj).find(k => keysList.includes(k.toLowerCase()));
+      return foundKey ? obj[foundKey] : "";
+    };
 
-  const nameVal = findValue(log, ["name", "caller", "caller name", "lead name", "lead", "name of caller"]);
-  const phoneVal = findValue(log, ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"]);
-  const emailVal = findValue(log, ["email", "mail", "e-mail", "email id", "emailaddress"]);
-  const cityVal = findValue(log, ["city", "location", "khoji city", "place", "city name"]);
-  const stateVal = findValue(log, ["state", "state name", "province", "region"]);
-  const khojiVal = findValue(log, ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"]);
-  const countryVal = findValue(log, ["country", "nation"]);
-  const tagsVal = findValue(log, ["tags", "tag"]);
-  const statusVal = log.status || "Pending";
-  const remarkVal = log.remark || "";
-  const subProgramVal = log["Sub Program"] || log.subProgram || "";
-  const sourceVal = findValue(log, ["source", "sourse"]);
-  const calledForVal = findValue(log, ["called for", "called_for", "calledfor"]);
-  const callTypeVal = log.callType || "";
-  const callbackStatusVal = log.callbackStatus || "";
-  const objectionReasonVal = log.objectionReason || "";
+    const nameVal = findValue(log, ["name", "caller", "caller name", "lead name", "lead", "name of caller"]);
+    const phoneVal = findValue(log, ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"]);
+    const emailVal = findValue(log, ["email", "mail", "e-mail", "email id", "emailaddress"]);
+    const cityVal = findValue(log, ["city", "location", "khoji city", "place", "city name"]);
+    const stateVal = findValue(log, ["state", "state name", "province", "region"]);
+    const khojiVal = findValue(log, ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"]);
+    const countryVal = findValue(log, ["country", "nation"]);
+    const tagsVal = findValue(log, ["tags", "tag"]);
+    const statusVal = log.status || "Pending";
+    const remarkVal = log.remark || "";
+    const subProgramVal = log["Sub Program"] || log.subProgram || "";
+    const sourceVal = findValue(log, ["source", "sourse"]);
+    const calledForVal = findValue(log, ["called for", "called_for", "calledfor"]);
+    const callTypeVal = log.callType || "";
+    const callbackStatusVal = log.callbackStatus || "";
+    const objectionReasonVal = log.objectionReason || "";
 
-  let callbackDateStr = "";
-  if (log.callbackDate) {
-    const d = log.callbackDate.toDate ? log.callbackDate.toDate() : new Date(log.callbackDate);
-    if (d && !isNaN(d)) {
-      callbackDateStr = d.toLocaleDateString("en-IN");
-    }
-  }
-
-  row["Name"] = nameVal;
-  row["Phone"] = phoneVal;
-  row["Email"] = emailVal;
-  row["City"] = cityVal;
-  row["State"] = stateVal;
-  row["Khoji"] = khojiVal;
-  row["Country"] = countryVal;
-  row["Tags"] = tagsVal;
-  row["Sub Program"] = subProgramVal;
-  row["Source"] = sourceVal;
-  row["Called For"] = calledForVal;
-  row["Call Type"] = callTypeVal;
-  row["Status"] = statusVal;
-  row["Remark"] = remarkVal;
-  row["Callback Date"] = callbackDateStr;
-  row["Callback Status"] = callbackStatusVal;
-  row["Objection Reason"] = objectionReasonVal;
-
-  // Add all other dynamic/custom keys ONLY if they are explicitly present in the _mappedFields array metadata of the contact.
-  if (log._mappedFields && Array.isArray(log._mappedFields)) {
-    log._mappedFields.forEach(key => {
-      if (INTERNAL_KEYS.includes(key) || key.startsWith("_")) return;
-      
-      const isStandard = [
-        "name", "caller", "caller name", "lead name", "lead", "name of caller",
-        "phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number",
-        "email", "mail", "e-mail", "email id", "emailaddress",
-        "city", "location", "khoji city", "place", "city name",
-        "state", "state name", "province", "region",
-        "khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani",
-        "country", "nation", "tags", "tag", "status", "remark", "callbackdate", "sub program",
-        "source", "sourse", "called for", "called_for", "calledfor", "call type", "calltype", "callback status", "callbackstatus", "objection reason", "objectionreason"
-      ].includes(key.toLowerCase());
-      
-      if (!isStandard) {
-        row[key] = log[key];
+    let callbackDateStr = "";
+    if (log.callbackDate) {
+      const d = log.callbackDate.toDate ? log.callbackDate.toDate() : new Date(log.callbackDate);
+      if (d && !isNaN(d)) {
+        callbackDateStr = d.toLocaleDateString("en-IN");
       }
-    });
-  }
+    }
 
-  if (log.attenderName) {
-    row["Attended By"] = log.attenderName;
-  }
+    row["Name"] = nameVal;
+    row["Phone"] = phoneVal;
+    row["Email"] = emailVal;
+    row["City"] = cityVal;
+    row["State"] = stateVal;
+    row["Khoji"] = khojiVal;
+    row["Country"] = countryVal;
+    row["Tags"] = tagsVal;
+    row["Sub Program"] = subProgramVal;
+    row["Source"] = sourceVal;
+    row["Called For"] = calledForVal;
+    row["Call Type"] = callTypeVal;
+    row["Status"] = statusVal;
+    row["Remark"] = remarkVal;
+    row["Callback Date"] = callbackDateStr;
+    row["Callback Status"] = callbackStatusVal;
+    row["Objection Reason"] = objectionReasonVal;
 
-  let historyStr = "";
-  if (log.history && Array.isArray(log.history)) {
-    historyStr = log.history.map(h => `[${new Date(h.timestamp).toLocaleDateString("en-IN")}] ${h.attenderName}: ${h.status} - ${h.remark}`).join(" | ");
-  }
-  row["Call History Timeline"] = historyStr;
+    // Add all other dynamic/custom keys ONLY if they are explicitly present in the _mappedFields array metadata of the contact.
+    if (log._mappedFields && Array.isArray(log._mappedFields)) {
+      log._mappedFields.forEach(key => {
+        if (INTERNAL_KEYS.includes(key) || key.startsWith("_")) return;
+        
+        const isStandard = [
+          "name", "caller", "caller name", "lead name", "lead", "name of caller",
+          "phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number",
+          "email", "mail", "e-mail", "email id", "emailaddress",
+          "city", "location", "khoji city", "place", "city name",
+          "state", "state name", "province", "region",
+          "khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani",
+          "country", "nation", "tags", "tag", "status", "remark", "callbackdate", "sub program",
+          "source", "sourse", "called for", "called_for", "calledfor", "call type", "calltype", "callback status", "callbackstatus", "objection reason", "objectionreason"
+        ].includes(key.toLowerCase());
+        
+        if (!isStandard) {
+          row[key] = log[key];
+        }
+      });
+    }
 
-  return row;
-};
+    if (log.attenderName) {
+      row["Attended By"] = log.attenderName;
+    }
+
+    let historyStr = "";
+    if (log.history && Array.isArray(log.history)) {
+      historyStr = log.history.map(h => `[${new Date(h.timestamp).toLocaleDateString("en-IN")}] ${h.attenderName}: ${h.status} - ${h.remark}`).join(" | ");
+    }
+    row["Call History Timeline"] = historyStr;
+
+    return row;
+  };
 
   const handleExport = () => {
     if (sortedLogs.length === 0) { toast.error("Nothing to export."); return; }
@@ -1379,7 +301,7 @@ const cleanExportRow = (log) => {
     if (scrollRef.current) scrollRef.current.style.cursor = "grab";
   }, []);
 
-  // ── Available sheets (derived from data) ──
+  // ── Available sheets ──
   const availableSheets = useMemo(() => {
     const sheets = new Set();
     callLogs.forEach(l => {
@@ -1390,14 +312,8 @@ const cleanExportRow = (log) => {
     return Array.from(sheets).sort();
   }, [callLogs]);
 
-  // Alias availableMonths for compatibility
-  const availableMonths = availableSheets;
-
-  // L4 fix: removed `selectedSheet` from deps — being in deps caused effect to re-run and override the user's manual selection
-  // "" is the "All Sheets" sentinel — don't auto-override it
   useEffect(() => {
     if (availableSheets.length > 0) {
-      // selectedSheet === "" means "All Sheets" — keep it
       if (selectedSheet !== "" && !availableSheets.includes(selectedSheet)) {
         setSelectedSheet(availableSheets[0]);
       }
@@ -1432,7 +348,7 @@ const cleanExportRow = (log) => {
     });
   }, [callLogs, selectedSheet]);
 
-  // ── Stats (now uses monthly data) ──
+  // ── Stats ──
   const stats = useMemo(() => {
     const active = monthFilteredLogs;
     const total = active.length;
@@ -1541,14 +457,14 @@ const cleanExportRow = (log) => {
     toast.success("All filters cleared!");
   };
 
-  // ── Filter (now uses monthly data & multi-criteria advanced filters) ──
+  // ── Filter ──
   const filteredLogs = useMemo(() => {
     return monthFilteredLogs.filter(log => {
       // 1. Text Search Query
       const q = searchQuery.toLowerCase();
       if (q && !Object.values(log).join(" ").toLowerCase().includes(q)) return false;
 
-      // 2. Quick Status Filter (General Status)
+      // 2. Quick Status Filter
       if (filterStatus === "Hot Leads" && !log.isHotLead) return false;
       if (filterStatus === "Callback" && !log.callbackDate) return false;
       if (filterStatus === "Follow up" && !(log.callbackDate || log.status === "reminder" || log.status === "Next time")) return false;
@@ -1608,9 +524,7 @@ const cleanExportRow = (log) => {
       }
 
       // 10b. General Result Status Filter
-      // L6 fix: if filterStatus AND filterGeneralStatus are both set to specific (conflicting) statuses, only use filterGeneralStatus (it's more specific)
       if (filterGeneralStatus !== "All") {
-        // Don't double-filter if filterStatus already captures this status specifically
         const quickIsSpecific = filterStatus !== "All" && filterStatus !== "Hot Leads" && filterStatus !== "Callback" && filterStatus !== "Follow up";
         if (!quickIsSpecific && log.status !== filterGeneralStatus) return false;
         if (quickIsSpecific && log.status !== filterGeneralStatus) return false;
@@ -1628,7 +542,7 @@ const cleanExportRow = (log) => {
         if (filterKhoji === "No" && affirmative) return false;
       }
 
-      // 11. Date & Time / Activity Range Filter
+      // 11. Date & Time Range Filter
       if (filterDateType !== "All") {
         let logDate = null;
         if (filterDateType === "lastCalledAt") {
@@ -1639,7 +553,6 @@ const cleanExportRow = (log) => {
 
         if (!logDate || isNaN(logDate)) return false;
 
-        // Date Range Filtering
         if (filterDateRange !== "All") {
           const startOfDay = (d) => { const nd = new Date(d); nd.setHours(0, 0, 0, 0); return nd; };
           const endOfDay = (d) => { const nd = new Date(d); nd.setHours(23, 59, 59, 999); return nd; };
@@ -1662,7 +575,6 @@ const cleanExportRow = (log) => {
           }
         }
 
-        // Time of Day Filtering
         if (customTimeFrom || customTimeTo) {
           const logHours = logDate.getHours();
           const logMinutes = logDate.getMinutes();
@@ -1692,8 +604,6 @@ const cleanExportRow = (log) => {
   ]);
 
   // ── Dynamic columns from data ──
-  // All internal/system keys — used to filter them from dynamic columns
-  // We store them lowercase and compare with toLowerCase() to prevent duplicates
   const INTERNAL_KEYS_LOWER = useMemo(() => new Set([
     "id", "contactid", "attenderid", "attendername", "programid", "programname",
     "status", "remark", "callbackdate", "calltype", "createdat", "updatedat",
@@ -1701,15 +611,12 @@ const cleanExportRow = (log) => {
     "type", "callback", "call type", "call_type", "followup", "followup date",
     "history", "lastcalledat", "firstcalledat", "sub program", "subprogram",
     "ghl_id", "_contactrefid", "objectionreason",
-    // Fields written by db.js that should never appear as columns
     "normalizedphone", "contactrefid", "conversionSource", "conversionsource",
     "convertedat", "convertedby", "isassigned"
   ]), []);
 
   const dynamicCols = useMemo(() => {
     const standardOrder = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
-    
-    // Find all keys present across any of the monthFilteredLogs
     const allKeysSet = new Set();
     monthFilteredLogs.forEach(log => {
       Object.keys(log).forEach(key => {
@@ -1717,17 +624,12 @@ const cleanExportRow = (log) => {
         if (!INTERNAL_KEYS_LOWER.has(kLower) && !key.startsWith("_")) {
           const isStandard = standardOrder.some(col => col.toLowerCase() === kLower);
           if (isStandard) {
-            // Always show standard fields
             allKeysSet.add(key);
           } else if (log._mappedFields && Array.isArray(log._mappedFields)) {
-            // Log has mapping metadata — only show explicitly mapped custom fields.
-            // This prevents survey/unmapped fields from leaking in for new data.
             if (log._mappedFields.includes(key)) {
               allKeysSet.add(key);
             }
           } else {
-            // Log is OLD (pre-mapping feature) — no _mappedFields present.
-            // Fall back to isIgnoredField to filter known garbage fields.
             if (!isIgnoredField(key)) {
               allKeysSet.add(key);
             }
@@ -1736,7 +638,6 @@ const cleanExportRow = (log) => {
       });
     });
 
-    // Make sure standard order fields are present
     standardOrder.forEach(col => {
       const found = Array.from(allKeysSet).find(k => k.toLowerCase() === col.toLowerCase());
       if (found) {
@@ -1744,7 +645,6 @@ const cleanExportRow = (log) => {
       }
     });
 
-    // Sort: standardOrder first, then the rest alphabetically
     const sorted = [...standardOrder, ...Array.from(allKeysSet).sort()];
     console.log("[DEBUG] dynamicCols:", sorted);
     return sorted;
@@ -1759,7 +659,6 @@ const cleanExportRow = (log) => {
       const phoneKey = keys.find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno"].includes(k.toLowerCase()))
         || keys.find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
       const rawPhone = phoneKey ? String(log[phoneKey] || "").replace(/[\s\-\.\(\)\+]/g, "").trim() : "";
-      // Normalize to last 10 digits to catch +91XXXXXXXXXX vs XXXXXXXXXX variants
       const phone = rawPhone.length >= 10 ? rawPhone.slice(-10) : rawPhone;
       if (!phone || phone.length < 5) return;
       if (!map[progId]) map[progId] = {};
@@ -1771,12 +670,10 @@ const cleanExportRow = (log) => {
   const sortedLogs = useMemo(() => {
     const list = [...filteredLogs];
     list.sort((a, b) => {
-      // 1. Keep overdue callbacks at the top
       const aDue = a._callbackDue ? 1 : 0;
       const bDue = b._callbackDue ? 1 : 0;
       if (aDue !== bDue) return bDue - aDue;
 
-      // 2. Sort by selected method
       if (sortBy === "nameAsc") {
         const aKeys = Object.keys(a);
         const bKeys = Object.keys(b);
@@ -1790,7 +687,6 @@ const cleanExportRow = (log) => {
         const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : b.createdAt ? new Date(b.createdAt) : new Date(0);
         return bDate - aDate;
       } else {
-        // Default: activityDesc
         const aDate = a.lastCalledAt ? new Date(a.lastCalledAt) : a.createdAt?.toDate ? a.createdAt.toDate() : a.createdAt ? new Date(a.createdAt) : new Date(0);
         const bDate = b.lastCalledAt ? new Date(b.lastCalledAt) : b.createdAt?.toDate ? b.createdAt.toDate() : b.createdAt ? new Date(b.createdAt) : new Date(0);
         return bDate - aDate;
@@ -1818,16 +714,13 @@ const cleanExportRow = (log) => {
       const hist = log.history || [];
       const status = log.status;
 
-      // Calculate total attempts from history
       const attemptsCount = hist.length || (status ? 1 : 0);
       totalAttempts += attemptsCount;
 
-      // Group history items by day for timeline
       hist.forEach(h => {
         const dStr = new Date(h.timestamp).toLocaleDateString("en-IN");
         dailyActivity[dStr] = (dailyActivity[dStr] || 0) + 1;
       });
-      // If no history but status is present, count as today
       if (hist.length === 0 && status && log.updatedAt) {
         const dStr = log.updatedAt.toDate ? log.updatedAt.toDate().toLocaleDateString("en-IN") : new Date(log.updatedAt).toLocaleDateString("en-IN");
         dailyActivity[dStr] = (dailyActivity[dStr] || 0) + 1;
@@ -1859,7 +752,7 @@ const cleanExportRow = (log) => {
         const [db, mb, yb] = b.date.split("/").map(Number);
         return new Date(ya, ma - 1, da) - new Date(yb, mb - 1, db);
       })
-      .slice(-15); // Show last 15 active days
+      .slice(-15);
 
     const assignedCount = monthFilteredLogs.length;
 
@@ -1880,7 +773,6 @@ const cleanExportRow = (log) => {
     };
   }, [monthFilteredLogs]);
 
-  // U11 fix: Unified StatusBadge function — consistent pill style matching AdminPanel
   const getStatusBadge = (status) => {
     if (!status) return { bg: "bg-gray-100", text: "text-gray-400", label: "Pending" };
     if (status === "Reg.Done") return { bg: "bg-emerald-100", text: "text-emerald-700", label: status };
@@ -1944,7 +836,7 @@ const cleanExportRow = (log) => {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Get Numbers — program selector lives here */}
+          {/* Get Numbers */}
           <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-1.5">
             <select
               value={selectedProgramId}
@@ -1952,7 +844,7 @@ const cleanExportRow = (log) => {
                 setSelectedProgramId(e.target.value);
                 const p = programs.find(p => p.id === e.target.value);
                 setSelectedProgramName(p?.name || "");
-                setSelectedSubProgram(""); // Reset sub-program when program changes
+                setSelectedSubProgram("");
               }}
               className="bg-transparent text-sm font-semibold text-blue-700 focus:outline-none cursor-pointer"
             >
@@ -1960,7 +852,6 @@ const cleanExportRow = (log) => {
               {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
 
-            {/* Show sub-programs dropdown only if the selected program has them */}
             {programs.find(p => p.id === selectedProgramId)?.subPrograms?.length > 0 && (
               <select
                 value={selectedSubProgram}
@@ -1997,7 +888,7 @@ const cleanExportRow = (log) => {
         </div>
       </header>
 
-      {/* Sheet Selector — always shown, this is the primary scope */}
+      {/* Sheet Selector */}
       {availableSheets.length > 0 && (
         <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-3 shrink-0">
           <FileSpreadsheet size={14} className="text-indigo-500 shrink-0" />
@@ -2028,9 +919,6 @@ const cleanExportRow = (log) => {
         </div>
       )}
 
-
-
-      {/* A8 fix: banner now correctly says "due today or overdue" */}
       {stats.callbacks > 0 && filterStatus !== "Callback" && (
         <div className="bg-gradient-to-r from-red-600 to-rose-600 px-6 py-3 flex items-center justify-between shrink-0 shadow-lg shadow-red-600/10 cursor-pointer" onClick={() => { setFilterStatus("Callback"); setPage(1); }}>
           <div className="flex items-center gap-3 text-white">
@@ -2118,7 +1006,6 @@ const cleanExportRow = (log) => {
       {/* Advanced Filters Panel */}
       {showAdvancedFilters && (
         <div className="bg-white border-b border-gray-200 px-6 py-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 shrink-0 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
-          {/* Source Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <Tag size={11} className="text-amber-500" /> Source
@@ -2133,7 +1020,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* Called For Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <Phone size={11} className="text-blue-500" /> Called For
@@ -2148,7 +1034,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* City Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <MapPin size={11} className="text-red-500" /> City / Location
@@ -2163,7 +1048,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* Call Type Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <PhoneOutgoing size={11} className="text-emerald-500" /> Call Type
@@ -2181,7 +1065,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* Sub Program / Sheet Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <FileText size={11} className="text-indigo-500" /> Sheet Name
@@ -2196,7 +1079,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* Objection Reason Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <AlertCircle size={11} className="text-rose-500" /> Objection
@@ -2211,7 +1093,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* Callback Status Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <Clock size={11} className="text-purple-500" /> Callback Status
@@ -2229,7 +1110,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* Call Count Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <User size={11} className="text-gray-500" /> Call Count
@@ -2246,7 +1126,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* General Result Status Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <CheckCircle2 size={11} className="text-indigo-500" /> Gen. Status
@@ -2263,7 +1142,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* Abhivyakti Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <Flame size={11} className="text-emerald-500" /> Abhivyakti
@@ -2279,7 +1157,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* Khoji Filter */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <CheckSquare size={11} className="text-pink-500" /> Khoji Status
@@ -2295,8 +1172,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* ── Date Filters ── */}
-          {/* Step 1: choose which date field to filter on */}
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
               <CalendarDays size={11} className="text-teal-500" /> Filter By Date
@@ -2322,7 +1197,6 @@ const cleanExportRow = (log) => {
             </select>
           </div>
 
-          {/* Step 2: quick preset range */}
           {filterDateType !== "All" && (
             <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1">
@@ -2342,7 +1216,6 @@ const cleanExportRow = (log) => {
             </div>
           )}
 
-          {/* Step 3: After / Before date pickers — visible whenever a date type is selected */}
           {filterDateType !== "All" && (
             <div className="col-span-2 grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-1 duration-150">
               <div className="space-y-1">
@@ -2354,7 +1227,6 @@ const cleanExportRow = (log) => {
                   value={customDateFrom}
                   onChange={e => {
                     setCustomDateFrom(e.target.value);
-                    // Auto-switch to Custom mode when a date is typed directly
                     if (e.target.value) setFilterDateRange("Custom");
                     setPage(1);
                   }}
@@ -2383,7 +1255,6 @@ const cleanExportRow = (log) => {
             </div>
           )}
 
-          {/* Time of day range — shown when date type is active */}
           {filterDateType !== "All" && (
             <div className="col-span-2 grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-1 duration-150">
               <div className="space-y-1">
@@ -2419,7 +1290,6 @@ const cleanExportRow = (log) => {
           row={editingRow}
           attenderName={attenderName}
           onSave={(updated, isOptimistic) => {
-            // Local update for immediate feedback
             setCallLogs(prev => prev.map(l => l.id === updated.id ? { ...l, ...updated } : l));
             if (!isOptimistic) setEditingRow(null);
           }}
@@ -2430,7 +1300,6 @@ const cleanExportRow = (log) => {
 
       {/* Sheet Table */}
       {isLoadingProgram ? (
-        /* U1 fix: Skeleton loading state while program data loads */
         <div className="flex-1 flex flex-col overflow-hidden p-6 space-y-3 animate-pulse">
           <div className="h-10 bg-gray-200 rounded-xl w-full" />
           {[...Array(8)].map((_, i) => (
@@ -2468,7 +1337,7 @@ const cleanExportRow = (log) => {
                   const isDue = log._callbackDue;
                   const isHot = log.isHotLead;
                   const hasFollowup = log.callbackDate || log.status === "reminder" || log.status === "Next time";
-                  const isCalled = !!log.status; // Changes are done if status is set
+                  const isCalled = !!log.status;
 
                   let rowBg = "hover:bg-green-50/50";
                   if (isDue) {
@@ -2509,7 +1378,6 @@ const cleanExportRow = (log) => {
                         const val = getVal(log, col);
                         const isName = col.toLowerCase().includes("name") || col.toLowerCase().includes("lead");
 
-                        // Check duplicate phone number in program queue
                         const logKeys = Object.keys(log);
                         const phoneKey = logKeys.find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno"].includes(k.toLowerCase()))
                           || logKeys.find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
@@ -2534,7 +1402,6 @@ const cleanExportRow = (log) => {
                         </span>
                       </td>
                       <td className="py-4 px-4 border-r border-gray-100 align-top">
-                        {/* U11 fix: Consistent pill badge matching Admin panel style */}
                         {(() => {
                           const s = log.status || log.Status;
                           const badge = getStatusBadge(s);
