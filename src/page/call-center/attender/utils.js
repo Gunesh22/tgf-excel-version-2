@@ -330,5 +330,36 @@ export const getKhojiValue = (log) => {
 export const isKhojiAffirmative = (val) => {
   if (!val) return false;
   const v = String(val).toLowerCase().trim();
-  return v === "yes" || v === "y" || v === "true" || v === "khoji" || v.includes("dew d") || v.includes("done") || v.includes("completed") || (v.includes("khoji") && !v.includes("not") && !v.includes("new"));
+  return (
+    v === "yes" ||
+    v === "y" ||
+    v === "true" ||
+    v === "khoji" ||
+    v.startsWith("yes") ||
+    v.startsWith("y ") ||
+    v.startsWith("y/") ||
+    v.includes("हां") ||
+    v.includes("हाँ") ||
+    v.includes("dew d") ||
+    v.includes("done") ||
+    v.includes("completed") ||
+    (v.includes("khoji") && !v.includes("not") && !v.includes("new"))
+  );
+};
+
+export const isKhojiNegative = (val) => {
+  if (!val) return false;
+  const v = String(val).toLowerCase().trim();
+  return (
+    v === "no" ||
+    v === "n" ||
+    v === "false" ||
+    v.startsWith("no") ||
+    v.startsWith("n ") ||
+    v.startsWith("n/") ||
+    v.includes("ना") ||
+    v.includes("नहीं") ||
+    v.includes("नही") ||
+    v.includes("not")
+  );
 };

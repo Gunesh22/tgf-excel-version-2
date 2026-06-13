@@ -15,7 +15,9 @@ import {
   CALLED_FOR_OPTIONS,
   CALL_TYPE_OPTIONS,
   isIgnoredField,
-  getFieldWithFallback
+  getFieldWithFallback,
+  isKhojiAffirmative,
+  isKhojiNegative
 } from "../utils";
 
 export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose }) => {
@@ -461,8 +463,8 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
                             ) : (field.toLowerCase().includes("asmani") || field.toLowerCase().includes("aasmani") || field.toLowerCase().includes("आसमानी") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id"))) ? (
                               <div className="flex gap-2 py-1 items-center min-h-[38px]">
                                 {(() => {
-                                   const isYes = String(edited[field] || "").toLowerCase() === "yes";
-                                   const isNo = String(edited[field] || "").toLowerCase() === "no";
+                                   const isYes = isKhojiAffirmative(edited[field]);
+                                   const isNo = isKhojiNegative(edited[field]);
                                    return (
                                      <>
                                        <button
