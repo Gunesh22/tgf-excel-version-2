@@ -167,7 +167,14 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
 
   // Identity helpers
   const getLogName = () => {
-    const key = Object.keys(edited).find(k => k.toLowerCase().includes("name") || k.toLowerCase().includes("lead"));
+    if (edited.Name && String(edited.Name).trim()) {
+      return edited.Name;
+    }
+    const key = Object.keys(edited).find(k => {
+      const kl = k.toLowerCase();
+      if (kl === "attendername" || kl === "programname") return false;
+      return kl.includes("name") || kl.includes("lead");
+    });
     return key ? edited[key] : "";
   };
 
