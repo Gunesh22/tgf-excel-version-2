@@ -17,7 +17,8 @@ import {
   isIgnoredField,
   getFieldWithFallback,
   isKhojiAffirmative,
-  isKhojiNegative
+  isKhojiNegative,
+  isKhojiField
 } from "../utils";
 
 export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose }) => {
@@ -52,7 +53,7 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
       // State aliases
       if (["state", "state name", "province", "region"].includes(kLower)) keysToDelete.add(k);
       // Khoji aliases
-      if (["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(kLower) || kLower.includes("asmani") || kLower.includes("aasmani") || kLower.includes("आसमानी")) keysToDelete.add(k);
+      if (isKhojiField(kLower)) keysToDelete.add(k);
       // Source aliases
       if (["source", "sourse", "source of informiton", "source of information"].includes(kLower)) keysToDelete.add(k);
       // Tags aliases

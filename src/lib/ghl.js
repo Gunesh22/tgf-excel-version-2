@@ -9,6 +9,8 @@
  * Auth: Bearer token in Authorization header
  */
 
+import { isKhojiField } from "./khojiHelper";
+
 const GHL_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkZsTVlXa3ZnNlRKWlJDVVNRNWJXIiwidmVyc2lvbiI6MSwiaWF0IjoxNzUzMjY5NzE3NjUyLCJzdWIiOiJCMnRvbGZ4Qmh4bEJQUzZTdnU1aSJ9.o7P8Z0Jj9OdcSNvkHpnpdsmSGzZp8cnm-o2LLAVp0zo";
 const GHL_LOCATION_ID = "FlMYWkvg6TJZRCUSQ5bW";
 const GHL_VERSION = "2021-07-28";
@@ -258,7 +260,13 @@ export const fetchCustomFieldsMap = async (signal = null) => {
     const map = {};
     fields.forEach(cf => {
       if (cf.id && cf.name) {
-        map[cf.id.toLowerCase()] = cf.name;
+        const nameLower = cf.name.toLowerCase();
+        if (["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(nameLower) ||
+            nameLower.includes("asmani") || nameLower.includes("aasmani") || nameLower.includes("आसमानी")) {
+          map[cf.id.toLowerCase()] = "Khoji";
+        } else {
+          map[cf.id.toLowerCase()] = cf.name;
+        }
       }
     });
     cachedCustomFieldsMap = map;
@@ -277,6 +285,7 @@ export const mapGHLContactToRow = (contact, customFieldsMap = {}) => {
   row["Phone"] = contact.phone || "";
   row["Email"] = contact.email || "";
   row["City"] = contact.city || "";
+  row["State"] = contact.state || "";
   row["Country"] = contact.country || "";
   row["Source"] = contact.source || "";
   row["Date Added"] = contact.dateAdded || "";
@@ -303,14 +312,58 @@ export const mapGHLContactToRow = (contact, customFieldsMap = {}) => {
       const formattedVal = Array.isArray(val) ? val.join(", ") : (val || "");
 
       // Map to exact CRM name, fall back to key or ID if name metadata is not resolved
-      const fieldName = customFieldsMap[id] || cf.fieldKey || cf.key || id;
+      let fieldName = customFieldsMap[id] || cf.fieldKey || cf.key || id;
       if (fieldName) {
+        if (isKhojiField(fieldName)) {
+          fieldName = "Khoji";
+        }
         row[fieldName] = formattedVal;
       }
     });
   }
 
   return row;
+};
+
+export const fetchContactDetailsInBatches = async (contacts, onProgress, signal) => {
+  const isV1 = !GHL_TOKEN.startsWith("pit-");
+  // Only V1 list API misses custom fields. If it's V2, the list API includes them.
+  if (!isV1) return contacts;
+
+  const enriched = [];
+  const BATCH_SIZE = 15; // 15 requests per batch to be well within 100/10s limit
+  for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
+    if (signal && signal.aborted) throw new DOMException("Aborted", "AbortError");
+    
+    const batch = contacts.slice(i, i + BATCH_SIZE);
+    const promises = batch.map(async (c) => {
+      try {
+        const res = await fetch(`https://rest.gohighlevel.com/v1/contacts/${c.id}`, {
+          headers: ghlHeaders(),
+          signal
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return { ...c, ...data.contact };
+        }
+      } catch (err) {
+        console.warn(`Failed to fetch details for ${c.id}`);
+      }
+      return c;
+    });
+
+    const results = await Promise.all(promises);
+    enriched.push(...results);
+
+    if (onProgress) {
+      onProgress(enriched.length, contacts.length, `Fetching custom fields... (${enriched.length}/${contacts.length})`);
+    }
+
+    if (i + BATCH_SIZE < contacts.length) {
+      await new Promise(r => setTimeout(r, 600)); // 600ms sleep
+    }
+  }
+  return enriched;
 };
 
 /**
@@ -322,7 +375,10 @@ export const mapGHLContactToRow = (contact, customFieldsMap = {}) => {
  */
 export const fetchAndMapAllContacts = async (query = "", onProgress = null, signal = null) => {
   const customFieldsMap = await fetchCustomFieldsMap(signal);
-  const contacts = await fetchAllContacts(query, onProgress, signal);
+  let contacts = await fetchAllContacts(query, onProgress, signal);
+  if (contacts.length > 0) {
+    contacts = await fetchContactDetailsInBatches(contacts, onProgress, signal);
+  }
   const rows = contacts.map(c => mapGHLContactToRow(c, customFieldsMap));
   return { rows, total: rows.length };
 };
@@ -346,6 +402,11 @@ export const fetchContactsGroupedByTag = async (query = "", onProgress = null, s
   } else {
     console.log("No query provided. Fetching latest 1000 contacts...");
     contacts = await fetchAllContacts("", onProgress, signal, 1000);
+  }
+
+  // ENRICH WITH CUSTOM FIELDS BEFORE MAPPING!
+  if (contacts.length > 0) {
+    contacts = await fetchContactDetailsInBatches(contacts, onProgress, signal);
   }
 
   // Fallback 1: Split query on spaces, dashes, underscores, and try to search GHL with the first keyword of >=3 chars

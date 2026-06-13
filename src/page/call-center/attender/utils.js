@@ -1,3 +1,6 @@
+import { isKhojiField } from "../../../lib/khojiHelper";
+export { isKhojiField };
+
 export const STATUS_OPTIONS = [
   "Interested",
   "Reg.Done",
@@ -286,41 +289,64 @@ export const isIgnoredField = (key) => {
 
 export const getFieldWithFallback = (log, fieldName) => {
   if (!log) return "";
-  const name = fieldName.toLowerCase();
-  
-  // 1. Direct match check (case-insensitive key match)
+  const name = fieldName.toLowerCase().trim();
   const keys = Object.keys(log);
-  const directKey = keys.find(k => k.toLowerCase() === name);
-  const directVal = directKey !== undefined ? String(log[directKey] || "").trim() : "";
   
-  // 2. If direct key exists and is non-empty, use it
-  if (directVal) return directVal;
-  
-  // 3. Fallback to aliases
-  let aliases = [];
-  if (name === "name") aliases = ["caller", "caller name", "lead name", "lead", "name of caller"];
-  else if (name === "phone") aliases = ["whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "contact no", "contact_no"];
-  else if (name === "mobile") aliases = ["mobile no", "mobile number"];
-  else if (name === "email") aliases = ["mail", "e-mail", "email id", "emailaddress"];
-  else if (name === "city") aliases = ["location", "khoji city", "place", "city name"];
-  else if (name === "state") aliases = ["state name", "province", "region"];
-  else if (name === "khoji") {
-    // special handling: check khoji aliases and partial matches for asmani
-    const k = keys.find(key => {
-      const kl = key.toLowerCase();
-      return ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(kl) ||
-             kl.includes("asmani") || kl.includes("aasmani") || kl.includes("आसमानी");
-    });
-    if (k) return String(log[k] || "").trim();
-  }
-  else if (name === "source") aliases = ["sourse", "source of informiton", "source of information"];
-  else if (name === "tags") aliases = ["tag"];
-  else if (name === "called for") aliases = ["called_for", "calledfor"];
+  const getVal = (k) => String(log[k] || "").trim();
 
-  const foundKey = keys.find(k => aliases.includes(k.toLowerCase()));
-  if (foundKey) return String(log[foundKey] || "").trim();
-  
-  return directVal;
+  let candidates = [];
+
+  const directKey = keys.find(k => k.toLowerCase() === name);
+  if (directKey) {
+    candidates.push(directKey);
+  }
+
+  let aliases = [];
+  if (name === "name") {
+    aliases = ["caller", "caller name", "lead name", "lead", "name of caller"];
+  } else if (name === "phone") {
+    aliases = ["whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "contact no", "contact_no"];
+  } else if (name === "mobile") {
+    aliases = ["mobile no", "mobile number"];
+  } else if (name === "email") {
+    aliases = ["mail", "e-mail", "email id", "emailaddress"];
+  } else if (name === "city") {
+    aliases = ["location", "khoji city", "place", "city name"];
+  } else if (name === "state") {
+    aliases = ["state name", "province", "region"];
+  } else if (name === "source") {
+    aliases = ["sourse", "source of informiton", "source of information"];
+  } else if (name === "tags") {
+    aliases = ["tag"];
+  } else if (name === "called for") {
+    aliases = ["called_for", "calledfor"];
+  }
+
+  if (aliases.length > 0) {
+    keys.forEach(k => {
+      if (aliases.includes(k.toLowerCase()) && !candidates.includes(k)) {
+        candidates.push(k);
+      }
+    });
+  }
+
+  if (name === "khoji") {
+    keys.forEach(k => {
+      if (isKhojiField(k) && !candidates.includes(k)) {
+        candidates.push(k);
+      }
+    });
+  }
+
+  for (const c of candidates) {
+    const val = getVal(c);
+    if (val) return val;
+  }
+
+  if (candidates.length > 0) {
+    return getVal(candidates[0]);
+  }
+  return "";
 };
 
 export const getKhojiValue = (log) => {

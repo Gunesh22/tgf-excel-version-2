@@ -13,7 +13,7 @@ export default function AbhivyaktiTab() {
 
   useEffect(() => {
     setLoading(true);
-    const unsub = subscribeToRegistrations((data) => {
+    const unsub = subscribeToRegistrations("ALL", (data) => {
       setRegistrations(data);
       setLoading(false);
     });

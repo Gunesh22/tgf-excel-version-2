@@ -229,8 +229,12 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     
     // Find standard field mappings
     const findValue = (obj, keysList) => {
-      const foundKey = Object.keys(obj).find(k => keysList.includes(k.toLowerCase()));
-      return foundKey ? obj[foundKey] : "";
+      const matchingKeys = Object.keys(obj).filter(k => keysList.includes(k.toLowerCase()));
+      for (const k of matchingKeys) {
+        const val = String(obj[k] || "").trim();
+        if (val) return val;
+      }
+      return "";
     };
 
     const nameVal = findValue(log, ["name", "caller", "caller name", "lead name", "lead", "name of caller"]);

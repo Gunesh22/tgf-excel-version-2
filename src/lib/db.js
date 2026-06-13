@@ -6,6 +6,7 @@ import {
   deleteField
 } from "firebase/firestore";
 import { db } from "./firebase";
+import { isKhojiField } from "./khojiHelper";
 
 // ─────────────────────────────────────────────
 // IGNORED FIELDS DEFINITIONS
@@ -424,7 +425,7 @@ const cleanImportRow = (row) => {
       clean.State = strVal;
       mappedFields.push("State");
     }
-    else if (["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(k) || k.includes("asmani") || k.includes("aasmani") || k.includes("आसमानी")) {
+    else if (isKhojiField(k)) {
       clean.Khoji = strVal;
       mappedFields.push("Khoji");
     }

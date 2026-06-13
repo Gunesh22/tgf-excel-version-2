@@ -2,6 +2,7 @@ import React from "react";
 import {
   BarChart3, FolderOpen, Upload, Users, ClipboardCheck, FileText
 } from "lucide-react";
+import { isKhojiField } from "../../../lib/khojiHelper";
 
 export const COLORS = ["#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"];
 
@@ -27,7 +28,7 @@ export const getDefaultExcelMapping = (colName) => {
   if (["email", "mail", "e-mail", "email id", "emailaddress"].includes(c)) return "Email";
   if (["city", "location", "khoji city", "place", "city name"].includes(c)) return "City";
   if (["state", "state name", "province", "region"].includes(c)) return "State";
-  if (["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(c) || c.includes("asmani") || c.includes("aasmani") || c.includes("आसमानी")) return "Khoji";
+  if (isKhojiField(c)) return "Khoji";
   if (["tags", "tag"].includes(c)) return "Tags";
   if (["source of informiton", "source of information"].includes(c)) return "Source";
   if (["source", "sourse", "origin"].includes(c)) return "Ignore";
@@ -46,8 +47,12 @@ export const cleanExportRow = (log) => {
   
   // Find standard field mappings
   const findValue = (obj, keysList) => {
-    const foundKey = Object.keys(obj).find(k => keysList.includes(k.toLowerCase()));
-    return foundKey ? obj[foundKey] : "";
+    const matchingKeys = Object.keys(obj).filter(k => keysList.includes(k.toLowerCase()));
+    for (const k of matchingKeys) {
+      const val = String(obj[k] || "").trim();
+      if (val) return val;
+    }
+    return "";
   };
 
   const nameVal = findValue(log, ["name", "caller", "caller name", "lead name", "lead", "name of caller"]);

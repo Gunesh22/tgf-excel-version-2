@@ -102,8 +102,8 @@ export default function ImportContacts({ programs, onImportComplete }) {
     abortControllerRef.current = controller;
 
     try {
-      const groups = await fetchContactsGroupedByTag(crmQuery.trim(), (fetched, total) => {
-        setCrmFetchProgress(`Downloaded ${fetched} contacts...`);
+      const groups = await fetchContactsGroupedByTag(crmQuery.trim(), (fetched, total, msg) => {
+        setCrmFetchProgress(msg || `Downloaded ${fetched} contacts...`);
       }, controller.signal);
 
       const groupKeys = Object.keys(groups);
