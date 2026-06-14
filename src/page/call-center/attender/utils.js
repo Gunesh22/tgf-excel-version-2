@@ -273,7 +273,13 @@ export const IGNORED_FIELDS = [
   "content",
   "enter trainer name",
   "how would you like to attend the shivir",
-  "how would you like to attend"
+  "how would you like to attend",
+  "assignedname",
+  "assignedto",
+  "isassigned",
+  "normalizedphone",
+  "assignedat",
+  "registeredyearmonth"
 ];
 
 export const isIgnoredField = (key) => {
