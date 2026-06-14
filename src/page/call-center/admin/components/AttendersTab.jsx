@@ -7,7 +7,7 @@ import {
 import {
   createAttender, updateAttender, deleteAttender,
   reassignContactsToPool, reassignContactsBetweenAttenders,
-  subscribeToCallLogs
+  subscribeToCallLogs, getAttenderContactCount
 } from "../../../../lib/db";
 import { cleanExportRow } from "../utils.jsx";
 
@@ -77,7 +77,24 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
   };
 
   const handleDelete = async (id, name) => {
-    if (!confirm(`Are you sure you want to delete "${name}"? Contacts assigned to them will be returned to the general pool.`)) return;
+    // Check if this attender still has contacts assigned across any program
+    let totalAssigned = 0;
+    try {
+      totalAssigned = await getAttenderContactCount(id);
+    } catch (err) {
+      toast.error("Could not verify contact assignments: " + err.message);
+      return;
+    }
+
+    if (totalAssigned > 0) {
+      toast.error(
+        `"${name}" still has ${totalAssigned} contact(s) assigned. Use the Workload Reassignment Panel to reassign all contacts first before deleting.`,
+        { duration: 6000 }
+      );
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete "${name}"? This cannot be undone.`)) return;
     try {
       await deleteAttender(id);
       toast.success("Attender deleted successfully.");

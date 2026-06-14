@@ -815,6 +815,18 @@ export const deleteAttender = async (id) => {
   await deleteDoc(doc(db, "attenders", id));
 };
 
+// Count how many contacts are currently assigned to this attender (across all programs)
+export const getAttenderContactCount = async (attenderId) => {
+  const q = query(
+    collection(db, "contacts"),
+    where("assignedTo", "==", attenderId),
+    where("isAssigned", "==", true)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.filter(d => !d.data()._deleted).length;
+};
+
+
 // ─────────────────────────────────────────────
 // QUEUE — Assign N contacts to attender
 // ─────────────────────────────────────────────
