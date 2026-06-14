@@ -130,14 +130,15 @@ export const ensureIncomingProgram = async () => {
 
 export const getPrograms = async () => {
   const tags = await getActiveTags();
-  const list = tags.map(t => ({
-    id: t,
-    name: t,
-    contactCount: 0,
-    createdAt: Timestamp.now()
-  }));
-  
-  // Also fetch any existing programs from Firestore to merge counts and creation dates
+  const list = tags
+    .map(t => ({
+      id: t === INCOMING_PROGRAM_NAME ? INCOMING_PROGRAM_ID : t,
+      name: t === INCOMING_PROGRAM_NAME ? INCOMING_PROGRAM_NAME : t,
+      contactCount: 0,
+      createdAt: Timestamp.now()
+    }))
+    .filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
+
   try {
     const snap = await getDocs(collection(db, "programs"));
     snap.docs.forEach(d => {
@@ -159,8 +160,7 @@ export const getPrograms = async () => {
     console.warn("Failed to merge programs list:", e);
   }
 
-  // Ensure Incoming Calls is always in the list
-  if (!list.some(p => p.id === INCOMING_PROGRAM_ID || p.name === INCOMING_PROGRAM_NAME)) {
+  if (!list.some(p => p.id === INCOMING_PROGRAM_ID)) {
     list.unshift({
       id: INCOMING_PROGRAM_ID,
       name: INCOMING_PROGRAM_NAME,
@@ -170,8 +170,12 @@ export const getPrograms = async () => {
     });
   }
 
-  return list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+  // Remove stale duplicate with id === "Incoming Calls" string (old bad entries)
+  const finalList = list.filter(p => p.id !== INCOMING_PROGRAM_NAME);
+
+  return finalList.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
 };
+
 
 export const createProgram = async (name) => {
   await registerActiveTag(name);
@@ -1032,8 +1036,8 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   const now = new Date();
   const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-  const finalProgramName = programName || "Incoming Calls";
-  const finalProgramId = programId || "Incoming Calls";
+  const finalProgramName = programName || INCOMING_PROGRAM_NAME;
+  const finalProgramId = programId || INCOMING_PROGRAM_ID;
 
   const tagsSet = new Set();
   (Array.isArray(data.tags) ? data.tags : []).forEach(t => parseTags(String(t)).forEach(x => tagsSet.add(x)));
