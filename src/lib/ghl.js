@@ -11,9 +11,9 @@
 
 import { isKhojiField } from "./khojiHelper";
 
-const GHL_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkZsTVlXa3ZnNlRKWlJDVVNRNWJXIiwidmVyc2lvbiI6MSwiaWF0IjoxNzUzMjY5NzE3NjUyLCJzdWIiOiJCMnRvbGZ4Qmh4bEJQUzZTdnU1aSJ9.o7P8Z0Jj9OdcSNvkHpnpdsmSGzZp8cnm-o2LLAVp0zo";
-const GHL_LOCATION_ID = "FlMYWkvg6TJZRCUSQ5bW";
-const GHL_VERSION = "2021-07-28";
+const GHL_TOKEN = import.meta.env.VITE_GHL_TOKEN;
+const GHL_LOCATION_ID = import.meta.env.VITE_GHL_LOCATION_ID;
+const GHL_VERSION = import.meta.env.VITE_GHL_VERSION;
 
 // Decode base64 helper (Node.js & browser safe)
 const base64Decode = (str) => {
@@ -434,16 +434,11 @@ export const fetchContactsGroupedByTag = async (query = "", onProgress = null, s
     const row = mapGHLContactToRow(contact, customFieldsMap);
     const tags = contact.tags || [];
     
-    if (tags.length === 0) {
-      if (!groups["No Tag"]) groups["No Tag"] = [];
-      groups["No Tag"].push({ ...row, "Sub Program": "No Tag" });
-    } else {
-      // Put contact in each tag group
-      tags.forEach(tag => {
-        if (!groups[tag]) groups[tag] = [];
-        groups[tag].push({ ...row, "Sub Program": tag });
-      });
-    }
+    // Put contact in each tag group
+    tags.forEach(tag => {
+      if (!groups[tag]) groups[tag] = [];
+      groups[tag].push({ ...row, "Sub Program": tag });
+    });
   });
 
   // If fallback or search was used, filter groups to only keep those matching the query

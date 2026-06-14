@@ -3,7 +3,7 @@ import {
   updateDoc, deleteDoc, query, where,
   serverTimestamp, writeBatch, onSnapshot,
   limit, Timestamp, runTransaction, arrayUnion, orderBy,
-  deleteField
+  deleteField, increment
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { isKhojiField } from "./khojiHelper";
@@ -78,12 +78,47 @@ const isIgnoredField = (key) => {
 // PROGRAMS (Folders)
 // ─────────────────────────────────────────────
 
+// ACTIVE TAGS METADATA
+export const getActiveTags = async () => {
+  try {
+    const snap = await getDocs(collection(db, "activeTags"));
+    return snap.docs.map(d => d.id).sort();
+  } catch (e) {
+    console.error("Failed to get active tags:", e);
+    return [];
+  }
+};
+
+export const registerActiveTag = async (tag) => {
+  if (!tag) return;
+  const cleanTag = tag.trim();
+  if (!cleanTag) return;
+  try {
+    await setDoc(doc(db, "activeTags", cleanTag), {
+      name: cleanTag,
+      createdAt: serverTimestamp()
+    }, { merge: true });
+  } catch (e) {
+    console.error("Failed to register active tag:", e);
+  }
+};
+
+export const removeActiveTag = async (tag) => {
+  if (!tag) return;
+  try {
+    await deleteDoc(doc(db, "activeTags", tag.trim()));
+  } catch (e) {
+    console.error("Failed to remove active tag:", e);
+  }
+};
+
 // Fixed ID for the dedicated "Incoming Calls" program — never changes
 export const INCOMING_PROGRAM_ID = "incoming-calls";
 export const INCOMING_PROGRAM_NAME = "Incoming Calls";
 
 // Upsert the Incoming Calls program document — safe to call multiple times
 export const ensureIncomingProgram = async () => {
+  await registerActiveTag("Incoming Calls");
   const ref = doc(db, "programs", INCOMING_PROGRAM_ID);
   await setDoc(ref, {
     name: INCOMING_PROGRAM_NAME,
@@ -94,33 +129,75 @@ export const ensureIncomingProgram = async () => {
 };
 
 export const getPrograms = async () => {
-  const snap = await getDocs(collection(db, "programs"));
-  const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  return docs.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+  const tags = await getActiveTags();
+  const list = tags.map(t => ({
+    id: t,
+    name: t,
+    contactCount: 0,
+    createdAt: Timestamp.now()
+  }));
+  
+  // Also fetch any existing programs from Firestore to merge counts and creation dates
+  try {
+    const snap = await getDocs(collection(db, "programs"));
+    snap.docs.forEach(d => {
+      const data = d.data();
+      const existing = list.find(item => item.id === d.id);
+      if (existing) {
+        existing.contactCount = data.contactCount || 0;
+        if (data.createdAt) existing.createdAt = data.createdAt;
+      } else {
+        list.push({
+          id: d.id,
+          name: data.name || d.id,
+          contactCount: data.contactCount || 0,
+          createdAt: data.createdAt || Timestamp.now()
+        });
+      }
+    });
+  } catch (e) {
+    console.warn("Failed to merge programs list:", e);
+  }
+
+  // Ensure Incoming Calls is always in the list
+  if (!list.some(p => p.id === INCOMING_PROGRAM_ID || p.name === INCOMING_PROGRAM_NAME)) {
+    list.unshift({
+      id: INCOMING_PROGRAM_ID,
+      name: INCOMING_PROGRAM_NAME,
+      isSystem: true,
+      contactCount: 0,
+      createdAt: Timestamp.now()
+    });
+  }
+
+  return list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
 };
 
 export const createProgram = async (name) => {
-  const ref = await addDoc(collection(db, "programs"), {
+  await registerActiveTag(name);
+  const ref = doc(db, "programs", name);
+  await setDoc(ref, {
     name,
     createdAt: serverTimestamp(),
     contactCount: 0,
-  });
-  return ref.id;
+  }, { merge: true });
+  return name;
 };
 
 export const deleteProgram = async (id) => {
+  await removeActiveTag(id);
   await deleteDoc(doc(db, "programs", id));
 };
 
-// Read all contacts from all chunks of a program (for field-scanning before remapping)
-export const getProgramChunkContacts = async (programId) => {
-  const snap = await getDocs(collection(db, "programQueues", programId, "chunks"));
-  const allContacts = [];
-  snap.docs.forEach(d => {
-    const contacts = d.data().contacts || [];
-    contacts.forEach(c => allContacts.push(c));
-  });
-  return allContacts;
+// Read contacts of a program (for field-scanning before remapping)
+export const getProgramChunkContacts = async (programId, limitCount = 100) => {
+  const q = query(
+    collection(db, "contacts"),
+    where("programId", "==", programId),
+    limit(limitCount)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 };
 
 const getCaseInsensitiveProp = (obj, propName) => {
@@ -140,11 +217,20 @@ const getCaseInsensitiveProp = (obj, propName) => {
 // skipEmptySettings: { originalColName: boolean }
 // Returns number of contacts updated.
 export const remapProgramContacts = async (programId, columnMappings, skipEmptySettings) => {
-  const snap = await getDocs(collection(db, "programQueues", programId, "chunks"));
-  const INTERNAL_KEYS = ["_contactRefId", "_mappedFields", "Sub Program", "GHL_ID", "normalizedPhone"];
+  const snap = await getDocs(
+    query(collection(db, "contacts"), where("programId", "==", programId))
+  );
+  const SYSTEM_KEYS = new Set([
+    "id", "programid", "programname", "assignedto", "assignedname",
+    "calltype", "status", "remark", "callbackdate", "iscallbackdue",
+    "createdat", "updatedat", "history", "callbackstatus", "objectionreason",
+    "registeredat", "conversionsource", "convertedby", "_callbackdue", "_deleted", "_isnew",
+    "_contactrefid", "_mappedfields", "sub program", "subprogram", "ghl_id", "normalizedphone", "isassigned"
+  ]);
+
+  const STANDARD_FIELDS = new Set(["Name", "Phone", "Email", "City", "State", "Khoji", "Source", "Tags"]);
   let totalUpdated = 0;
   const MAX_BATCH = 499;
-
   const batchWriteOps = [];
 
   const activeMappedFields = [];
@@ -153,113 +239,35 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
     activeMappedFields.push(target);
   });
 
-  snap.docs.forEach(chunkDoc => {
-    const rawContacts = chunkDoc.data().contacts || [];
-    const remappedContacts = rawContacts.map(contact => {
-      const newContact = {};
-      const contactMappedFields = [...activeMappedFields];
+  snap.docs.forEach(contactDoc => {
+    const contactData = contactDoc.data();
+    const contactUpdate = {};
+    const contactMappedFields = [...activeMappedFields];
 
-      // Always carry system/meta keys untouched
-      INTERNAL_KEYS.forEach(k => {
-        const lookup = getCaseInsensitiveProp(contact, k);
-        if (lookup.found) {
-          newContact[lookup.key] = lookup.val;
-        }
-      });
-
-      // Initialize all activeMappedFields to "" by default
-      activeMappedFields.forEach(f => {
-        newContact[f] = "";
-      });
-
-      Object.entries(contact).forEach(([key, val]) => {
-        const isInternal = INTERNAL_KEYS.some(k => k.toLowerCase() === key.toLowerCase());
-        if (isInternal) return;
-
-        const mappingLookup = getCaseInsensitiveProp(columnMappings, key);
-        if (!mappingLookup.found) {
-          // Ignore by default!
-          return;
-        }
-
-        const canonicalKey = mappingLookup.key;
-        const target = mappingLookup.val;
-
-        const skipEmptyLookup = getCaseInsensitiveProp(skipEmptySettings, key);
-        const skipEmpty = skipEmptyLookup.found ? !!skipEmptyLookup.val : false;
-        const strVal = val === null || val === undefined ? "" : String(val).trim();
-
-        if (skipEmpty && !strVal) return;
-        if (target === "Ignore") return;
-
-        // Standard target
-        if (newContact[target]) {
-          newContact[target] = `${newContact[target]} ${strVal}`.trim();
-        } else {
-          newContact[target] = strVal || val;
-        }
-      });
-
-      newContact._mappedFields = Array.from(new Set(contactMappedFields));
-
-      // Re-compute normalizedPhone
-      const phoneVal = newContact.Phone || newContact.Mobile || "";
-      newContact.normalizedPhone = normalizePhone(String(phoneVal));
-
-      return newContact;
-    });
-
-    batchWriteOps.push({
-      ref: chunkDoc.ref,
-      data: { contacts: remappedContacts }
-    });
-    totalUpdated += rawContacts.length;
-  });
-
-  // Query and update existing call logs for this program
-  const logsSnap = await getDocs(
-    query(collection(db, "callLogs"), where("programId", "==", programId))
-  );
-
-  const LOG_SYSTEM_KEYS = new Set([
-    "contactid", "programid", "programname", "attenderid", "attendername",
-    "calltype", "status", "remark", "callbackdate", "iscallbackdue",
-    "createdat", "updatedat", "history", "callbackstatus", "objectionreason",
-    "registeredat", "conversionsource", "convertedby", "_callbackdue", "_deleted", "_isnew",
-    "_contactrefid", "_mappedfields", "sub program", "subprogram", "ghl_id", "normalizedphone"
-  ]);
-
-  const STANDARD_FIELDS = new Set(["Name", "Phone", "Email", "City", "State", "Khoji", "Source", "Tags"]);
-
-  logsSnap.docs.forEach(logDoc => {
-    const logData = logDoc.data();
-    const logUpdate = {};
-    const logMappedFields = [...activeMappedFields];
-
-    // Initialize all active mapped fields to "" if not already present in logData (case-insensitive)
+    // Always carry system/meta keys untouched, or initialize them if missing
     activeMappedFields.forEach(f => {
-      const lookup = getCaseInsensitiveProp(logData, f);
+      const lookup = getCaseInsensitiveProp(contactData, f);
       if (!lookup.found) {
-        logUpdate[f] = "";
+        contactUpdate[f] = "";
       }
     });
 
-    Object.entries(logData).forEach(([key, val]) => {
+    Object.entries(contactData).forEach(([key, val]) => {
       const keyLower = key.toLowerCase();
-      if (LOG_SYSTEM_KEYS.has(keyLower)) return;
+      if (SYSTEM_KEYS.has(keyLower)) return;
 
       const mappingLookup = getCaseInsensitiveProp(columnMappings, key);
       const strVal = val === null || val === undefined ? "" : String(val).trim();
 
       if (!mappingLookup.found) {
-        // Keep standard fields in mapped fields
+        // Keep standard fields in mapped fields if present
         const isStandard = Array.from(STANDARD_FIELDS).some(f => f.toLowerCase() === keyLower);
         if (isStandard) {
           const canonicalStandard = Array.from(STANDARD_FIELDS).find(f => f.toLowerCase() === keyLower);
-          logMappedFields.push(canonicalStandard);
+          contactMappedFields.push(canonicalStandard);
         } else {
           // Delete other fields to ignore by default
-          logUpdate[key] = deleteField();
+          contactUpdate[key] = deleteField();
         }
         return;
       }
@@ -270,28 +278,28 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
       const skipEmpty = skipEmptyLookup.found ? !!skipEmptyLookup.val : false;
 
       if (target === "Ignore" || (skipEmpty && !strVal)) {
-        logUpdate[canonicalKey] = deleteField();
+        contactUpdate[canonicalKey] = deleteField();
         if (key !== canonicalKey) {
-          logUpdate[key] = deleteField();
+          contactUpdate[key] = deleteField();
         }
-        const idx = logMappedFields.indexOf(target);
-        if (idx !== -1) logMappedFields.splice(idx, 1);
+        const idx = contactMappedFields.indexOf(target);
+        if (idx !== -1) contactMappedFields.splice(idx, 1);
         return;
       }
 
-      logUpdate[target] = strVal || val;
+      contactUpdate[target] = strVal || val;
       if (key !== target) {
-        logUpdate[key] = deleteField();
+        contactUpdate[key] = deleteField();
       }
     });
 
-    logUpdate._mappedFields = Array.from(new Set(logMappedFields));
+    contactUpdate._mappedFields = Array.from(new Set(contactMappedFields));
 
     // Recompute normalizedPhone safely (without evaluating Firestore delete field token)
-    const newPhoneLookup = getCaseInsensitiveProp(logUpdate, "Phone");
-    const newMobileLookup = getCaseInsensitiveProp(logUpdate, "Mobile");
-    const oldPhoneLookup = getCaseInsensitiveProp(logData, "Phone");
-    const oldMobileLookup = getCaseInsensitiveProp(logData, "Mobile");
+    const newPhoneLookup = getCaseInsensitiveProp(contactUpdate, "Phone");
+    const newMobileLookup = getCaseInsensitiveProp(contactUpdate, "Mobile");
+    const oldPhoneLookup = getCaseInsensitiveProp(contactData, "Phone");
+    const oldMobileLookup = getCaseInsensitiveProp(contactData, "Mobile");
     let phoneVal = "";
     if (newPhoneLookup.found && typeof newPhoneLookup.val === "string" && newPhoneLookup.val.trim()) {
       phoneVal = newPhoneLookup.val;
@@ -303,13 +311,16 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
       phoneVal = oldMobileLookup.val;
     }
     if (phoneVal) {
-      logUpdate.normalizedPhone = normalizePhone(String(phoneVal));
+      contactUpdate.normalizedPhone = normalizePhone(String(phoneVal));
     }
 
+    contactUpdate.updatedAt = serverTimestamp();
+
     batchWriteOps.push({
-      ref: logDoc.ref,
-      data: logUpdate
+      ref: contactDoc.ref,
+      data: contactUpdate
     });
+    totalUpdated++;
   });
 
   // Commit in batches of MAX_BATCH
@@ -333,10 +344,29 @@ export const normalizePhone = (phone) => {
   return cleaned;
 };
 
+// Parse a comma-separated tag string into a clean array of individual tag strings
+const parseTags = (rawStr) => {
+  if (!rawStr) return [];
+  return String(rawStr).split(",").map(t => t.trim()).filter(Boolean);
+};
 
-// ─────────────────────────────────────────────
-// CONTACTS (MASTER POOL - CHUNKED FOR FREE TIER)
-// ─────────────────────────────────────────────
+// Format a Firestore document snapshot into a plain contact object.
+// Derives the virtual Tags (string) from the tags (array) — Tags is never stored in Firestore.
+export const formatContactDoc = (docSnap) => {
+  if (!docSnap || !docSnap.exists()) return {};
+  const data = docSnap.data();
+  // Merge any stale Tags string into the array (migration safety)
+  const tagsFromArr = Array.isArray(data.tags) ? data.tags : [];
+  const tagsFromStr = data.Tags ? parseTags(String(data.Tags)) : [];
+  const allTags = Array.from(new Set([...tagsFromArr, ...tagsFromStr])).sort();
+  const { Tags: _removed, ...rest } = data;
+  return {
+    id: docSnap.id,
+    ...rest,
+    tags: allTags,
+    Tags: allTags.join(", ")   // virtual — for UI display only, not stored in Firestore
+  };
+};
 
 const cleanImportRow = (row) => {
   if (row._mappedFields && Array.isArray(row._mappedFields)) {
@@ -348,18 +378,21 @@ const cleanImportRow = (row) => {
       City: "",
       State: "",
       Khoji: "",
-      Source: "",
-      Tags: ""
+      Source: ""
     };
     if (row["Sub Program"] !== undefined) {
       clean["Sub Program"] = row["Sub Program"];
     }
     if (row.GHL_ID !== undefined) {
-      clean.GHL_ID = row.GHL_ID;
+      clean.GHL_ID = String(row.GHL_ID).trim();
+    } else if (row.ghl_id !== undefined) {
+      clean.GHL_ID = String(row.ghl_id).trim();
     }
     row._mappedFields.forEach(field => {
-      if (["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Source", "Tags"].includes(field)) {
+      if (["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Source"].includes(field)) {
         clean[field] = row[field] !== undefined && row[field] !== null ? String(row[field]) : "";
+      } else if (field === "Tags" && row[field]) {
+        clean._tagsRaw = parseTags(String(row[field]));
       }
     });
     clean._mappedFields = row._mappedFields.filter(f => ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Source", "Tags"].includes(f));
@@ -379,12 +412,16 @@ const cleanImportRow = (row) => {
     City: "",
     State: "",
     Khoji: "",
-    Source: "",
-    Tags: ""
+    Source: ""
   };
   
   if (row["Sub Program"] !== undefined) {
     clean["Sub Program"] = row["Sub Program"];
+  }
+  if (row.GHL_ID !== undefined) {
+    clean.GHL_ID = String(row.GHL_ID).trim();
+  } else if (row.ghl_id !== undefined) {
+    clean.GHL_ID = String(row.ghl_id).trim();
   }
 
   const mappedFields = [];
@@ -394,8 +431,11 @@ const cleanImportRow = (row) => {
     const k = key.trim().toLowerCase();
     const strVal = val === null || val === undefined ? "" : String(val).trim();
     if (!strVal) return;
-    
-    if (["name", "caller", "caller name", "lead name", "lead", "name of caller"].includes(k) || k === "first name" || k === "last name") {
+
+    if (["ghl_id", "ghl id", "ghlid"].includes(k)) {
+      clean.GHL_ID = strVal;
+    }
+    else if (["name", "caller", "caller name", "lead name", "lead", "name of caller"].includes(k) || k === "first name" || k === "last name") {
       if (k === "last name" && clean.Name) {
         clean.Name = `${clean.Name} ${strVal}`.trim();
       } else if (clean.Name) {
@@ -430,7 +470,8 @@ const cleanImportRow = (row) => {
       mappedFields.push("Khoji");
     }
     else if (["tags", "tag"].includes(k)) {
-      clean.Tags = strVal;
+      // Parse tags immediately into array — never store as string
+      clean._tagsRaw = parseTags(strVal);
       mappedFields.push("Tags");
     }
     else if (["source of informiton", "source of information"].includes(k)) {
@@ -451,231 +492,303 @@ const cleanImportRow = (row) => {
 };
 
 // ─────────────────────────────────────────────
-// CONTACTS (MASTER POOL - CHUNKED FOR FREE TIER)
+// CONTACTS (MASTER POOL - FLAT DOCUMENT MODEL)
 // ─────────────────────────────────────────────
-export const importContacts = async (programId, programName, rows, subPrograms = null) => {
-  // Free tier massively limits writes (20k/day).
-  // We chunk contacts into a SINGLE document up to 800 KB (maximum 500 contacts per chunk). 
-  // An Excel sheet of 20,000 rows only uses 40 database writes!
-  const MAX_BATCH_OPS = 499; // L5 fix: Firebase limit is 500 ops per batch, reserve 1 for parent doc
-  const maxDocSizeBytes = 800000; // 800 KB limit for safety (Firestore doc limit is 1 MB)
-  const maxContactsPerChunk = 500;
-  let imported = 0;
-  const queueIndexOffset = Date.now();
+export const importContacts = async (param1, param2, param3, param4 = null) => {
+  let tag = param1;
+  let rows = param2;
+  if (param3 !== undefined) {
+    // Old signature: (programId, programName, rows, subPrograms)
+    // Here, programName (param2) acts as the tag, and rows (param3) contains the contacts
+    tag = param2;
+    rows = param3;
+  }
 
-  // Load all existing callLogs for this program to check duplicates and merge fields
-  const logsSnap = await getDocs(
-    query(collection(db, "callLogs"), where("programId", "==", programId))
-  );
-  const assignedLogs = new Map(); // normalizedPhone -> { ref, data }
-  logsSnap.docs.forEach(d => {
-    const data = d.data();
-    if (data._deleted) return;
-    const phoneVal = data.Phone || data.Mobile || "";
+  const MAX_BATCH_OPS = 499;
+  let imported = 0;
+  
+  // Track GHL IDs and phone numbers processed in this import to prevent internal duplicates in the Excel/GHL sheet
+  const processedGhlIds = new Set();
+  const processedPhones = new Set();
+  const uniqueRowsToImport = [];
+
+  rows.forEach(r => {
+    const cleaned = cleanImportRow(r);
+    
+    // Check local duplicate by GHL_ID
+    if (cleaned.GHL_ID) {
+      if (processedGhlIds.has(cleaned.GHL_ID)) {
+        return; // Skip duplicate within the same sheet
+      }
+      processedGhlIds.add(cleaned.GHL_ID);
+    }
+
+    // Check local duplicate by normalizedPhone
+    const phoneVal = cleaned.Phone || cleaned.Mobile || "";
     const norm = normalizePhone(phoneVal);
     if (norm) {
-      assignedLogs.set(norm, { ref: d.ref, data });
+      if (processedPhones.has(norm)) {
+        return; // Skip duplicate within the same sheet
+      }
+      processedPhones.add(norm);
     }
+    uniqueRowsToImport.push(cleaned);
   });
 
-  // Track phone numbers processed in this import to prevent internal duplicates
-  const processedPhones = new Set();
-  const logsToUpdate = [];
+  // Query Firestore in batches of 30 to check for existing contacts GLOBALLY by GHL_ID
+  const existingContactsByGhl = new Map(); // GHL_ID -> {ref, data}
+  const ghlIdsList = Array.from(processedGhlIds).filter(Boolean);
+  for (let i = 0; i < ghlIdsList.length; i += 30) {
+    const ghlBatch = ghlIdsList.slice(i, i + 30);
+    const q = query(
+      collection(db, "contacts"),
+      where("GHL_ID", "in", ghlBatch)
+    );
+    const snap = await getDocs(q);
+    snap.docs.forEach(docSnap => {
+      const data = formatContactDoc(docSnap);
+      if (data.GHL_ID) {
+        existingContactsByGhl.set(data.GHL_ID, { ref: docSnap.ref, data });
+      }
+    });
+  }
 
-  // Group rows by sub-program to prevent chunk starvation
-  const rowsBySub = {};
-  rows.forEach(r => {
-    const sp = r["Sub Program"] || "";
-    if (!rowsBySub[sp]) rowsBySub[sp] = [];
-    rowsBySub[sp].push(r);
-  });
+  // Query Firestore in batches of 30 to check for existing contacts GLOBALLY by normalizedPhone
+  const existingContactsByPhone = new Map(); // normalizedPhone -> {ref, data}
+  const normPhonesList = Array.from(processedPhones).filter(Boolean);
+  for (let i = 0; i < normPhonesList.length; i += 30) {
+    const phoneBatch = normPhonesList.slice(i, i + 30);
+    const q = query(
+      collection(db, "contacts"),
+      where("normalizedPhone", "in", phoneBatch)
+    );
+    const snap = await getDocs(q);
+    snap.docs.forEach(docSnap => {
+      const data = formatContactDoc(docSnap);
+      if (data.normalizedPhone) {
+        existingContactsByPhone.set(data.normalizedPhone, { ref: docSnap.ref, data });
+      }
+    });
+  }
 
-  // Build all chunk operations first using dynamic size-based chunking
-  const chunkOps = [];
-  let rowOffset = 0;
-  
-  Object.keys(rowsBySub).forEach(sp => {
-    const spRows = rowsBySub[sp];
-    let currentChunkContacts = [];
-    let currentChunkSize = 0;
+  const batchWriteOps = [];
 
-    spRows.forEach((r, idx) => {
-      const cleaned = cleanImportRow(r);
+  uniqueRowsToImport.forEach(cleaned => {
+    // Find matching existing contact, prioritizing GHL_ID first, then normalizedPhone
+    let existing = null;
+    if (cleaned.GHL_ID && existingContactsByGhl.has(cleaned.GHL_ID)) {
+      existing = existingContactsByGhl.get(cleaned.GHL_ID);
+    } else {
       const phoneVal = cleaned.Phone || cleaned.Mobile || "";
       const norm = normalizePhone(phoneVal);
-
-      if (norm) {
-        // 1. If it's already assigned, update its fields and skip adding to chunk
-        if (assignedLogs.has(norm)) {
-          const existing = assignedLogs.get(norm);
-          const updatePayload = {};
-          let needsUpdate = false;
-
-          Object.entries(cleaned).forEach(([k, val]) => {
-            if (k.startsWith("_") && k !== "_mappedFields") return;
-            const strVal = val === null || val === undefined ? "" : String(val).trim();
-            if (!strVal) return;
-
-            const existingVal = existing.data[k] === null || existing.data[k] === undefined ? "" : String(existing.data[k]).trim();
-            if (!existingVal && strVal) {
-              updatePayload[k] = strVal;
-              needsUpdate = true;
-            }
-          });
-
-          // Merge _mappedFields metadata
-          const existingMapped = existing.data._mappedFields || [];
-          const contactMapped = cleaned._mappedFields || [];
-          const combinedMapped = Array.from(new Set([...existingMapped, ...contactMapped]));
-          if (combinedMapped.length > existingMapped.length) {
-            updatePayload._mappedFields = combinedMapped;
-            needsUpdate = true;
-          }
-
-          if (needsUpdate) {
-            logsToUpdate.push({ ref: existing.ref, data: updatePayload });
-            Object.assign(existing.data, updatePayload); // Update cache
-          }
-          return; // Skip adding to chunk queue
-        }
-
-        // 2. If it's a duplicate within the same Excel sheet, skip it
-        if (processedPhones.has(norm)) {
-          return;
-        }
-        processedPhones.add(norm);
+      if (norm && existingContactsByPhone.has(norm)) {
+        existing = existingContactsByPhone.get(norm);
       }
+    }
 
-      const contactObj = {
-        ...cleaned,
-        _contactRefId: `C_${queueIndexOffset}_${rowOffset}`, // Unique virtual ID
-      };
-      rowOffset++;
+    if (existing) {
+      // Merge new fields into the existing contact document
+      const updatePayload = {};
+      let needsUpdate = false;
 
-      const serializedLength = encodeURIComponent(JSON.stringify(contactObj)).length;
+      Object.entries(cleaned).forEach(([k, val]) => {
+        // Skip internal helpers and tag fields (handled separately)
+        if (k.startsWith("_") || k === "Tags" || k === "tags") return;
+        const strVal = val === null || val === undefined ? "" : String(val).trim();
+        if (!strVal) return;
 
-      // Split chunk if it exceeds either size limit or max contact count
-      if (
-        currentChunkContacts.length > 0 && 
-        (currentChunkSize + serializedLength > maxDocSizeBytes || currentChunkContacts.length >= maxContactsPerChunk)
-      ) {
-        chunkOps.push({
-          chunkIndex: queueIndexOffset + (rowOffset - currentChunkContacts.length - 1),
-          subProgram: sp,
-          contacts: currentChunkContacts,
-          count: currentChunkContacts.length
-        });
-        currentChunkContacts = [contactObj];
-        currentChunkSize = serializedLength;
-      } else {
-        currentChunkContacts.push(contactObj);
-        currentChunkSize += serializedLength;
-      }
-    });
-
-    if (currentChunkContacts.length > 0) {
-      chunkOps.push({
-        chunkIndex: queueIndexOffset + (rowOffset - currentChunkContacts.length),
-        subProgram: sp,
-        contacts: currentChunkContacts,
-        count: currentChunkContacts.length
+        const existingVal = existing.data[k] === null || existing.data[k] === undefined ? "" : String(existing.data[k]).trim();
+        if (!existingVal && strVal) {
+          updatePayload[k] = strVal;
+          needsUpdate = true;
+        }
       });
+
+      // Merge _mappedFields metadata
+      const existingMapped = existing.data._mappedFields || [];
+      const contactMapped = cleaned._mappedFields || [];
+      const combinedMapped = Array.from(new Set([...existingMapped, ...contactMapped]));
+      if (combinedMapped.length > existingMapped.length) {
+        updatePayload._mappedFields = combinedMapped;
+        needsUpdate = true;
+      }
+
+      // Merge tags (tags array is the SINGLE source of truth)
+      const tagsSet = new Set();
+
+      // Absorb existing tags (array + legacy Tags string)
+      const existingTagsArr = Array.isArray(existing.data.tags) ? existing.data.tags : [];
+      existingTagsArr.forEach(t => parseTags(String(t)).forEach(x => tagsSet.add(x)));
+      if (existing.data.Tags) parseTags(existing.data.Tags).forEach(x => tagsSet.add(x));
+      if (existing.data.tag) parseTags(existing.data.tag).forEach(x => tagsSet.add(x));
+
+      // Add import tag + tags from the sheet column
+      parseTags(tag).forEach(x => tagsSet.add(x));
+      (cleaned._tagsRaw || []).forEach(x => tagsSet.add(x));
+
+      const mergedTags = Array.from(tagsSet).sort();
+      const existingSorted = [...existingTagsArr].map(t => String(t).trim()).sort();
+
+      if (JSON.stringify(mergedTags) !== JSON.stringify(existingSorted) || existing.data.Tags) {
+        updatePayload.tags = mergedTags;
+        updatePayload.Tags = deleteField(); // clean up legacy field
+        needsUpdate = true;
+      }
+
+      // If incoming has GHL_ID but existing doesn't, update it
+      if (cleaned.GHL_ID && !existing.data.GHL_ID) {
+        updatePayload.GHL_ID = cleaned.GHL_ID;
+        needsUpdate = true;
+      }
+
+      if (needsUpdate) {
+        updatePayload.updatedAt = serverTimestamp();
+        batchWriteOps.push({
+          type: "update",
+          ref: existing.ref,
+          data: updatePayload
+        });
+      }
+    } else {
+      // Create a new flat contact document — tags array is the ONLY tag field
+      const contactRef = doc(collection(db, "contacts"));
+
+      const tagsSet = new Set();
+      parseTags(tag).forEach(x => tagsSet.add(x));
+      (cleaned._tagsRaw || []).forEach(x => tagsSet.add(x));
+      const finalTags = Array.from(tagsSet).sort();
+
+      // Strip temp helpers from what we write to Firestore
+      const { _tagsRaw, Tags, ...contactFields } = cleaned;
+
+      const newContact = {
+        ...contactFields,
+        tags: finalTags,
+        isAssigned: false,
+        assignedTo: null,
+        assignedName: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        // Backwards compatibility:
+        programId: tag,
+        programName: tag,
+        "Sub Program": tag,
+        subProgram: tag
+      };
+      
+      batchWriteOps.push({
+        type: "set",
+        ref: contactRef,
+        data: newContact
+      });
+      imported++;
     }
   });
 
-  // Split into multiple batches to respect Firebase's 500 ops/batch limit
-  // First, write the callLog updates
-  for (let i = 0; i < logsToUpdate.length; i += MAX_BATCH_OPS) {
+  // Commit batch operations
+  for (let i = 0; i < batchWriteOps.length; i += MAX_BATCH_OPS) {
     const batch = writeBatch(db);
-    const slice = logsToUpdate.slice(i, i + MAX_BATCH_OPS);
+    const slice = batchWriteOps.slice(i, i + MAX_BATCH_OPS);
     slice.forEach(op => {
-      batch.update(op.ref, op.data);
+      if (op.type === "update") {
+        batch.update(op.ref, op.data);
+      } else {
+        batch.set(op.ref, op.data);
+      }
     });
     await batch.commit();
   }
 
-  // Second, write the queue chunks
-  for (let batchStart = 0; batchStart < chunkOps.length; batchStart += MAX_BATCH_OPS) {
-    const batch = writeBatch(db);
-    const batchSlice = chunkOps.slice(batchStart, batchStart + MAX_BATCH_OPS);
-
-    batchSlice.forEach(op => {
-      const ref = doc(collection(db, "programQueues", programId, "chunks"));
-      batch.set(ref, { chunkIndex: op.chunkIndex, subProgram: op.subProgram, contacts: op.contacts });
-      imported += op.count;
-    });
-
-    // Ensure the parent document exists so the subcollection is visible in the Firebase Console
-    batch.set(doc(db, "programQueues", programId), {
-      programName,
-      lastImportedAt: serverTimestamp(),
-    }, { merge: true });
-
-    await batch.commit();
+  // Update total program stat & subPrograms to maintain backwards compatibility
+  const progRef = doc(db, "programs", tag);
+  try {
+    const progSnap = await getDoc(progRef);
+    const countBefore = progSnap.exists() ? (progSnap.data().contactCount || 0) : 0;
+    const updateData = {
+      name: tag,
+      contactCount: countBefore + imported,
+      updatedAt: serverTimestamp()
+    };
+    await setDoc(progRef, updateData, { merge: true });
+  } catch (e) {
+    console.warn("Failed to update program metadata:", e);
   }
 
-  // Update total program stat
-  const progRef = doc(db, "programs", programId);
-  const progSnap = await getDoc(progRef);
-  if (progSnap.exists()) {
-    const updateData = { contactCount: (progSnap.data().contactCount || 0) + imported };
-    if (subPrograms && subPrograms.length > 0) {
-      updateData.subPrograms = arrayUnion(...subPrograms);
-    }
-    await updateDoc(progRef, updateData);
-  }
+  // Automatically register the active tag
+  await registerActiveTag(tag);
 
   return imported;
 };
 
-export const getProgramContactStats = async (programId) => {
-  // Free tier compatible chunk-based stats calculations.
-  // We query callLogs to calculate status distribution.
-  const progSnap = await getDoc(doc(db, "programs", programId));
+export const getProgramContactStats = async (tag) => {
+  const progSnap = await getDoc(doc(db, "programs", tag));
   let total = 0;
   if (progSnap.exists()) {
     total = progSnap.data().contactCount || 0;
   }
 
-  const logsSnap = await getDocs(query(collection(db, "callLogs"), where("programId", "==", programId)));
-  const stats = { total, available: 0, assigned: 0, done: 0, callback_scheduled: 0 };
-  let poolAssignedCount = 0; // B5 fix: Only pool-originated entries reduce "available"
+  // Fetch all contacts containing this tag to compute stats
+  const q = query(
+    collection(db, "contacts"),
+    where("tags", "array-contains", tag)
+  );
+  const snap = await getDocs(q);
+  const docs = snap.docs.map(d => d.data()).filter(d => !d._deleted);
+  const totalCount = docs.length;
 
-  logsSnap.docs.forEach(d => {
-    const data = d.data();
-    if (data._deleted) return; // B5 fix: Skip soft-deleted entries
-    // Only outgoing (pool-originated) calls reduce the available count — incoming calls are added manually
-    const isFromPool = data.callType !== "incoming" && data.callType !== "incoming f";
-    if (isFromPool) poolAssignedCount++;
-    if (data._callbackDue || data.callbackDate) {
-      stats.callback_scheduled++;
-    } else if (!data.status) {
-      stats.assigned++;
-    } else {
-      stats.done++;
+  const stats = { total: total || totalCount, available: 0, assigned: 0, done: 0, callback_scheduled: 0 };
+  let poolAssignedCount = 0;
+
+  docs.forEach(data => {
+    if (data.isAssigned) {
+      const isFromPool = data.callType !== "incoming" && data.callType !== "incoming f";
+      if (isFromPool) poolAssignedCount++;
+
+      if (data._callbackDue || data.callbackDate) {
+        stats.callback_scheduled++;
+      } else if (!data.status) {
+        stats.assigned++;
+      } else {
+        stats.done++;
+      }
     }
   });
 
-  stats.available = Math.max(0, total - poolAssignedCount);
+  stats.available = Math.max(0, stats.total - poolAssignedCount);
   return stats;
 };
 
-// Global Duplicate Detection (Now checks ONLY assigned numbers and registrations, instead of the 50k queued chunk pool)
+// Global Duplicate Detection (checks only assigned contacts)
 export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
   if (!phone) return null;
   const norm = normalizePhone(phone);
   if (!norm) return null;
   const q = query(
-    collection(db, "callLogs"),
+    collection(db, "contacts"),
     where("normalizedPhone", "==", norm)
   );
   const snap = await getDocs(q);
   const matches = snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
-    .filter(d => d._deleted !== true && d.contactId !== excludeContactId && d.id !== excludeContactId);
-  return matches.length > 0 ? matches[0] : null;
-};
+    .filter(d => d._deleted !== true && d.id !== excludeContactId);
+  if (matches.length === 0) return null;
 
+  // Collect all unique tags across every duplicate record
+  const allTagsSet = new Set();
+  matches.forEach(m => {
+    const arr = Array.isArray(m.tags) ? m.tags : [];
+    arr.forEach(t => String(t).split(",").map(x => x.trim()).filter(Boolean).forEach(x => allTagsSet.add(x)));
+    if (m.Tags) String(m.Tags).split(",").map(x => x.trim()).filter(Boolean).forEach(x => allTagsSet.add(x));
+  });
+
+  return {
+    count: matches.length,
+    allTags: Array.from(allTagsSet).sort(),
+    matches: matches,
+    first: matches[0],                   // backward-compat
+    programName: matches[0]?.programName // backward-compat
+  };
+};
 // ─────────────────────────────────────────────
 // ATTENDERS
 // ─────────────────────────────────────────────
@@ -705,203 +818,69 @@ export const deleteAttender = async (id) => {
 // ─────────────────────────────────────────────
 // QUEUE — Assign N contacts to attender
 // ─────────────────────────────────────────────
-export const assignContactsToAttender = async (programId, programName, attenderId, attenderName, count, subProgramName = null) => {
-  // 1. Fetch chunks from the queue
-  let q;
-  if (subProgramName) {
-    q = query(
-      collection(db, "programQueues", programId, "chunks"),
-      where("subProgram", "==", subProgramName),
-      limit(5)
-    );
-  } else {
-    q = query(
-      collection(db, "programQueues", programId, "chunks"),
-      limit(5)
-    );
-  }
+export const assignContactsToAttender = async (tag, programName, attenderId, attenderName, count, subProgramName = null) => {
+  // Query candidate pool containing the selected tag
+  // We use a larger limit to ensure we find enough unassigned ones without requiring a composite index
+  const q = query(
+    collection(db, "contacts"),
+    where("tags", "array-contains", tag),
+    limit(1000)
+  );
+
   const snap = await getDocs(q);
   if (snap.empty) return 0;
 
-  const chunks = snap.docs.map(d => ({ id: d.id, ref: d.ref, data: d.data() }));
-  chunks.sort((a, b) => (a.data.chunkIndex || 0) - (b.data.chunkIndex || 0));
+  // Filter client-side for unassigned and non-deleted contacts
+  let candidates = snap.docs
+    .map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
+    .filter(c => c.isAssigned === false && !c._deleted);
 
-  // 2. Gather all phone numbers from the loaded chunks to check duplicate assignment
-  const chunkPhones = [];
-  chunks.forEach(chunk => {
-    const pool = chunk.data.contacts || [];
-    pool.forEach(contact => {
-      const phone = contact.Phone || contact["Cont No"] || contact.phone || contact.Number || contact.Mobile || "";
-      const norm = normalizePhone(phone);
-      if (norm) chunkPhones.push(norm);
-    });
-  });
-
-  const assignedLogs = new Map(); // normalizedPhone -> { ref, data }
-  if (chunkPhones.length > 0) {
-    // Slice into batches of 30 due to Firestore "in" query limitation
-    const batches = [];
-    const uniqueChunkPhones = Array.from(new Set(chunkPhones));
-    for (let i = 0; i < uniqueChunkPhones.length; i += 30) {
-      batches.push(uniqueChunkPhones.slice(i, i + 30));
-    }
-
-    const queries = batches.map(batch =>
-      getDocs(query(
-        collection(db, "callLogs"),
-        where("normalizedPhone", "in", batch)
-      ))
-    );
-
-    const snaps = await Promise.all(queries);
-    snaps.forEach(snap => {
-      snap.docs.forEach(doc => {
-        const data = doc.data();
-        if (data._deleted) return;
-        const norm = data.normalizedPhone;
-        if (norm) {
-          // Prefer storing/updating the callLog that matches the current programId
-          const existing = assignedLogs.get(norm);
-          if (!existing || data.programId === programId) {
-            assignedLogs.set(norm, { ref: doc.ref, data });
-          }
-        }
-      });
+  // Filter client-side by sub-program if provided
+  if (subProgramName) {
+    candidates = candidates.filter(c => {
+      const sp = c["Sub Program"] || c.subProgram || "";
+      return sp.trim().toLowerCase() === subProgramName.trim().toLowerCase();
     });
   }
+
+  // Take up to count contacts
+  const targetContacts = candidates.slice(0, count);
+  if (targetContacts.length === 0) return 0;
 
   let totalAssigned = 0;
-  const now = Timestamp.now();
-  let remainingNeed = count;
-  const sessionAssigned = new Set();
 
-  for (const chunk of chunks) {
-    if (remainingNeed <= 0) break;
+  // Perform updates inside a transaction for thread-safety
+  const txResult = await runTransaction(db, async (transaction) => {
+    // 1. Perform all reads first
+    const freshSnaps = [];
+    for (const contact of targetContacts) {
+      const freshSnap = await transaction.get(contact.ref);
+      freshSnaps.push(freshSnap);
+    }
 
-    const txResult = await runTransaction(db, async (transaction) => {
-      const freshSnap = await transaction.get(chunk.ref);
-      if (!freshSnap.exists()) return 0;
-
+    // 2. Perform all writes next
+    let localAssigned = 0;
+    for (const freshSnap of freshSnaps) {
+      if (!freshSnap.exists()) continue;
       const freshData = freshSnap.data();
-      const pool = freshData.contacts || [];
-      if (pool.length === 0) {
-        transaction.delete(chunk.ref);
-        return 0;
-      }
-
-      // Filter out duplicates from the pool
-      const unique = [];
-      const skipped = [];
-      for (const contact of pool) {
-        if (subProgramName && contact["Sub Program"] !== subProgramName) {
-          skipped.push(contact); // wrong sub-program, skip it
-          continue;
-        }
-
-        const phone = contact.Phone || contact["Cont No"] || contact.phone || contact.Number || contact.Mobile || "";
-        const norm = normalizePhone(phone);
-        if (norm) {
-          // 1. If it's already assigned, discard from chunk and merge fields if matching current program
-          if (assignedLogs.has(norm)) {
-            const existing = assignedLogs.get(norm);
-            if (existing.data.programId === programId) {
-              const updatePayload = {};
-              let needsUpdate = false;
-
-              Object.entries(contact).forEach(([k, val]) => {
-                if (k.startsWith("_") && k !== "_mappedFields") return;
-                const strVal = val === null || val === undefined ? "" : String(val).trim();
-                if (!strVal) return;
-
-                const existingVal = existing.data[k] === null || existing.data[k] === undefined ? "" : String(existing.data[k]).trim();
-                if (!existingVal && strVal) {
-                  updatePayload[k] = strVal;
-                  needsUpdate = true;
-                }
-              });
-
-              // Merge _mappedFields metadata
-              const existingMapped = existing.data._mappedFields || [];
-              const contactMapped = contact._mappedFields || [];
-              const combinedMapped = Array.from(new Set([...existingMapped, ...contactMapped]));
-              if (combinedMapped.length > existingMapped.length) {
-                updatePayload._mappedFields = combinedMapped;
-                needsUpdate = true;
-              }
-
-              if (needsUpdate) {
-                transaction.update(existing.ref, updatePayload);
-                Object.assign(existing.data, updatePayload); // Update cache
-              }
-            }
-            continue; // Skip entirely (discarded from queue chunk leftovers)
-          }
-
-          // 2. If it was already assigned in this current batch run, discard from chunk leftovers
-          if (sessionAssigned.has(norm)) {
-            continue;
-          }
-        }
-
-        unique.push(contact);
-      }
-
-      // Take what we need from unique contacts
-      const takeCount = Math.min(remainingNeed, unique.length);
-      const taken = unique.slice(0, takeCount);
-      const leftovers = [...unique.slice(takeCount), ...skipped];
-
-      if (leftovers.length === 0) {
-        transaction.delete(chunk.ref);
-      } else {
-        transaction.update(chunk.ref, { contacts: leftovers });
-      }
-
-      // Create individual log rows for attender
-      taken.forEach(contact => {
-        const logRef = doc(collection(db, "callLogs"));
-        const payload = {
-          contactId: contact._contactRefId || null,
-          programId,
-          programName,
-          attenderId,
-          attenderName,
+      if (freshData.isAssigned === false) {
+        transaction.update(freshSnap.ref, {
+          isAssigned: true,
+          assignedTo: attenderId,
+          assignedName: attenderName,
+          attenderId: attenderId, // for compatibility
+          attenderName: attenderName, // for compatibility
           callType: "outgoing",
-          ...Object.fromEntries(
-            Object.entries(contact).filter(([k]) => !k.startsWith("_") || k === "_mappedFields")
-          ),
-          status: "",
-          remark: "",
-          callbackDate: null,
-          isCallbackDue: false,
-          createdAt: now,
-          updatedAt: now,
-        };
-        const phoneVal = payload.Phone || payload["Cont No"] || payload.phone || payload.Number || payload.Mobile || "";
-        const normVal = normalizePhone(phoneVal);
-        payload.normalizedPhone = normVal;
+          assignedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        localAssigned++;
+      }
+    }
+    return localAssigned;
+  });
 
-        if (subProgramName) {
-          payload["Sub Program"] = subProgramName;
-          payload["subProgram"] = subProgramName;
-        }
-        transaction.set(logRef, payload);
-        
-        if (normVal) {
-          sessionAssigned.add(normVal);
-        }
-      });
-
-      // Return the count so mutation happens OUTSIDE the transaction callback
-      // (transaction callbacks can be retried, mutating outer vars inside would double-count)
-      return takeCount;
-    });
-
-    // Safe to mutate here — outside the retryable transaction body
-    totalAssigned += txResult || 0;
-    remainingNeed -= txResult || 0;
-  }
-
+  totalAssigned = txResult || 0;
   return totalAssigned;
 };
 
@@ -910,15 +889,28 @@ export const assignContactsToAttender = async (programId, programName, attenderI
 // ─────────────────────────────────────────────
 
 // Real-time subscription — queries by attenderId only (month-scoped on client)
-export const subscribeToCallLogs = (attenderId, callback) => {
-  // No limit here — limiting without orderBy causes newly assigned contacts
-  // to fall outside the window and never appear in the snapshot.
+export const subscribeToCallLogs = (...args) => {
+  let tag = null, attenderId = null, callback = null;
+  if (args.length === 3) {
+    [tag, attenderId, callback] = args;
+  } else {
+    [attenderId, callback] = args;
+  }
+
   const q = query(
-    collection(db, "callLogs"),
-    where("attenderId", "==", attenderId)
+    collection(db, "contacts"),
+    where("assignedTo", "==", attenderId)
   );
   return onSnapshot(q, snap => {
-    const logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    let logs = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(log => !log._deleted);
+
+    // Filter by tag client-side if a specific tag is provided
+    if (tag && tag !== "ALL") {
+      logs = logs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
+    }
+      
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const overdue = [];
@@ -935,15 +927,15 @@ export const subscribeToCallLogs = (attenderId, callback) => {
       rest.push(log);
     });
     callback([...overdue, ...rest]);
-  });
+  }, err => console.error("subscribeToCallLogs error:", err));
 };
 
 export const updateCallLog = async (logId, updates, contactId = null) => {
-  const logRef = doc(db, "callLogs", logId);
+  const contactRef = doc(db, "contacts", logId);
   
   let previousStatus = "";
   try {
-    const logSnap = await getDoc(logRef);
+    const logSnap = await getDoc(contactRef);
     if (logSnap.exists()) {
       previousStatus = logSnap.data().status || "";
     }
@@ -958,40 +950,38 @@ export const updateCallLog = async (logId, updates, contactId = null) => {
     updates.normalizedPhone = normalizePhone(updates[updatedPhoneKey]);
   }
 
-  // Using setDoc with merge instead of updateDoc bypasses Firebase FieldPath validation, 
-  // allowing us to save keys with slashes/dots like "Khoji/ New" from Excel files without crashing.
-  await setDoc(logRef, { ...updates, updatedAt: serverTimestamp() }, { merge: true });
-
-  // 1. If linked to a master contact, sync Name/Phone/City etc back to the master record
-  if (contactId) {
-    try {
-      const contactRef = doc(db, "contacts", contactId);
-      // We only sync specific user-editable fields back to master
-      // This prevents program-specific data from polluting the general contact record
-      const syncableKeys = ["Name", "Phone", "City", "Source", "Email", "Sourse", "Khoji", "Location", "Number", "Cont No", "Cont_No"];
-      const masterUpdate = {};
-      Object.keys(updates).forEach(k => {
-        if (syncableKeys.some(sk => k.toLowerCase().includes(sk.toLowerCase()))) {
-          masterUpdate[k] = updates[k];
-        }
-      });
-      if (Object.keys(masterUpdate).length > 0) {
-        await setDoc(contactRef, { ...masterUpdate, updatedAt: serverTimestamp() }, { merge: true });
-      }
-    } catch (e) { console.warn("Sync back to master failed for contactId:", contactId); }
+  // When Tags string is edited (from EditModal), convert to tags array and remove Tags field
+  if (updates.Tags !== undefined) {
+    updates.tags = parseTags(String(updates.Tags || "")).sort();
+    updates.Tags = deleteField(); // remove legacy string — array is the source of truth
+  }
+  // Also handle a raw tags array update — ensure no stale Tags string survives
+  if (updates.tags !== undefined && updates.Tags === undefined) {
+    updates.Tags = deleteField();
   }
 
-  // 2. If status is "Reg.Done", write to registrations (Abhivyakti Report)
+  // Using setDoc with merge instead of updateDoc bypasses Firebase FieldPath validation, 
+  // allowing us to save keys with slashes/dots like "Khoji/ New" from Excel files without crashing.
+  await setDoc(contactRef, { ...updates, updatedAt: serverTimestamp() }, { merge: true });
+
+  // If status is "Reg.Done", write to registrations (Abhivyakti Report)
   if (updates.status === "Reg.Done") {
     try {
-      const logSnap = await getDoc(logRef);
+      const logSnap = await getDoc(contactRef);
       const logData = logSnap.exists() ? logSnap.data() : {};
+      
+      const now = new Date();
+      const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+      // Update registeredYearMonth on the contact document itself in Firestore so we can search/filter server-side
+      await updateDoc(contactRef, { registeredYearMonth: yearMonth });
 
       const payload = {
         ...logData,
+        registeredYearMonth: yearMonth,
         registeredAt: serverTimestamp(),
         conversionSource: logData.Source || logData.Sourse || "Direct",
-        convertedBy: logData.attenderName || updates.attenderName || "Unknown",
+        convertedBy: logData.assignedName || logData.attenderName || updates.assignedName || updates.attenderName || "Unknown",
         programName: logData.programName || updates.programName || "Unknown"
       };
 
@@ -1005,13 +995,15 @@ export const updateCallLog = async (logId, updates, contactId = null) => {
       // Use setDoc with the logId to gracefully upsert and prevent duplicate entries 
       // if the attender opens and saves the same "Reg.Done" entry multiple times.
       await setDoc(doc(db, "registrations", logId), payload, { merge: true });
+      await registerRegistrationMonth(yearMonth);
     } catch (e) {
       console.error("Registration write failed:", e);
-      // NOTE: Errors here are tracked but shouldn't fail the initial save
     }
   } else if (previousStatus === "Reg.Done" && updates.status && updates.status !== "Reg.Done") {
     try {
       await deleteDoc(doc(db, "registrations", logId));
+      // Revert the registeredYearMonth on the contact document too
+      await updateDoc(contactRef, { registeredYearMonth: deleteField() });
       console.log("🗑️ Reverted registration deleted for log:", logId);
     } catch (e) {
       console.error("Registration deletion failed on revert:", e);
@@ -1023,167 +1015,399 @@ export const updateCallLog = async (logId, updates, contactId = null) => {
 // CALL LOGS — Attender's Personal Sheet
 // ─────────────────────────────────────────────
 
-// Add a manual incoming call entry — programId/programName are optional (null for general incoming)
+// Add a manual incoming or outgoing call entry
 export const addIncomingCallLog = async (attenderId, attenderName, data, programId = null, programName = null) => {
+  const now = new Date();
+  const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  const finalProgramName = programName || "Incoming Calls";
+  const finalProgramId = programId || "Incoming Calls";
+
+  const tagsSet = new Set();
+  (Array.isArray(data.tags) ? data.tags : []).forEach(t => parseTags(String(t)).forEach(x => tagsSet.add(x)));
+  if (data.Tags) parseTags(data.Tags).forEach(x => tagsSet.add(x));
+  tagsSet.add(finalProgramName);
+  const finalTags = Array.from(tagsSet).sort();
+
+  // Never store Tags string — only the array
+  const { Tags: _ignored, tags: _ignored2, ...rest } = data;
+
   const logData = {
-    contactId: null,
-    programId,
-    programName,
-    attenderId,
-    attenderName,
-    callType: "incoming",
-    status: "",
-    remark: "",
-    callbackDate: null,
-    isCallbackDue: false,
+    ...rest,
+    isAssigned: true,
+    assignedTo: attenderId,
+    assignedName: attenderName,
+    attenderId: attenderId, // compatibility
+    attenderName: attenderName, // compatibility
+    callType: data.callType || "incoming",
+    tags: finalTags,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    ...data,
+    // compatibility:
+    programId: finalProgramId,
+    programName: finalProgramName,
+    "Sub Program": finalProgramName,
+    subProgram: finalProgramName
   };
+
+  if (logData.status === "Reg.Done") {
+    logData.registeredYearMonth = yearMonth;
+  }
+
+  // Strip out ANY undefined fields
+  Object.keys(logData).forEach(key => {
+    if (logData[key] === undefined) {
+      delete logData[key];
+    }
+  });
 
   const phoneVal = logData.Phone || logData["Cont No"] || logData.phone || logData.Number || logData.Mobile || "";
   logData.normalizedPhone = normalizePhone(phoneVal);
 
-  const docRef = await addDoc(collection(db, "callLogs"), logData);
+  // ── Silent GHL_ID / Existing phone lookup and merge ──────────────────────
+  let docRef = null;
+  let isExisting = false;
+  let existingDocId = null;
+
+  if (logData.normalizedPhone) {
+    try {
+      const existingSnap = await getDocs(query(
+        collection(db, "contacts"),
+        where("normalizedPhone", "==", logData.normalizedPhone)
+      ));
+      if (!existingSnap.empty) {
+        // Find the best document to update (e.g. one with GHL_ID, or just the first one)
+        let targetDoc = existingSnap.docs[0];
+        for (const docSnap of existingSnap.docs) {
+          if (docSnap.data().GHL_ID) {
+            targetDoc = docSnap;
+            break;
+          }
+        }
+        
+        isExisting = true;
+        existingDocId = targetDoc.id;
+        const existingData = targetDoc.data();
+
+        // Copy GHL_ID if any existing contact has one
+        if (existingData.GHL_ID) {
+          logData.GHL_ID = existingData.GHL_ID;
+        }
+
+        // Fill missing profile fields:
+        // If the manual entry has a value, we can use it, or if it's empty, use the existing one
+        const profileFields = ["Name", "Email", "City", "State", "Source", "Khoji", "Country", "Mobile", "Phone"];
+        profileFields.forEach(f => {
+          if (!logData[f] && existingData[f]) {
+            logData[f] = existingData[f];
+          }
+        });
+
+        // Merge tags
+        const mergedTagsSet = new Set(logData.tags || []);
+        const existingTags = Array.isArray(existingData.tags) ? existingData.tags : [];
+        existingTags.forEach(t => parseTags(String(t)).forEach(x => mergedTagsSet.add(x)));
+        logData.tags = Array.from(mergedTagsSet).sort();
+
+        // Merge history array if both exist
+        const existingHistory = Array.isArray(existingData.history) ? existingData.history : [];
+        const newHistory = Array.isArray(logData.history) ? logData.history : [];
+        const mergedHistory = [...existingHistory];
+        newHistory.forEach(h => {
+          const isDup = mergedHistory.some(eh => eh.remark === h.remark && eh.status === h.status && eh.timestamp === h.timestamp);
+          if (!isDup) {
+            mergedHistory.push(h);
+          }
+        });
+        logData.history = mergedHistory;
+
+        // Keep the original createdAt
+        if (existingData.createdAt) {
+          logData.createdAt = existingData.createdAt;
+        }
+      }
+    } catch (e) {
+      console.warn("[addIncomingCallLog] GHL_ID / phone lookup failed:", e);
+    }
+  }
+
+  if (isExisting && existingDocId) {
+    const contactRef = doc(db, "contacts", existingDocId);
+    await setDoc(contactRef, { ...logData, updatedAt: serverTimestamp() }, { merge: true });
+    docRef = { id: existingDocId };
+  } else {
+    docRef = await addDoc(collection(db, "contacts"), logData);
+  }
 
   // If status is "Reg.Done", write to registrations (Abhivyakti Report)
   if (logData.status === "Reg.Done") {
     try {
       const payload = {
         ...logData,
+        id: docRef.id,
+        registeredYearMonth: yearMonth,
         registeredAt: serverTimestamp(),
         conversionSource: logData.Source || logData.Sourse || "Direct",
-        convertedBy: logData.attenderName || "Unknown",
-        programName: logData.programName || "Unknown"
+        convertedBy: attenderName || "Unknown",
+        programName: logData.programName || "Incoming Calls"
       };
 
-      // Strip out ANY undefined fields
       Object.keys(payload).forEach(key => {
         if (payload[key] === undefined) {
           delete payload[key];
         }
       });
 
-      // Upsert using the generated call log id
       await setDoc(doc(db, "registrations", docRef.id), payload, { merge: true });
+      await registerRegistrationMonth(yearMonth);
     } catch (e) {
       console.error("Incoming registration write failed:", e);
     }
   }
 
+  // Register tag in active tags collection
+  await registerActiveTag("Incoming Calls");
+
   return docRef.id;
+};
+
+// Global search contacts by exact phone number, name prefix, or email prefix
+export const globalSearchContacts = async (queryStr) => {
+  if (!queryStr || !queryStr.trim()) return [];
+  const term = queryStr.trim();
+  const termLower = term.toLowerCase();
+
+  const queries = [];
+
+  // 1. Search by exact phone match (using normalized form)
+  const norm = normalizePhone(term);
+  if (norm.length >= 4) {
+    queries.push(
+      getDocs(
+        query(
+          collection(db, "contacts"),
+          where("normalizedPhone", "==", norm.slice(-10))
+        )
+      )
+    );
+  }
+
+  // 2. Search by Name prefix (case-sensitive prefixes)
+  if (term.length >= 2) {
+    queries.push(
+      getDocs(
+        query(
+          collection(db, "contacts"),
+          where("Name", ">=", term),
+          where("Name", "<=", term + "\uf8ff"),
+          limit(20)
+        )
+      )
+    );
+    // Also try capitalized prefix
+    const capitalized = term.charAt(0).toUpperCase() + term.slice(1);
+    if (capitalized !== term) {
+      queries.push(
+        getDocs(
+          query(
+            collection(db, "contacts"),
+            where("Name", ">=", capitalized),
+            where("Name", "<=", capitalized + "\uf8ff"),
+            limit(20)
+          )
+        )
+      );
+    }
+  }
+
+  // 3. Search by Email prefix
+  if (term.includes("@") || term.length >= 3) {
+    queries.push(
+      getDocs(
+        query(
+          collection(db, "contacts"),
+          where("Email", ">=", termLower),
+          where("Email", "<=", termLower + "\uf8ff"),
+          limit(20)
+        )
+      )
+    );
+  }
+
+  try {
+    const snapshots = await Promise.all(queries);
+    const resultsMap = new Map();
+
+    snapshots.forEach(snap => {
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        if (!data._deleted) {
+          resultsMap.set(docSnap.id, { id: docSnap.id, ...data });
+        }
+      });
+    });
+
+    return Array.from(resultsMap.values());
+  } catch (e) {
+    console.error("Global search failed:", e);
+    return [];
+  }
+};
+
+// Claim a contact document and reassign it to a new attender
+export const claimContact = async (contactId, attenderId, attenderName) => {
+  const contactRef = doc(db, "contacts", contactId);
+  
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(contactRef);
+    if (!snap.exists()) {
+      throw new Error("Contact does not exist.");
+    }
+    
+    const data = snap.data();
+    const historyEntry = {
+      timestamp: new Date().toISOString(),
+      attenderId,
+      attenderName,
+      status: "Claimed Lead",
+      remark: `Lead claimed by ${attenderName} (previously assigned to: ${data.assignedName || "Unassigned"})`
+    };
+    
+    transaction.update(contactRef, {
+      isAssigned: true,
+      assignedTo: attenderId,
+      assignedName: attenderName,
+      attenderId: attenderId, // compatibility
+      attenderName: attenderName, // compatibility
+      callType: "outgoing",
+      status: "", // Reset status to let the new attender dial them fresh
+      remark: "", // Reset remark
+      callbackDate: null, // Reset callback dates
+      isCallbackDue: false,
+      history: arrayUnion(historyEntry),
+      updatedAt: serverTimestamp()
+    });
+  });
 };
 
 // ─────────────────────────────────────────────
 // REASSIGN — Move unworked contacts back to pool
 // ─────────────────────────────────────────────
-export const reassignContactsToPool = async (attenderId, programId) => {
+export const reassignContactsToPool = async (tag, attenderId, count, mode = "Pending") => {
   const q = query(
-    collection(db, "callLogs"),
-    where("attenderId", "==", attenderId),
-    where("programId", "==", programId),
-    where("status", "==", "")
+    collection(db, "contacts"),
+    where("assignedTo", "==", attenderId)
   );
   const snap = await getDocs(q);
-
   if (snap.empty) return 0;
 
+  // Filter client-side by tag and mode/status
+  let candidates = snap.docs
+    .map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
+    .filter(c => !c._deleted);
+
+  if (tag && tag !== "ALL") {
+    candidates = candidates.filter(c => Array.isArray(c.tags) && c.tags.includes(tag));
+  }
+
+  if (mode === "Pending") {
+    candidates = candidates.filter(c => !c.status);
+  } else if (mode === "Callbacks") {
+    candidates = candidates.filter(c => !!c.callbackDate);
+  }
+
+  // Limit count
+  const toProcess = candidates.slice(0, count);
+  if (toProcess.length === 0) return 0;
+
   const batch = writeBatch(db);
-  const leftoverContacts = [];
-
-  for (const logDoc of snap.docs) {
-    const data = logDoc.data();
-    batch.delete(doc(db, "callLogs", logDoc.id));
-
-    // Extract raw contact data back to object
-    const rawContact = Object.fromEntries(
-      Object.entries(data).filter(([k]) =>
-        !["contactId", "programId", "programName", "attenderId", "attenderName", "callType", "status", "remark",
-          "callbackDate", "isCallbackDue", "isHotLead", "createdAt", "updatedAt", "_callbackDue", "_deleted",
-          "lastCalledAt", "firstCalledAt", "history", "callbackStatus", "callCount", "registeredAt",
-          "conversionSource", "convertedBy"].includes(k)
-      )
-    );
-    // B6 fix: Regenerate _contactRefId so future duplicate detection works correctly
-    rawContact._contactRefId = `C_${Date.now()}_${leftoverContacts.length}`;
-    leftoverContacts.push(rawContact);
-  }
-
-  // Push the unworked records back into the queue collection as fresh chunks
-  if (leftoverContacts.length > 0) {
-    const maxDocSizeBytes = 800000; // 800 KB limit for safety
-    let currentChunkContacts = [];
-    let currentChunkSize = 0;
-    const chunkIndexOffset = Date.now();
-
-    leftoverContacts.forEach((contactObj, idx) => {
-      const serializedLength = encodeURIComponent(JSON.stringify(contactObj)).length;
-
-      if (currentChunkContacts.length > 0 && currentChunkSize + serializedLength > maxDocSizeBytes) {
-        const ref = doc(collection(db, "programQueues", programId, "chunks"));
-        batch.set(ref, {
-          chunkIndex: chunkIndexOffset + idx,
-          contacts: currentChunkContacts
-        });
-        currentChunkContacts = [contactObj];
-        currentChunkSize = serializedLength;
-      } else {
-        currentChunkContacts.push(contactObj);
-        currentChunkSize += serializedLength;
-      }
+  toProcess.forEach(c => {
+    batch.update(c.ref, {
+      isAssigned: false,
+      assignedTo: null,
+      assignedName: null,
+      attenderId: null,
+      attenderName: null,
+      updatedAt: serverTimestamp()
     });
-
-    if (currentChunkContacts.length > 0) {
-      const ref = doc(collection(db, "programQueues", programId, "chunks"));
-      batch.set(ref, {
-        chunkIndex: chunkIndexOffset + leftoverContacts.length,
-        contacts: currentChunkContacts
-      });
-    }
-  }
+  });
 
   await batch.commit();
-  return leftoverContacts.length;
+  return toProcess.length;
 };
 
 // ─────────────────────────────────────────────
 // REASSIGN — Move contacts between attenders
 // ─────────────────────────────────────────────
-export const reassignContactsBetweenAttenders = async (fromAttenderId, toAttenderId, toAttenderName, programId) => {
+export const reassignContactsBetweenAttenders = async (tag, fromAttenderId, toAttenderId, count, mode = "Pending") => {
+  // Fetch target attender to get their name
+  let toAttenderName = "Attender";
+  try {
+    const attSnap = await getDoc(doc(db, "attenders", toAttenderId));
+    if (attSnap.exists()) {
+      toAttenderName = attSnap.data().name || "Attender";
+    }
+  } catch (e) {
+    console.warn("Failed to fetch target attender details:", e);
+  }
+
   const q = query(
-    collection(db, "callLogs"),
-    where("attenderId", "==", fromAttenderId),
-    where("programId", "==", programId),
-    where("status", "==", "")
+    collection(db, "contacts"),
+    where("assignedTo", "==", fromAttenderId)
   );
   const snap = await getDocs(q);
   if (snap.empty) return 0;
 
+  // Filter client-side by tag and mode/status
+  let candidates = snap.docs
+    .map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
+    .filter(c => !c._deleted);
+
+  if (tag && tag !== "ALL") {
+    candidates = candidates.filter(c => Array.isArray(c.tags) && c.tags.includes(tag));
+  }
+
+  if (mode === "Pending") {
+    candidates = candidates.filter(c => !c.status);
+  } else if (mode === "Callbacks") {
+    candidates = candidates.filter(c => !!c.callbackDate);
+  }
+
+  // Limit count
+  const toProcess = candidates.slice(0, count);
+  if (toProcess.length === 0) return 0;
+
   const batch = writeBatch(db);
-  snap.docs.forEach(d => {
-    batch.update(doc(db, "callLogs", d.id), {
+  toProcess.forEach(c => {
+    batch.update(c.ref, {
+      assignedTo: toAttenderId,
+      assignedName: toAttenderName,
       attenderId: toAttenderId,
       attenderName: toAttenderName,
       updatedAt: serverTimestamp()
     });
   });
   await batch.commit();
-  return snap.docs.length;
+  return toProcess.length;
 };
 
 // ─────────────────────────────────────────────
 // ADMIN DASHBOARD
 // ─────────────────────────────────────────────
-export const subscribeToAllCallLogs = (programId, callback) => {
-  let q;
-  if (programId && programId !== "ALL") {
-    q = query(collection(db, "callLogs"), where("programId", "==", programId));
-  } else {
-    q = query(collection(db, "callLogs"));
-  }
+export const subscribeToAllCallLogs = (tag, callback) => {
+  const q = query(
+    collection(db, "contacts"),
+    where("isAssigned", "==", true)
+  );
 
   return onSnapshot(q, snap => {
-    const logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    let logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Filter client-side by tag
+    if (tag && tag !== "ALL") {
+      logs = logs.filter(c => Array.isArray(c.tags) && c.tags.includes(tag));
+    }
+    // Filter out deleted
+    logs = logs.filter(c => !c._deleted);
     // Sort client-side to avoid composite index requirement
     logs.sort((a, b) => {
       const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
@@ -1195,34 +1419,101 @@ export const subscribeToAllCallLogs = (programId, callback) => {
 };
 
 // Get all call logs for any attender (admin view)
-export const getAttenderCallLogs = async (attenderId, programId) => {
+export const getAttenderCallLogs = async (attenderId, tag) => {
   const q = query(
-    collection(db, "callLogs"),
-    where("attenderId", "==", attenderId),
-    where("programId", "==", programId)
+    collection(db, "contacts"),
+    where("assignedTo", "==", attenderId)
   );
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  let logs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c._deleted);
+  if (tag && tag !== "ALL") {
+    logs = logs.filter(c => Array.isArray(c.tags) && c.tags.includes(tag));
+  }
+  return logs;
 };
 
 // Get all call logs for an entire program (for Excel export)
-export const getProgramCallLogs = async (programId) => {
+export const getProgramCallLogs = async (tag) => {
   const q = query(
-    collection(db, "callLogs"),
-    where("programId", "==", programId)
+    collection(db, "contacts"),
+    where("tags", "array-contains", tag)
   );
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(c => c.isAssigned === true && !c._deleted);
 };
 
 // ─────────────────────────────────────────────
 // ABHIVYAKTI REPORT
 // ─────────────────────────────────────────────
-export const subscribeToRegistrations = (programId, callback) => {
-  // Avoid server-side orderBy to prevent composite index errors — sort client-side
+// Helper to dynamically track registered months
+export const registerRegistrationMonth = async (yearMonth) => {
+  if (!yearMonth) return;
+  const clean = yearMonth.trim();
+  if (!clean) return;
+  try {
+    await setDoc(doc(db, "registrationMonths", clean), {
+      month: clean,
+      createdAt: serverTimestamp()
+    }, { merge: true });
+  } catch (e) {
+    console.error("Failed to register registration month:", e);
+  }
+};
+
+// Fetch all unique registeredYearMonth values from registrations (Optimized)
+export const getRegistrationMonths = async () => {
+  try {
+    const q = query(collection(db, "registrationMonths"));
+    const snap = await getDocs(q);
+    
+    if (!snap.empty) {
+      return snap.docs.map(d => d.id).sort((a, b) => b.localeCompare(a));
+    }
+
+    // Migration fallback: if registrationMonths is empty, build it from registrations
+    console.log("Migration: Populating registrationMonths from existing registrations...");
+    const regQ = query(collection(db, "registrations"));
+    const regSnap = await getDocs(regQ);
+    const monthsSet = new Set();
+    
+    regSnap.docs.forEach(docSnap => {
+      const data = docSnap.data();
+      if (data.registeredYearMonth && !data._deleted) {
+        monthsSet.add(data.registeredYearMonth);
+      }
+    });
+
+    const batchPromises = Array.from(monthsSet).map(m =>
+      setDoc(doc(db, "registrationMonths", m), {
+        month: m,
+        createdAt: serverTimestamp()
+      }, { merge: true })
+    );
+    
+    if (batchPromises.length > 0) {
+      await Promise.all(batchPromises);
+    }
+
+    const sorted = Array.from(monthsSet).sort((a, b) => b.localeCompare(a));
+    if (sorted.length === 0) {
+      const now = new Date();
+      sorted.push(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+    }
+    return sorted;
+  } catch (err) {
+    console.error("getRegistrationMonths error:", err);
+    const now = new Date();
+    return [`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`];
+  }
+};
+
+export const subscribeToRegistrations = (monthYear, callback) => {
+  // Query registrations by registeredYearMonth to optimize performance and prevent memory limits
   let q;
-  if (programId && programId !== "ALL") {
-    q = query(collection(db, "registrations"), where("programId", "==", programId));
+  if (monthYear && monthYear !== "ALL") {
+    q = query(collection(db, "registrations"), where("registeredYearMonth", "==", monthYear));
   } else {
     q = query(collection(db, "registrations"));
   }

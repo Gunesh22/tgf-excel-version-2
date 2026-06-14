@@ -338,6 +338,20 @@ export const getFieldWithFallback = (log, fieldName) => {
     });
   }
 
+  // Special handling for Tags — tags array is the single source of truth
+  if (name === "tags") {
+    const tagsArr = Array.isArray(log.tags) ? log.tags : [];
+    const tagsStr = log.Tags ? String(log.Tags) : "";
+    // Merge both in case of legacy data
+    const merged = new Set();
+    tagsArr.forEach(t => String(t).split(",").map(x => x.trim()).filter(Boolean).forEach(x => merged.add(x)));
+    tagsStr.split(",").map(x => x.trim()).filter(Boolean).forEach(x => merged.add(x));
+    // Also check alias 'tag'
+    const tagAlias = log.tag ? String(log.tag) : "";
+    tagAlias.split(",").map(x => x.trim()).filter(Boolean).forEach(x => merged.add(x));
+    return Array.from(merged).sort().join(", ");
+  }
+
   for (const c of candidates) {
     const val = getVal(c);
     if (val) return val;

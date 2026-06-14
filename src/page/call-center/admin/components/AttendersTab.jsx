@@ -90,7 +90,7 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
   // Reassignment Action
   const handleReassign = async () => {
     if (!reassignProgId) {
-      toast.error("Please select a program.");
+      toast.error("Please select a sheet or tag.");
       return;
     }
     if (!reassignFromId) {
@@ -256,7 +256,7 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
             <div className="px-6 py-5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white flex items-center justify-between">
               <div>
                 <h3 className="font-black text-lg">{viewingAttender.name}'s Assigned Worksheets</h3>
-                <p className="text-xs text-indigo-100 mt-0.5">Filter sheets by Program, search logs, and export to spreadsheet</p>
+                <p className="text-xs text-indigo-100 mt-0.5">Filter sheets by Sheet / Tag, search logs, and export to spreadsheet</p>
               </div>
               <button onClick={() => { setShowSheetModal(false); setViewingAttender(null); }} className="text-white hover:text-indigo-200 font-bold text-sm">Close</button>
             </div>
@@ -264,7 +264,7 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
             <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex flex-wrap gap-3 items-center">
               <select value={viewingProgramId} onChange={e => setViewingProgramId(e.target.value)}
                 className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                <option value="">-- Select Program Sheet --</option>
+                <option value="">-- Select Sheet / Tag --</option>
                 {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
 
@@ -296,7 +296,7 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
 
             <div className="flex-1 overflow-y-auto min-h-0">
               {!viewingProgramId ? (
-                <div className="h-full flex items-center justify-center text-gray-400 font-medium py-20">Select a program sheet to load worksheet logs.</div>
+                <div className="h-full flex items-center justify-center text-gray-400 font-medium py-20">Select a sheet or tag to load worksheet logs.</div>
               ) : sortedViewLogs.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-gray-400 font-medium py-20">No matching contacts in this sheet.</div>
               ) : (
@@ -368,10 +368,10 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
 
             <div className="p-6 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-gray-400 mb-1.5 uppercase">1. Select Program</label>
+                <label className="block text-xs font-bold text-gray-400 mb-1.5 uppercase">1. Select Sheet / Tag</label>
                 <select value={reassignProgId} onChange={e => setReassignProgId(e.target.value)}
                   className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                  <option value="">-- Select Program --</option>
+                  <option value="">-- Select Sheet / Tag --</option>
                   {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>

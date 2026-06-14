@@ -765,16 +765,23 @@ export default function ImportContacts({ programs, onImportComplete }) {
 
                     <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2 shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-gray-50">
                       <div className="flex flex-wrap sm:justify-end gap-1">
-                        {lead.Tags && lead.Tags.split(", ").slice(0, 3).map(tag => (
-                          <span key={tag} className="text-[9px] bg-gray-50 text-gray-500 font-extrabold px-2 py-0.5 rounded-lg border border-gray-100">
-                            #{tag}
-                          </span>
-                        ))}
-                        {lead.Tags && lead.Tags.split(", ").length > 3 && (
-                          <span className="text-[9px] bg-blue-50 text-blue-600 font-black px-1.5 py-0.5 rounded-lg">
-                            +{lead.Tags.split(", ").length - 3} more
-                          </span>
-                        )}
+                        {(() => {
+                          const parsedTags = lead.Tags ? lead.Tags.split(",").map(t => t.trim()).filter(Boolean) : [];
+                          return (
+                            <>
+                              {parsedTags.slice(0, 3).map(tag => (
+                                <span key={tag} className="text-[9px] bg-gray-50 text-gray-500 font-extrabold px-2 py-0.5 rounded-lg border border-gray-100">
+                                  #{tag}
+                                </span>
+                              ))}
+                              {parsedTags.length > 3 && (
+                                <span className="text-[9px] bg-blue-50 text-blue-600 font-black px-1.5 py-0.5 rounded-lg">
+                                  +{parsedTags.length - 3} more
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                       <span className="text-[9px] text-gray-400 font-extrabold block uppercase tracking-wider">
                         Source: {lead.Source || "Unknown"}
@@ -825,8 +832,8 @@ export default function ImportContacts({ programs, onImportComplete }) {
 
       {/* Field Mapping Dialog */}
       {isMappingOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-150 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-fade-in p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-150 animate-slide-up">
             
             {/* Header */}
             <div className="px-8 py-5 border-b border-gray-100 flex justify-between items-center bg-slate-50 shrink-0">

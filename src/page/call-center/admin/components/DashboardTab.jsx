@@ -129,8 +129,8 @@ export default function DashboardTab({ programs, attenders }) {
         <div className="flex items-center gap-3 flex-wrap">
           <select value={selectedProgramId} onChange={e => setSelectedProgramId(e.target.value)}
             className="px-4 py-2.5 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-            <option value="">-- Select Program --</option>
-            <option value="ALL">🌟 ALL PROGRAMS (Master)</option>
+            <option value="">-- Select Sheet / Tag --</option>
+            <option value="ALL">🌟 ALL TAGS / PROGRAMS (Master)</option>
             {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           <select value={selectedAttenderId} onChange={e => setSelectedAttenderId(e.target.value)}
@@ -156,7 +156,7 @@ export default function DashboardTab({ programs, attenders }) {
 
       {!selectedProgramId ? (
         <div className="h-64 flex items-center justify-center border-2 border-dashed border-gray-200 rounded-3xl text-gray-400">
-          <div className="text-center"><BarChart3 size={40} className="mx-auto mb-3 opacity-30" /><p>Select a program to view analytics</p></div>
+          <div className="text-center"><BarChart3 size={40} className="mx-auto mb-3 opacity-30" /><p>Select a sheet or tag to view analytics</p></div>
         </div>
       ) : (
         <>

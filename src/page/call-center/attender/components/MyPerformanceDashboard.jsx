@@ -1,133 +1,258 @@
-import React from "react";
-import { User, Phone, CheckCircle2, Flame } from "lucide-react";
-import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
+import React, { useState, useMemo } from "react";
+import { User, PhoneCall, CheckCircle2, TrendingUp, Clock, Sun, AlertCircle, ChevronDown } from "lucide-react";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
+import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES } from "../utils";
 
-export const MyPerformanceDashboard = ({ stats }) => {
-  const COLORS = ["#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"];
+// ─── Colour palette for pie ───────────────────────────────────────────────────
+const PIE_COLORS = ["#4f46e5", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6", "#64748b"];
+
+// ─── Date range helpers ───────────────────────────────────────────────────────
+const DATE_FILTERS = [
+  { label: "Today",      key: "today" },
+  { label: "This Week",  key: "week" },
+  { label: "This Month", key: "month" },
+  { label: "All Time",   key: "all" },
+];
+
+function getTimestampFromLog(log) {
+  if (log.updatedAt) {
+    return log.updatedAt.toDate ? log.updatedAt.toDate() : new Date(log.updatedAt);
+  }
+  if (log.createdAt) {
+    return log.createdAt.toDate ? log.createdAt.toDate() : new Date(log.createdAt);
+  }
+  return null;
+}
+
+function filterLogsByDate(logs, range) {
+  if (range === "all") return logs;
+  const now = new Date();
+  const start = new Date();
+  if (range === "today") {
+    start.setHours(0, 0, 0, 0);
+  } else if (range === "week") {
+    start.setDate(now.getDate() - now.getDay()); // Sunday
+    start.setHours(0, 0, 0, 0);
+  } else if (range === "month") {
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+  }
+  return logs.filter(log => {
+    // Use history entries to determine activity in range
+    const hist = log.history || [];
+    if (hist.length > 0) {
+      return hist.some(h => new Date(h.timestamp) >= start);
+    }
+    const ts = getTimestampFromLog(log);
+    return ts && ts >= start;
+  });
+}
+
+// ─── Small stat number block ──────────────────────────────────────────────────
+const Stat = ({ label, value, accent = "text-slate-800", sub }) => (
+  <div className="flex flex-col">
+    <span className={`text-2xl font-black ${accent}`}>{value}</span>
+    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-0.5">{label}</span>
+    {sub && <span className="text-[10px] text-gray-300 font-semibold">{sub}</span>}
+  </div>
+);
+
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
+export const MyPerformanceDashboard = ({ logs = [], attenderName }) => {
+  const [dateRange, setDateRange] = useState("all");
+
+  // All-time stats for today/callbacks (always full logs)
+  const todayStr = new Date().toLocaleDateString("en-IN");
+  const todayCallCount = useMemo(() => {
+    let count = 0;
+    logs.forEach(log => {
+      (log.history || []).forEach(h => {
+        if (new Date(h.timestamp).toLocaleDateString("en-IN") === todayStr) count++;
+      });
+    });
+    return count;
+  }, [logs]);
+
+  const callbacksDue = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return logs.filter(l => {
+      if (!l.callbackDate) return false;
+      const d = l.callbackDate.toDate ? l.callbackDate.toDate() : new Date(l.callbackDate);
+      d.setHours(0, 0, 0, 0);
+      return d <= today && l.callbackStatus !== "done";
+    }).length;
+  }, [logs]);
+
+  // Date-filtered stats
+  const filtered = useMemo(() => filterLogsByDate(logs, dateRange), [logs, dateRange]);
+
+  const stats = useMemo(() => {
+    let connected = 0, notConnected = 0, registrations = 0, interested = 0, infoGiven = 0;
+    const statusCounts = {};
+
+    filtered.forEach(log => {
+      const s = log.status;
+      if (s) {
+        statusCounts[s] = (statusCounts[s] || 0) + 1;
+        if (CONNECTED_STATUSES.includes(s)) {
+          connected++;
+          if (s === "Reg.Done") registrations++;
+          else if (s === "Interested") interested++;
+          else if (s === "Info given") infoGiven++;
+        } else if (NOT_CONNECTED_STATUSES.includes(s)) {
+          notConnected++;
+        }
+      }
+    });
+
+    const total = filtered.length;
+    const called = filtered.filter(l => l.status || l.callbackDate || l.remark || l.remarks).length;
+    const uncalled = total - called;
+    const connectionRate = total > 0 ? Math.round((connected / total) * 100) : 0;
+    const conversionRate = total > 0 ? Math.round((registrations / total) * 100) : 0;
+
+    const statusChartData = Object.entries(statusCounts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    return { total, called, uncalled, connected, notConnected, registrations, interested, infoGiven, connectionRate, conversionRate, statusChartData };
+  }, [filtered]);
 
   return (
-    <div className="flex-1 overflow-y-auto bg-gray-50 p-6 space-y-6">
-      {/* Cards Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="flex-1 overflow-y-auto bg-[#f7f8fa] p-6 space-y-4">
+
+      {/* ── Header + Date Filter ── */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-black text-slate-800">My Performance</h2>
+          <p className="text-xs text-gray-400 font-semibold mt-0.5">{attenderName}</p>
+        </div>
+        {/* Pill filter */}
+        <div className="flex items-center bg-white border border-gray-200 rounded-xl p-0.5 gap-0.5 shadow-sm">
+          {DATE_FILTERS.map(f => (
+            <button
+              key={f.key}
+              onClick={() => setDateRange(f.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                dateRange === f.key
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-gray-400 hover:text-gray-700"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Row 1: 6 key numbers ── */}
+      <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { label: "Assigned Contacts", value: stats.assignedCount, icon: <User size={18} />, color: "border-l-indigo-500", text: "text-indigo-600" },
-          { label: "Total Attempts", value: stats.totalAttempts, icon: <Phone size={18} />, color: "border-l-blue-500", text: "text-blue-600" },
-          { label: "Connection Rate", value: stats.connectionRate + "%", icon: <CheckCircle2 size={18} />, color: "border-l-emerald-500", text: "text-emerald-600" },
-          { label: "Conversion Rate", value: stats.registrationRate + "%", icon: <Flame size={18} />, color: "border-l-orange-500", text: "text-orange-500" },
-        ].map((k, i) => (
-          <div key={i} className={`bg-white rounded-2xl p-5 border border-gray-100 border-l-4 shadow-sm flex items-center justify-between ${k.color}`}>
-            <div>
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{k.label}</p>
-              <p className="text-3xl font-black text-slate-800 mt-1">{k.value}</p>
-            </div>
-            <div className={`w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center ${k.text}`}>
-              {k.icon}
-            </div>
+          { label: "Assigned",    value: stats.total,          accent: "text-indigo-600" },
+          { label: "Called",      value: stats.called,         accent: "text-blue-600" },
+          { label: "Connected",   value: stats.connected,      accent: "text-emerald-600" },
+          { label: "Reg. Done",   value: stats.registrations,  accent: "text-green-600" },
+          { label: "Interested",  value: stats.interested,     accent: "text-purple-600" },
+          { label: "Not Reached", value: stats.notConnected,   accent: "text-red-500" },
+        ].map((item, i) => (
+          <div key={i} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm">
+            <Stat label={item.label} value={item.value} accent={item.accent} />
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left column - Status distribution */}
-        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col h-[350px]">
-          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4">Status Distribution</h3>
-          {stats.statusChartData.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center text-gray-400 font-bold">No calls logged yet.</div>
-          ) : (
-            <div className="flex-1 relative">
+      {/* ── Row 2: Rates + Today + Callbacks ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col gap-0.5">
+          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Connection Rate</span>
+          <span className="text-3xl font-black text-slate-800">{stats.connectionRate}%</span>
+          <div className="w-full bg-gray-100 h-1.5 rounded-full mt-2">
+            <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: `${stats.connectionRate}%` }} />
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col gap-0.5">
+          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Conversion Rate</span>
+          <span className="text-3xl font-black text-slate-800">{stats.conversionRate}%</span>
+          <div className="w-full bg-gray-100 h-1.5 rounded-full mt-2">
+            <div className="bg-indigo-500 h-full rounded-full transition-all" style={{ width: `${stats.conversionRate}%` }} />
+          </div>
+        </div>
+
+        <div className={`rounded-2xl p-4 border shadow-sm flex flex-col gap-0.5 ${
+          todayCallCount > 0 ? "bg-amber-50 border-amber-100" : "bg-white border-gray-100"
+        }`}>
+          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1">
+            <Sun size={11} className="text-amber-400" /> Today's Calls
+          </span>
+          <span className="text-3xl font-black text-slate-800">{todayCallCount}</span>
+          <span className="text-[10px] text-gray-400 font-semibold">
+            {todayCallCount === 0 ? "None yet today" : `call${todayCallCount !== 1 ? "s" : ""} so far`}
+          </span>
+        </div>
+
+        <div className={`rounded-2xl p-4 border shadow-sm flex flex-col gap-0.5 ${
+          callbacksDue > 0 ? "bg-red-50 border-red-200" : "bg-white border-gray-100"
+        }`}>
+          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1">
+            <Clock size={11} className={callbacksDue > 0 ? "text-red-400" : "text-gray-400"} /> Callbacks Due
+          </span>
+          <span className={`text-3xl font-black ${callbacksDue > 0 ? "text-red-600" : "text-slate-800"}`}>{callbacksDue}</span>
+          <span className="text-[10px] text-gray-400 font-semibold">
+            {callbacksDue === 0 ? "All on track" : "overdue callbacks"}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Row 3: Status Breakdown ── */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">
+          Status Breakdown
+          {dateRange !== "all" && (
+            <span className="ml-2 normal-case text-indigo-400">
+              ({DATE_FILTERS.find(f => f.key === dateRange)?.label})
+            </span>
+          )}
+        </h3>
+
+        {stats.statusChartData.length === 0 ? (
+          <p className="text-sm text-gray-400 font-semibold text-center py-8">No calls logged for this period.</p>
+        ) : (
+          <div className="flex items-center gap-8">
+            {/* Pie */}
+            <div className="relative w-32 h-32 shrink-0">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie
-                    data={stats.statusChartData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={2}
-                    dataKey="value"
-                  >
-                    {stats.statusChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  <Pie data={stats.statusChartData} cx="50%" cy="50%" innerRadius={38} outerRadius={52} paddingAngle={2} dataKey="value">
+                    {stats.statusChartData.map((_, i) => (
+                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => [`${value} contacts`, 'Status']} />
+                  <Tooltip formatter={(v) => [`${v}`, ""]} contentStyle={{ fontSize: 11, borderRadius: 8 }} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <span className="text-2xl font-black text-slate-800">{stats.connectedContacts}</span>
-                <span className="text-[10px] text-gray-400 uppercase font-black">Connected</span>
+                <span className="text-base font-black text-slate-800">{stats.called}</span>
+                <span className="text-[8px] text-gray-400 uppercase font-black">called</span>
               </div>
             </div>
-          )}
-        </div>
 
-        {/* Middle column - Timeline */}
-        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col h-[350px] lg:col-span-2">
-          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4">Day-wise Timeline (Attempts)</h3>
-          {stats.dailyChartData.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center text-gray-400 font-bold">No activity recorded.</div>
-          ) : (
-            <div className="flex-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.dailyChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fontWeight: 700, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9, fontWeight: 700, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                  <Tooltip cursor={{ fill: 'rgba(226, 232, 240, 0.3)' }} formatter={(value) => [`${value} calls`, 'Attempts']} />
-                  <Bar dataKey="count" fill="#4f46e5" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Objection details */}
-        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm">
-          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-4">Objections Logged</h3>
-          {stats.objectionChartData.length === 0 ? (
-            <p className="text-sm text-gray-400 font-bold py-4">No objections recorded for this period.</p>
-          ) : (
-            <div className="space-y-3">
-              {stats.objectionChartData.map((obj, i) => {
-                const percent = Math.round((obj.value / stats.assignedCount) * 100);
-                return (
-                  <div key={i} className="flex flex-col">
-                    <div className="flex justify-between items-center text-xs font-bold text-slate-700 mb-1">
-                      <span>{obj.name}</span>
-                      <span>{obj.value} ({percent}%)</span>
-                    </div>
-                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                      <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${percent}%` }} />
-                    </div>
+            {/* Legend grid */}
+            <div className="flex-1 grid grid-cols-2 gap-x-6 gap-y-2">
+              {stats.statusChartData.map((entry, i) => (
+                <div key={i} className="flex items-center justify-between text-xs min-w-0">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                    <span className="text-slate-500 font-semibold truncate">{entry.name}</span>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Connection efficiency metrics */}
-        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-4">
-          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider">Call Sheet Performance Analysis</h3>
-          <div className="divide-y divide-gray-100">
-            {[
-              { label: "Average attempts per contact", value: stats.callsPerAssign, desc: "Total attempts divided by total unique assigned contacts." },
-              { label: "Successful Connections", value: stats.connectedContacts, desc: "Contacts that were successfully spoken to." },
-              { label: "Pending (Not called)", value: stats.assignedCount - stats.connectedContacts - stats.notConnectedContacts, desc: "Contacts waiting for first call or callback." },
-              { label: "Total Registrations", value: stats.registrations, desc: "Conversations that ended with successful registration." }
-            ].map((m, i) => (
-              <div key={i} className="py-3 flex justify-between items-start gap-4">
-                <div>
-                  <p className="text-xs font-black text-slate-700">{m.label}</p>
-                  <p className="text-[10px] text-gray-400 font-semibold mt-0.5">{m.desc}</p>
+                  <span className="font-black text-slate-800 ml-3 shrink-0">{entry.value}</span>
                 </div>
-                <span className="text-lg font-black text-slate-800 whitespace-nowrap">{m.value}</span>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
+
     </div>
   );
 };

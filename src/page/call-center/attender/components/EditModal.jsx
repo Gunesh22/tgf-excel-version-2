@@ -21,12 +21,12 @@ import {
   isKhojiField
 } from "../utils";
 
-export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onClose }) => {
+export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave, onDelete, onClose }) => {
   const [edited, setEdited] = useState(() => {
     const normalized = { ...row };
     
     // Whitelist fields to normalize
-    const standardFields = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
+    const standardFields = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Tags", "Source", "Called For"];
     
     // 1. Get fallback values for all standard fields
     const standardVals = {};
@@ -71,13 +71,19 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
     standardFields.forEach(col => {
       normalized[col] = standardVals[col];
     });
+    // Normalize Tags: if only a `tags` array exists (no `Tags` string), convert to comma string for display
+    if (!normalized.Tags && Array.isArray(row.tags) && row.tags.length > 0) {
+      normalized.Tags = row.tags.join(", ");
+    }
     return {
       ...normalized,
-      remark: (row.history && row.history.length > 0) ? "" : (row.remark || ""),
+      // Always start with empty remark for a new note — previous remarks are shown in the history timeline
+      remark: "",
     };
   });
   const [saving, setSaving] = useState(false);
   const [globalDup, setGlobalDup] = useState(null);
+  const [dupPopoverOpen, setDupPopoverOpen] = useState(false);
   const handleDismissRef = useRef(null);
   const [addedFields, setAddedFields] = useState([]);
 
@@ -103,7 +109,7 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
 
   // Identify fields from the contact that aren't internal bookkeeping fields
   const dynamicFields = useMemo(() => {
-    const standardOrder = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Country", "Tags", "Source", "Called For"];
+    const standardOrder = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Tags", "Source", "Called For"];
     const internalKeys = [
       "id", "contactId", "programId", "programName", "attenderId", "attenderName",
       "callType", "status", "remark", "callbackDate", "callbackStatus", "isCallbackDue",
@@ -154,19 +160,154 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
   }, [edited, addedFields]);
 
   // Debounced duplicate check — only on phone value change, not every keystroke
+  const phoneKey = useMemo(() => {
+    return Object.keys(edited).find(k => {
+      const kl = k.toLowerCase();
+      return kl.includes("phone") || kl.includes("number") || kl.includes("cont");
+    });
+  }, [edited]);
+  const phoneVal = phoneKey ? String(edited[phoneKey] || "").trim() : "";
+
   const dupTimerRef = useRef(null);
   useEffect(() => {
     if (dupTimerRef.current) clearTimeout(dupTimerRef.current);
-    const pKey = Object.keys(edited).find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("number") || k.toLowerCase().includes("cont"));
-    const phoneVal = pKey ? String(edited[pKey] || "").trim() : null;
     if (!phoneVal || phoneVal.length < 5) { setGlobalDup(null); return; }
     dupTimerRef.current = setTimeout(() => {
       import("../../../../lib/db").then(({ checkGlobalDuplicate }) => {
-        checkGlobalDuplicate(phoneVal, edited.contactId || row.id).then(setGlobalDup);
+        checkGlobalDuplicate(phoneVal, edited.contactId || row.id).then((res) => {
+          setGlobalDup(res);
+
+          // If we found a duplicate contact and this is a new incoming entry, auto-populate the fields!
+          if (res && res.first && row._isNew) {
+            const dup = res.first;
+            setEdited(prev => {
+              const updated = { ...prev };
+              const fieldsToMap = ["Name", "Email", "City", "State", "Khoji", "Source", "Called For"];
+              
+              fieldsToMap.forEach(f => {
+                const dupVal = getFieldWithFallback(dup, f);
+                if (!String(updated[f] || "").trim() && dupVal) {
+                  updated[f] = dupVal;
+                }
+              });
+
+              // Map Tags specifically
+              const dupTagsVal = getFieldWithFallback(dup, "tags");
+              if (!String(updated.Tags || "").trim() && dupTagsVal) {
+                updated.Tags = dupTagsVal;
+              }
+
+              // Set contactId and GHL_ID
+              if (!updated.contactId) {
+                updated.contactId = dup.contactId || dup.id;
+              }
+              if (!updated.GHL_ID && dup.GHL_ID) {
+                updated.GHL_ID = dup.GHL_ID;
+              }
+
+              return updated;
+            });
+          }
+        });
       });
     }, 1000);
     return () => { if (dupTimerRef.current) clearTimeout(dupTimerRef.current); };
-  }, [edited]);
+  }, [phoneVal, row._isNew, row.id, edited.contactId]);
+
+  // Aggregated Call Notes / History from current contact & duplicate contact records
+  const mergedHistory = useMemo(() => {
+    const list = [];
+
+    // 1. Current contact's history entries
+    const currentHist = Array.isArray(edited.history) ? edited.history : (Array.isArray(row.history) ? row.history : []);
+    currentHist.forEach((h, idx) => {
+      if (h.remark && String(h.remark).trim()) {
+        list.push({
+          status: h.status || "",
+          remark: h.remark || "",
+          attenderName: h.attenderName || "Unknown",
+          timestamp: h.timestamp || new Date().toISOString(),
+          isCurrentDoc: true,
+          originalIndex: idx,
+          sourceProgram: row.programName || "This Sheet"
+        });
+      }
+    });
+
+    // 1b. Also include the standalone remark saved before history tracking existed
+    //     (i.e., a remark that is NOT already represented in any history entry)
+    if (row.remark && String(row.remark).trim()) {
+      const remarkStr = String(row.remark).trim();
+      const alreadyInHistory = list.some(h => h.remark === remarkStr && h.isCurrentDoc);
+      if (!alreadyInHistory) {
+        list.push({
+          status: row.status || "",
+          remark: remarkStr,
+          attenderName: row.attenderName || row.assignedName || "Unknown",
+          timestamp: row.updatedAt?.toDate?.()?.toISOString?.() || row.updatedAt || row.createdAt?.toDate?.()?.toISOString?.() || row.createdAt || new Date().toISOString(),
+          isCurrentDoc: true,
+          originalIndex: -1, // sentinel: this is a standalone remark, not editable inline
+          sourceProgram: row.programName || "This Sheet"
+        });
+      }
+    }
+
+    // 2. Duplicate contacts' history
+    if (globalDup && Array.isArray(globalDup.matches)) {
+      globalDup.matches.forEach(m => {
+        const progName = m.programName || "Duplicate Lead";
+        if (Array.isArray(m.history)) {
+          m.history.forEach(h => {
+            if (h.remark && String(h.remark).trim()) {
+              list.push({
+                status: h.status || "",
+                remark: h.remark || "",
+                attenderName: h.attenderName || "Unknown",
+                timestamp: h.timestamp || new Date().toISOString(),
+                isCurrentDoc: false,
+                sourceProgram: progName
+              });
+            }
+          });
+        }
+        // Also include standalone remark from duplicate if no history
+        if (m.remark && String(m.remark).trim()) {
+          const dupRemark = String(m.remark).trim();
+          const alreadyInDupHistory = Array.isArray(m.history) && m.history.some(h => h.remark === dupRemark);
+          if (!alreadyInDupHistory) {
+            list.push({
+              status: m.status || "",
+              remark: dupRemark,
+              attenderName: m.assignedName || m.attenderName || "Unknown",
+              timestamp: m.updatedAt?.toDate?.()?.toISOString?.() || m.updatedAt || m.createdAt?.toDate?.()?.toISOString?.() || m.createdAt || new Date().toISOString(),
+              isCurrentDoc: false,
+              sourceProgram: progName
+            });
+          }
+        }
+      });
+    }
+
+    // Sort chronologically ascending
+    list.sort((a, b) => {
+      const timeA = new Date(a.timestamp || 0).getTime();
+      const timeB = new Date(b.timestamp || 0).getTime();
+      return timeA - timeB;
+    });
+
+    // Deduplicate by remark + attenderName (timestamp can vary slightly)
+    const seen = new Set();
+    const uniqueList = [];
+    list.forEach(item => {
+      const key = `${item.remark}_${item.status}_${item.attenderName}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueList.push(item);
+      }
+    });
+
+    return uniqueList;
+  }, [row.history, row.remark, row.status, row.programName, row.attenderName, row.assignedName, row.updatedAt, row.createdAt, globalDup, edited.history]);
 
   // Identity helpers
   const getLogName = () => {
@@ -241,18 +382,26 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
         updates.firstCalledAt = new Date().toISOString();
       }
 
-      // Maintain a timeline of interactions
-      if ((row.status !== updates.status) || (row.remark !== updates.remark)) {
-        if (updates.status || updates.remark) {
-          const safeName = attenderName || "Unknown";
-          const newHist = {
-            status: updates.status || "",
-            remark: updates.remark || "",
-            attenderName: safeName,
-            timestamp: new Date().toISOString()
-          };
-          updates.history = [...(row.history || []), newHist];
-        }
+      // Maintain a timeline of interactions.
+      // Only push a new history entry if:
+      //   a) the status actually changed from what was previously saved, OR
+      //   b) the attender typed a new remark this session (non-empty)
+      const statusChanged = row.status !== updates.status;
+      const hasNewRemark = String(updates.remark || "").trim().length > 0;
+      
+      let baseHistory = Array.isArray(edited.history) ? edited.history : (Array.isArray(row.history) ? row.history : []);
+      if (statusChanged || hasNewRemark) {
+        const safeName = attenderName || "Unknown";
+        const newHist = {
+          status: updates.status || "",
+          remark: updates.remark || "",
+          attenderName: safeName,
+          timestamp: new Date().toISOString()
+        };
+        updates.history = [...baseHistory, newHist];
+      } else if (Array.isArray(edited.history)) {
+        // Even if no new note/status change, we want to persist any edits to past notes!
+        updates.history = baseHistory;
       }
 
       console.log("Attempting to save updates: ", updates);
@@ -261,7 +410,7 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
       if (row._isNew) {
         delete updates._isNew;
         await addIncomingCallLog(
-          row.attenderId, row.attenderName, updates, row.programId, row.programName
+          row.attenderId, row.attenderName, updates, edited.programId, edited.programName
         );
       } else {
         await updateCallLog(id, updates, rest.contactId || null);
@@ -311,11 +460,10 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
   }, [row?.id]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={handleDismiss}>
+    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" onClick={handleDismiss}>
       <div
-        className="bg-white rounded-3xl w-full max-w-4xl max-h-[95vh] flex flex-col overflow-hidden shadow-2xl"
+        className="bg-white rounded-3xl w-full max-w-4xl max-h-[95vh] flex flex-col overflow-hidden shadow-2xl animate-slide-up"
         onClick={e => e.stopPropagation()}
-        style={{ animation: "slideUp 0.15s ease-out" }}
       >
         {/* Modal Header */}
         <div className={`px-6 py-4 flex items-center justify-between ${edited._callbackDue ? "bg-red-600" : "bg-indigo-600 shadow-lg shadow-indigo-600/20"}`}>
@@ -342,9 +490,43 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
                   </span>
                 )}
                 {globalDup && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-400 text-amber-950 font-bold text-[10px] rounded uppercase animate-pulse">
-                    <AlertCircle size={10} /> Duplicate in: {globalDup.programName}
-                  </span>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setDupPopoverOpen(v => !v)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-400 hover:bg-amber-300 text-amber-950 font-bold text-[10px] rounded uppercase transition"
+                      style={{ animation: dupPopoverOpen ? "none" : "dupPulse 1.4s ease-in-out infinite" }}
+                    >
+                      <AlertCircle size={10} /> Duplicate Exists
+                    </button>
+                    {dupPopoverOpen && (
+                      <div
+                        className="absolute left-0 top-full mt-1.5 z-50 bg-white rounded-xl shadow-2xl border border-amber-200 p-3 min-w-[220px] max-w-[300px]"
+                        style={{ boxShadow: "0 8px 32px rgba(251,191,36,0.18)" }}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">
+                            {globalDup.count > 1 ? `${globalDup.count} duplicates — enrolled in:` : "Enrolled in:"}
+                          </span>
+                          <button onClick={() => setDupPopoverOpen(false)} className="text-gray-400 hover:text-gray-600">
+                            <X size={12} />
+                          </button>
+                        </div>
+                        {(globalDup.allTags || []).length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {globalDup.allTags.map((t, i) => (
+                              <span key={i} className="inline-flex items-center px-2 py-0.5 bg-amber-50 text-amber-800 rounded-full text-[10px] font-semibold border border-amber-200">
+                                #{t}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400 text-xs italic">No tags found</span>
+                        )}
+                      </div>
+                    )}
+                    <style>{`@keyframes dupPulse { 0%,100%{opacity:1} 50%{opacity:.55} }`}</style>
+                  </div>
                 )}
               </div>
             </div>
@@ -386,6 +568,7 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
             
             // Allow attender to edit Khoji field
             const getEditable = (field) => {
+              if (field === "Tags") return true;
               if (isIncoming) return true;
               if (addedFields.includes(field)) return true;
               const fLower = field.toLowerCase();
@@ -432,35 +615,23 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
                               {iconFor(field)} {field}
                             </label>
                             {field === "Tags" ? (
-                              editable ? (
-                                <input
-                                  value={edited[field] || ""}
-                                  onChange={e => handleChange(field, e.target.value)}
-                                  className="w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                                  placeholder="Enter tags (comma separated)..."
-                                />
-                              ) : (
-                                <div className="flex flex-wrap gap-1.5 py-1 min-h-[38px] items-center">
-                                  {(() => {
-                                    const tagList = (edited[field] || "")
-                                      .split(",")
-                                      .map(t => t.trim())
-                                      .filter(Boolean);
-                                    return tagList.length > 0 ? (
-                                      tagList.map((tag, idx) => (
-                                        <span
-                                          key={idx}
-                                          className="inline-flex items-center px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold border border-indigo-100"
-                                        >
-                                          {tag}
-                                        </span>
-                                      ))
-                                    ) : (
-                                      <span className="text-gray-400 text-xs italic">—</span>
-                                    );
-                                  })()}
-                                </div>
-                              )
+                              <div className="flex flex-wrap gap-1.5 p-2 bg-gray-50 border border-gray-150 rounded-xl min-h-[38px] items-center">
+                                {(() => {
+                                  const tagsVal = edited[field] || "";
+                                  const tagsArr = tagsVal.split(",").map(t => t.trim()).filter(Boolean);
+                                  if (tagsArr.length === 0) {
+                                    return <span className="text-xs text-gray-400 px-2 font-medium">No tags mapped</span>;
+                                  }
+                                  return tagsArr.map((tag, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 shadow-sm"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ));
+                                })()}
+                              </div>
                             ) : (field.toLowerCase().includes("asmani") || field.toLowerCase().includes("aasmani") || field.toLowerCase().includes("आसमानी") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id"))) ? (
                               <div className="flex gap-2 py-1 items-center min-h-[38px]">
                                 {(() => {
@@ -615,6 +786,49 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
             </div>
           </div>
 
+          {/* Quick Select: Program / Tag Mapping */}
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+              <Tag size={13} className="text-indigo-500" /> Program / Tag Mapping
+            </label>
+            <div className="relative">
+              <select
+                value={edited.programId || ""}
+                onChange={e => {
+                  const val = e.target.value;
+                  if (!val) {
+                    handleChange("programId", "");
+                    handleChange("programName", "");
+                    handleChange("Sub Program", "");
+                    handleChange("subProgram", "");
+                  } else {
+                    const prog = programs.find(p => p.id === val);
+                    if (prog) {
+                      handleChange("programId", prog.id);
+                      handleChange("programName", prog.name);
+                      handleChange("Sub Program", prog.name);
+                      handleChange("subProgram", prog.name);
+                      
+                      // Sync to Tags field for display
+                      const existingTagsStr = edited.Tags || "";
+                      const existingTags = existingTagsStr.split(",").map(x => x.trim()).filter(Boolean);
+                      if (!existingTags.includes(prog.name)) {
+                        existingTags.push(prog.name);
+                      }
+                      handleChange("Tags", existingTags.join(", "));
+                    }
+                  }
+                }}
+                className="w-full px-4 py-2 border rounded-xl text-sm font-semibold bg-gray-50 border-gray-100 text-gray-800 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white transition cursor-pointer"
+              >
+                <option value="">— Untagged —</option>
+                {programs.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           <div className="space-y-8">
             {/* Abhivyakti Quick Action & Call Status */}
             <div className="space-y-6">
@@ -657,7 +871,7 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
 
               {/* Objection Tracker (Conditional) */}
               {(edited.status === "Not interested" || edited.status === "Not possible") && (
-                <div className="space-y-3 p-4 bg-red-50 border border-red-100 rounded-2xl animate-in fade-in zoom-in duration-200">
+                <div className="space-y-3 p-4 bg-red-50 border border-red-100 rounded-2xl animate-slide-up">
                   <label className="text-[10px] font-black text-red-500 uppercase tracking-widest flex items-center gap-2">
                     <AlertCircle size={13} /> Why are they {edited.status.toLowerCase()}?
                   </label>
@@ -686,21 +900,21 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
               <div className="space-y-3">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                   <MessageSquare size={13} className="text-indigo-500" /> Call Notes
-                  {edited.history && edited.history.length > 0 && (
-                    <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-600 rounded text-[9px] font-black">{edited.history.length} past</span>
+                  {mergedHistory && mergedHistory.length > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-600 rounded text-[9px] font-black">{mergedHistory.length} past</span>
                   )}
                 </label>
 
                 {/* Past history entries */}
-                {edited.history && edited.history.length > 0 && (
+                {mergedHistory && mergedHistory.length > 0 && (
                   <div className="space-y-2 pr-1 border border-gray-100 rounded-2xl p-3 bg-gray-50/50">
-                    {[...edited.history].reverse().map((h, revIdx) => {
-                      const origIdx = edited.history.length - 1 - revIdx;
+                    {[...mergedHistory].reverse().map((h, revIdx) => {
+                      const origIdx = h.originalIndex;
                       return (
-                        <div key={origIdx} className="flex gap-2.5">
+                        <div key={revIdx} className="flex gap-2.5">
                           <div className="shrink-0 flex flex-col items-center pt-2">
-                            <div className="w-2 h-2 rounded-full bg-indigo-300 shrink-0" />
-                            {revIdx < edited.history.length - 1 && <div className="w-px flex-1 bg-gray-200 mt-1" />}
+                            <div className={`w-2 h-2 rounded-full ${h.isCurrentDoc ? "bg-indigo-300" : "bg-amber-400 animate-pulse"} shrink-0`} />
+                            {revIdx < mergedHistory.length - 1 && <div className="w-px flex-1 bg-gray-200 mt-1" />}
                           </div>
                           <div className="flex-1 bg-white rounded-xl p-3 border border-gray-100 shadow-sm mb-1">
                             <div className="flex items-center gap-2 mb-1.5 flex-wrap">
@@ -713,12 +927,19 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
                                     "bg-gray-100 text-gray-600"
                                   }`}>{h.status}</span>
                               )}
+                              {!h.isCurrentDoc && (
+                                <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[9px] font-bold border border-amber-200 uppercase tracking-wider">
+                                  {h.sourceProgram}
+                                </span>
+                              )}
                               <span className="text-[9px] text-gray-300 font-bold ml-auto truncate max-w-[80px]">{h.attenderName}</span>
                             </div>
                             <textarea
                               value={h.remark || ""}
+                              readOnly={!h.isCurrentDoc || origIdx === -1}
                               onChange={e => {
-                                const updatedHistory = [...edited.history];
+                                if (!h.isCurrentDoc || origIdx === -1) return;
+                                const updatedHistory = [...(edited.history || [])];
                                 updatedHistory[origIdx] = { ...updatedHistory[origIdx], remark: e.target.value };
                                 handleChange("history", updatedHistory);
                                 e.target.style.height = 'inherit';
@@ -737,7 +958,9 @@ export const EditModal = ({ row, attenderName = "Unknown", onSave, onDelete, onC
                                 }
                               }}
                               rows={1}
-                              className="w-full bg-transparent text-sm text-gray-700 resize-none overflow-hidden focus:outline-none focus:bg-slate-50 focus:ring-2 focus:ring-indigo-100 rounded-lg px-1 py-0.5 transition leading-relaxed placeholder:text-gray-300"
+                              className={`w-full bg-transparent text-sm text-gray-700 resize-none overflow-hidden focus:outline-none rounded-lg px-1 py-0.5 transition leading-relaxed placeholder:text-gray-300 ${
+                                h.isCurrentDoc && origIdx !== -1 ? "focus:bg-slate-50 focus:ring-2 focus:ring-indigo-100" : "text-gray-500 italic"
+                              }`}
                               placeholder="No note for this call..."
                             />
                           </div>

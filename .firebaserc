@@ -1,5 +1,7 @@
 {
-  "projects": {},
+  "projects": {
+    "default": "tgf-call-center-2"
+  },
   "targets": {},
   "etags": {}
 }

@@ -4,48 +4,41 @@ import * as XLSX from "xlsx";
 import {
   Download, Calendar, TrendingUp, UserCheck, Smile, Info
 } from "lucide-react";
-import { subscribeToRegistrations } from "../../../../lib/db";
+import { subscribeToRegistrations, getRegistrationMonths } from "../../../../lib/db";
 
 export default function AbhivyaktiTab() {
-  const [selectedMonth, setSelectedMonth] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
   const [registrations, setRegistrations] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [monthOptions, setMonthOptions] = useState([]);
 
   useEffect(() => {
+    const loadMonths = async () => {
+      const months = await getRegistrationMonths();
+      setMonthOptions(months);
+      if (months.length > 0 && !months.includes(selectedMonth)) {
+        setSelectedMonth(months[0]);
+      }
+    };
+    loadMonths();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedMonth) return;
     setLoading(true);
-    const unsub = subscribeToRegistrations("ALL", (data) => {
+    const unsub = subscribeToRegistrations(selectedMonth, (data) => {
       setRegistrations(data);
       setLoading(false);
     });
     return () => unsub();
-  }, []);
-
-  const monthOptions = React.useMemo(() => {
-    const months = new Set();
-    registrations.forEach(r => {
-      if (r._deleted) return;
-      const d = r.registeredAt?.toDate ? r.registeredAt.toDate() : r.createdAt?.toDate ? r.createdAt.toDate() : r.createdAt ? new Date(r.createdAt) : null;
-      if (d) {
-        months.add(d.toLocaleDateString("en-CA", { year: "numeric", month: "2-digit" }));
-      }
-    });
-    const arr = Array.from(months).sort((a, b) => b.localeCompare(a));
-    if (arr.length > 0 && !selectedMonth) {
-      setSelectedMonth(arr[0]);
-    }
-    return arr;
-  }, [registrations]);
+  }, [selectedMonth]);
 
   const monthFiltered = React.useMemo(() => {
-    if (!selectedMonth) return [];
-    const [yr, mn] = selectedMonth.split("-");
-    return registrations.filter(r => {
-      if (r._deleted) return false;
-      const d = r.registeredAt?.toDate ? r.registeredAt.toDate() : r.createdAt?.toDate ? r.createdAt.toDate() : r.createdAt ? new Date(r.createdAt) : null;
-      if (!d) return false;
-      return d.getFullYear() === parseInt(yr) && (d.getMonth() + 1) === parseInt(mn);
-    });
-  }, [registrations, selectedMonth]);
+    return registrations.filter(r => !r._deleted);
+  }, [registrations]);
 
   const metrics = React.useMemo(() => {
     const stats = {
