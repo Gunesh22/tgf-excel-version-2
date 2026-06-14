@@ -174,7 +174,12 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
     if (!phoneVal || phoneVal.length < 5) { setGlobalDup(null); return; }
     dupTimerRef.current = setTimeout(() => {
       import("../../../../lib/db").then(({ checkGlobalDuplicate }) => {
-        checkGlobalDuplicate(phoneVal, edited.contactId || row.id).then((res) => {
+        // When this modal is for a NEW incoming entry, do NOT exclude any contact id from
+        // the duplicate lookup. Excluding `edited.contactId` (which we may set after
+        // auto-mapping a duplicate) hides the duplicate immediately. Only exclude when
+        // editing an existing saved contact.
+        const excludeId = row._isNew ? null : (edited.contactId || row.id);
+        checkGlobalDuplicate(phoneVal, excludeId).then((res) => {
           setGlobalDup(res);
 
           // If we found a duplicate contact and this is a new incoming entry, auto-populate the fields!

@@ -641,6 +641,12 @@ export const importContacts = async (param1, param2, param3, param4 = null) => {
         needsUpdate = true;
       }
 
+      // Restore soft-deleted contacts if re-imported
+      if (existing.data._deleted) {
+        updatePayload._deleted = deleteField();
+        needsUpdate = true;
+      }
+
       if (needsUpdate) {
         updatePayload.updatedAt = serverTimestamp();
         batchWriteOps.push({
@@ -1145,7 +1151,8 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
 
   if (isExisting && existingDocId) {
     const contactRef = doc(db, "contacts", existingDocId);
-    await setDoc(contactRef, { ...logData, updatedAt: serverTimestamp() }, { merge: true });
+    // Remove _deleted flag in case the existing contact was soft-deleted
+    await setDoc(contactRef, { ...logData, _deleted: deleteField(), updatedAt: serverTimestamp() }, { merge: true });
     docRef = { id: existingDocId };
   } else {
     docRef = await addDoc(collection(db, "contacts"), logData);
@@ -1297,6 +1304,7 @@ export const claimContact = async (contactId, attenderId, attenderName) => {
       callbackDate: null, // Reset callback dates
       isCallbackDue: false,
       history: arrayUnion(historyEntry),
+      _deleted: deleteField(), // Ensure contact is active/undeleted when claimed
       updatedAt: serverTimestamp()
     });
   });

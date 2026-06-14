@@ -364,7 +364,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "My Sheet");
-    XLSX.writeFile(wb, `${attenderName}_${selectedMonth || 'all'}_${new Date().toLocaleDateString("en-CA")}.xlsx`);
+    XLSX.writeFile(wb, `${attenderName}_all_${new Date().toLocaleDateString("en-CA")}.xlsx`);
     toast.success("Exported!");
   };
 
