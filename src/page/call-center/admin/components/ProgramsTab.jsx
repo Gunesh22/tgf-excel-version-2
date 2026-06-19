@@ -7,7 +7,7 @@ import {
 import {
   getProgramContactStats, createProgram, deleteProgram,
   importContacts, getProgramChunkContacts, remapProgramContacts,
-  getProgramCallLogs, INCOMING_PROGRAM_ID
+  getProgramCallLogs, INCOMING_PROGRAM_ID, OUTGOING_PROGRAM_ID
 } from "../../../../lib/db";
 import { getDefaultExcelMapping, STANDARD_TARGETS, cleanExportRow } from "../utils.jsx";
 
@@ -377,7 +377,7 @@ export default function ProgramsTab({ programs, attenders, onReloadPrograms }) {
                       className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold rounded-xl text-xs transition">
                       Remap Schema
                     </button>
-                    {p.id !== INCOMING_PROGRAM_ID && (
+                    {p.id !== INCOMING_PROGRAM_ID && p.id !== OUTGOING_PROGRAM_ID && (
                       <button onClick={() => handleDeleteProgram(p.id, p.name)}
                         className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition">
                         <Trash2 size={16} />

@@ -11,6 +11,7 @@ import {
   subscribeToCallLogs, updateCallLog, addIncomingCallLog,
   assignContactsToAttender, normalizePhone, getActiveTags,
   INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME, ensureIncomingProgram,
+  OUTGOING_PROGRAM_ID, OUTGOING_PROGRAM_NAME, ensureOutgoingProgram,
   globalSearchContacts, claimContact
 } from "../../../lib/db";
 import {
@@ -152,8 +153,9 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   }, []);
 
   const loadPrograms = async () => {
-    // Ensure the default Incoming Calls program always exists in Firestore
+    // Ensure the default programs always exist in Firestore
     await ensureIncomingProgram();
+    await ensureOutgoingProgram();
     const tags = await getActiveTags();
     // Convert active tags to object structure for compatibility
     const list = tags.map(tag => ({
@@ -1121,7 +1123,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
         <EditModal
           row={editingRow}
           attenderName={attenderName}
-          programs={programs.filter(p => p.id !== INCOMING_PROGRAM_ID)}
+          programs={programs.filter(p => p.id !== INCOMING_PROGRAM_ID && p.id !== OUTGOING_PROGRAM_ID)}
           onSave={(updated, isOptimistic) => {
             setCallLogs(prev => prev.map(l => l.id === updated.id ? { ...l, ...updated } : l));
             if (!isOptimistic) setEditingRow(null);

@@ -116,12 +116,28 @@ export const removeActiveTag = async (tag) => {
 export const INCOMING_PROGRAM_ID = "incoming-calls";
 export const INCOMING_PROGRAM_NAME = "Incoming Calls";
 
+// Fixed ID for the dedicated "Outgoing Calls" program — never changes
+export const OUTGOING_PROGRAM_ID = "outgoing-calls";
+export const OUTGOING_PROGRAM_NAME = "Outgoing Calls";
+
 // Upsert the Incoming Calls program document — safe to call multiple times
 export const ensureIncomingProgram = async () => {
   await registerActiveTag("Incoming Calls");
   const ref = doc(db, "programs", INCOMING_PROGRAM_ID);
   await setDoc(ref, {
     name: INCOMING_PROGRAM_NAME,
+    isSystem: true,       // marks it as a system/reserved program
+    contactCount: 0,
+    createdAt: serverTimestamp(),
+  }, { merge: true });   // merge:true so we never overwrite existing data
+};
+
+// Upsert the Outgoing Calls program document — safe to call multiple times
+export const ensureOutgoingProgram = async () => {
+  await registerActiveTag("Outgoing Calls");
+  const ref = doc(db, "programs", OUTGOING_PROGRAM_ID);
+  await setDoc(ref, {
+    name: OUTGOING_PROGRAM_NAME,
     isSystem: true,       // marks it as a system/reserved program
     contactCount: 0,
     createdAt: serverTimestamp(),
@@ -164,6 +180,17 @@ export const getPrograms = async () => {
     list.unshift({
       id: INCOMING_PROGRAM_ID,
       name: INCOMING_PROGRAM_NAME,
+      isSystem: true,
+      contactCount: 0,
+      createdAt: Timestamp.now()
+    });
+  }
+
+  // Ensure Outgoing Calls is always in the list
+  if (!list.some(p => p.id === OUTGOING_PROGRAM_ID || p.name === OUTGOING_PROGRAM_NAME)) {
+    list.unshift({
+      id: OUTGOING_PROGRAM_ID,
+      name: OUTGOING_PROGRAM_NAME,
       isSystem: true,
       contactCount: 0,
       createdAt: Timestamp.now()
@@ -1038,8 +1065,12 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   const now = new Date();
   const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-  const finalProgramName = programName || "Incoming Calls";
-  const finalProgramId = programId || "Incoming Calls";
+  const isIncoming = data.callType === "incoming" || data.callType === "incoming f";
+  const defaultProgramName = isIncoming ? "Incoming Calls" : "Outgoing Calls";
+  const defaultProgramId = isIncoming ? "incoming-calls" : "outgoing-calls";
+
+  const finalProgramName = programName || defaultProgramName;
+  const finalProgramId = programId || defaultProgramId;
 
   const tagsSet = new Set();
   (Array.isArray(data.tags) ? data.tags : []).forEach(t => parseTags(String(t)).forEach(x => tagsSet.add(x)));
@@ -1185,7 +1216,7 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   }
 
   // Register tag in active tags collection
-  await registerActiveTag("Incoming Calls");
+  await registerActiveTag(finalProgramName);
 
   return docRef.id;
 };

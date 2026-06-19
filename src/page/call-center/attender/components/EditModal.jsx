@@ -331,6 +331,45 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
     setEdited(prev => ({ ...prev, [key]: val }));
   };
 
+  const handleCallTypeChange = (newCallType) => {
+    setEdited(prev => {
+      const updated = { ...prev, callType: newCallType };
+      
+      // Only auto-update program/tag defaults if this is a new entry
+      if (row._isNew) {
+        const isIncoming = newCallType === "incoming" || newCallType === "incoming f";
+        const currentProgId = prev.programId;
+        
+        // Only update if current program is the default incoming-calls or outgoing-calls,
+        // or if it's empty (untagged). This avoids overwriting custom tags chosen by user.
+        if (!currentProgId || currentProgId === "incoming-calls" || currentProgId === "outgoing-calls" || currentProgId === "Incoming Calls" || currentProgId === "Outgoing Calls") {
+          const defaultProgId = isIncoming ? "incoming-calls" : "outgoing-calls";
+          const defaultProgName = isIncoming ? "Incoming Calls" : "Outgoing Calls";
+          
+          updated.programId = defaultProgId;
+          updated.programName = defaultProgName;
+          updated["Sub Program"] = defaultProgName;
+          updated.subProgram = defaultProgName;
+
+          // Sync Tags string for display in the modal
+          const currentTags = prev.Tags || "";
+          const tagsList = currentTags.split(",").map(t => t.trim()).filter(Boolean);
+          
+          // Remove the other default tag if it exists
+          const tagToRemove = isIncoming ? "Outgoing Calls" : "Incoming Calls";
+          const tagToAdd = isIncoming ? "Incoming Calls" : "Outgoing Calls";
+          
+          let filteredTags = tagsList.filter(t => t !== tagToRemove);
+          if (!filteredTags.includes(tagToAdd)) {
+            filteredTags.push(tagToAdd);
+          }
+          updated.Tags = filteredTags.join(", ");
+        }
+      }
+      return updated;
+    });
+  };
+
   // Smart field matching: find actual key name in data that matches an alias list
   const findField = (aliases) => {
     const keys = Object.keys(edited);
@@ -569,7 +608,8 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
             const questionFields = dynamicFields.filter(f => isQuestion(f));
             const campaignFields = dynamicFields.filter(f => isCampaign(f));
 
-            const isIncoming = edited._isNew || edited.callType === "incoming" || edited.callType === "incoming f";
+            const isManualEntry = edited.programId === "incoming-calls" || edited.programId === "outgoing-calls" || edited.programId === "Incoming Calls" || edited.programId === "Outgoing Calls";
+            const isIncoming = edited._isNew || edited.callType === "incoming" || edited.callType === "incoming f" || isManualEntry;
             
             // Allow attender to edit Khoji field
             const getEditable = (field) => {
@@ -784,7 +824,7 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
             </label>
             <div className="flex flex-wrap gap-2">
               {CALL_TYPE_OPTIONS.map(opt => (
-                <button key={opt} onClick={() => handleChange("callType", opt)}
+                <button key={opt} onClick={() => handleCallTypeChange(opt)}
                   className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${edited.callType === opt ? "bg-slate-800 text-white border-slate-800 shadow scale-105" : "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-200"
                     }`}>{opt}</button>
               ))}
