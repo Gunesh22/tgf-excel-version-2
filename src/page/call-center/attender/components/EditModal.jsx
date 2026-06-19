@@ -3,10 +3,11 @@ import { toast } from "react-hot-toast";
 import {
   Phone, Plus, X, Save, Tag, User, MapPin, MessageSquare,
   Hash, Clock, CheckCircle2, AlertCircle, Trash2,
-  PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame
+  PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame,
+  ChevronDown, Check, Search
 } from "lucide-react";
 import {
-  addIncomingCallLog, updateCallLog
+  addIncomingCallLog, updateCallLog, createProgram
 } from "../../../../lib/db";
 import {
   STATUS_OPTIONS,
@@ -20,6 +21,170 @@ import {
   isKhojiNegative,
   isKhojiField
 } from "../utils";
+
+const SearchableDropdown = ({
+  options,
+  selected,
+  onChange,
+  placeholder = "Select option...",
+  isMulti = false,
+  colorClass = "indigo",
+  disabled = false,
+  allowCreate = false,
+  onCreate = null
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) setSearch("");
+  }, [isOpen]);
+
+  const filteredOptions = useMemo(() => {
+    return options.filter(opt =>
+      String(opt || "").toLowerCase().includes(search.toLowerCase())
+    );
+  }, [options, search]);
+
+  const handleSelect = (option) => {
+    if (disabled) return;
+    if (isMulti) {
+      const selectedArr = selected ? selected.split(",").map(x => x.trim()).filter(Boolean) : [];
+      let newSelected;
+      if (selectedArr.includes(option)) {
+        newSelected = selectedArr.filter(x => x !== option);
+      } else {
+        newSelected = [...selectedArr, option];
+      }
+      onChange(newSelected.join(", "));
+    } else {
+      onChange(option);
+      setIsOpen(false);
+    }
+  };
+
+  const isSelected = (option) => {
+    if (isMulti) {
+      const selectedArr = selected ? selected.split(",").map(x => x.trim()).filter(Boolean) : [];
+      return selectedArr.includes(option);
+    }
+    return selected === option;
+  };
+
+  const getButtonText = () => {
+    if (!selected) return placeholder;
+    if (isMulti) {
+      const selectedArr = selected.split(",").map(x => x.trim()).filter(Boolean);
+      if (selectedArr.length === 0) return placeholder;
+      return selectedArr.join(", ");
+    }
+    return selected;
+  };
+
+  const hasExactMatch = useMemo(() => {
+    if (!search.trim()) return true;
+    return options.some(opt =>
+      String(opt || "").toLowerCase() === search.trim().toLowerCase()
+    );
+  }, [options, search]);
+
+  const handleCreate = () => {
+    if (disabled || !search.trim() || !onCreate) return;
+    onCreate(search.trim());
+    setIsOpen(false);
+    setSearch("");
+  };
+
+  const ringClass = colorClass === "amber" ? "focus:ring-amber-500/10 focus:border-amber-500" :
+                    colorClass === "blue" ? "focus:ring-blue-500/10 focus:border-blue-500" :
+                    "focus:ring-indigo-500/10 focus:border-indigo-500";
+
+  return (
+    <div className="relative w-full" ref={dropdownRef}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold text-left focus:outline-none focus:ring-4 ${ringClass} flex justify-between items-center transition ${
+          disabled
+            ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed"
+            : "bg-gray-50 border-gray-100 text-gray-800 hover:bg-gray-100/50"
+        }`}
+      >
+        <span className="truncate">{getButtonText()}</span>
+        <ChevronDown size={14} className="text-gray-400 shrink-0 ml-2" />
+      </button>
+
+      {isOpen && !disabled && (
+        <div className="absolute left-0 right-0 mt-1.5 z-50 bg-white border border-gray-200 rounded-2xl shadow-2xl max-h-72 overflow-hidden flex flex-col animate-slide-up animate-duration-150">
+          <div className="p-2 border-b border-gray-100 bg-gray-50/50 flex items-center gap-2">
+            <Search size={14} className="text-gray-400 shrink-0 ml-1" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search options..."
+              className="w-full bg-transparent px-1 py-1 text-xs text-gray-800 focus:outline-none placeholder:text-gray-400"
+              autoFocus
+            />
+            {search && (
+              <button type="button" onClick={() => setSearch("")} className="text-gray-400 hover:text-gray-600 p-0.5">
+                <X size={12} />
+              </button>
+            )}
+          </div>
+          <div className="overflow-y-auto flex-1 py-1 divide-y divide-gray-50 max-h-56">
+            {filteredOptions.length === 0 && (!allowCreate || !search.trim()) ? (
+              <div className="px-4 py-3 text-xs text-gray-400 italic text-center">No options found</div>
+            ) : (
+              <>
+                {filteredOptions.map(opt => {
+                  const active = isSelected(opt);
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => handleSelect(opt)}
+                      className={`w-full px-4 py-2.5 text-left text-xs font-semibold hover:bg-gray-50 flex items-center justify-between transition ${
+                        active ? "bg-indigo-50/50 text-indigo-700 font-bold" : "text-gray-700"
+                      }`}
+                    >
+                      <span className="truncate">{opt}</span>
+                      {active && (
+                        <Check size={14} className="text-indigo-600 shrink-0 ml-2" />
+                      )}
+                    </button>
+                  );
+                })}
+                {allowCreate && search.trim() && !hasExactMatch && (
+                  <button
+                    type="button"
+                    onClick={handleCreate}
+                    className="w-full px-4 py-2.5 text-left text-xs font-bold text-indigo-600 hover:bg-indigo-50 border-t border-gray-100 flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Plus size={14} className="shrink-0 text-indigo-600" />
+                    <span>Create "{search.trim()}"</span>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave, onDelete, onClose }) => {
   const [edited, setEdited] = useState(() => {
@@ -86,6 +251,54 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
   const [dupPopoverOpen, setDupPopoverOpen] = useState(false);
   const handleDismissRef = useRef(null);
   const [addedFields, setAddedFields] = useState([]);
+  const [localPrograms, setLocalPrograms] = useState(programs);
+
+  useEffect(() => {
+    setLocalPrograms(programs);
+  }, [programs]);
+
+  const handleCreateProgramTag = async (newTagName) => {
+    const cleaned = newTagName.trim();
+    if (!cleaned) return;
+
+    // Prevent duplicate creation
+    if (localPrograms.some(p => p.name.toLowerCase() === cleaned.toLowerCase())) {
+      toast.error("Program/tag already exists!");
+      return;
+    }
+
+    const toastId = toast.loading(`Creating program/tag "${cleaned}"...`);
+    try {
+      await createProgram(cleaned);
+
+      const newProg = {
+        id: cleaned,
+        name: cleaned,
+        contactCount: 0,
+        createdAt: new Date()
+      };
+
+      setLocalPrograms(prev => [newProg, ...prev]);
+
+      // Select it
+      handleChange("programId", cleaned);
+      handleChange("programName", cleaned);
+      handleChange("Sub Program", cleaned);
+      handleChange("subProgram", cleaned);
+
+      // Sync to Tags field
+      const existingTagsStr = edited.Tags || "";
+      const existingTags = existingTagsStr.split(",").map(x => x.trim()).filter(Boolean);
+      if (!existingTags.includes(cleaned)) {
+        existingTags.push(cleaned);
+      }
+      handleChange("Tags", existingTags.join(", "));
+
+      toast.success(`Program/tag "${cleaned}" created!`, { id: toastId });
+    } catch (err) {
+      toast.error(`Failed to create: ${err.message}`, { id: toastId });
+    }
+  };
 
   const handleAddField = () => {
     const name = window.prompt("Enter new field name:");
@@ -122,8 +335,8 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
       if (internalKeys.includes(k)) return false;
       if (k.startsWith("_")) return false;
       
-      // Always show standard fields
-      if (standardOrder.includes(k)) return true;
+      // Skip standard fields since they are explicitly rendered at the top of the form
+      if (standardOrder.includes(k)) return false;
 
       // Always show newly added fields in this modal session
       if (addedFields.includes(k)) return true;
@@ -378,6 +591,36 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
   const sourceField = findField(["source", "sourse", "from"]);
   const calledForField = findField(["called for", "called_for", "calledfor"]);
 
+  const isManualEntry = edited.programId === "incoming-calls" || edited.programId === "outgoing-calls" || edited.programId === "Incoming Calls" || edited.programId === "Outgoing Calls";
+  const isIncoming = edited._isNew || edited.callType === "incoming" || edited.callType === "incoming f" || isManualEntry;
+
+  const getEditable = (field) => {
+    if (field === "Tags") return true;
+    if (isIncoming) return true;
+    if (addedFields.includes(field)) return true;
+    const fLower = field.toLowerCase();
+    return ["source", "called for", "khoji"].includes(fLower) || 
+      fLower.includes("asmani") || 
+      fLower.includes("aasmani") || 
+      fLower.includes("आसमानी") || 
+      fLower.includes("shivir done");
+  };
+
+  const isQuestion = (f) => f.length > 40 || /^(what|how|why|describe|tell)[\s_]/i.test(f);
+  const isCampaign = (f) => { const k = f.toLowerCase().replace(/[_\s]/g, ""); return k.includes("adid") || k.includes("adname") || k.includes("adsetid") || k.includes("adsetname") || k.includes("campaignid") || k.includes("campaignname") || k.includes("formid") || k.includes("formname") || k.includes("isorganic") || k.includes("createdtime"); };
+  const iconFor = (f) => { const k = f.toLowerCase(); return k.includes("name") || k.includes("lead") || k.includes("khoji") || k.includes("caller") ? <User size={11} className="text-emerald-500" /> : k.includes("phone") || k.includes("mobile") ? <Phone size={11} className="text-blue-500" /> : k.includes("city") || k.includes("location") ? <MapPin size={11} className="text-red-500" /> : k.includes("email") ? <Hash size={11} className="text-purple-500" /> : k.includes("when") || k.includes("suitable") ? <Clock size={11} className="text-amber-500" /> : k.includes("asmani") || k.includes("aasmani") || k.includes("आसमानी") ? <CheckCircle2 size={11} className="text-pink-500" /> : <Tag size={11} className="text-indigo-500" />; };
+  const labelFor = (f) => f.replace(/_/g, " ").replace(/\?/g, "").trim();
+
+  const basicFields = useMemo(() => {
+    return dynamicFields.filter(f => !isQuestion(f) && !isCampaign(f));
+  }, [dynamicFields]);
+  const questionFields = useMemo(() => {
+    return dynamicFields.filter(f => isQuestion(f));
+  }, [dynamicFields]);
+  const campaignFields = useMemo(() => {
+    return dynamicFields.filter(f => isCampaign(f));
+  }, [dynamicFields]);
+
   const handleSaveAndClose = async () => {
     if (saving) return; // Prevent double save
 
@@ -598,256 +841,404 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
         </div>
 
         <div ref={modalScrollRef} className="overflow-y-auto flex-1 p-8 space-y-8">
-          {/* Smart Field Groups */}
-          {(() => {
-            const isQuestion = (f) => f.length > 40 || /^(what|how|why|describe|tell)[\s_]/i.test(f);
-            const isCampaign = (f) => { const k = f.toLowerCase().replace(/[_\s]/g, ""); return k.includes("adid") || k.includes("adname") || k.includes("adsetid") || k.includes("adsetname") || k.includes("campaignid") || k.includes("campaignname") || k.includes("formid") || k.includes("formname") || k.includes("isorganic") || k.includes("createdtime"); };
-            const iconFor = (f) => { const k = f.toLowerCase(); return k.includes("name") || k.includes("lead") || k.includes("khoji") || k.includes("caller") ? <User size={11} className="text-emerald-500" /> : k.includes("phone") || k.includes("mobile") ? <Phone size={11} className="text-blue-500" /> : k.includes("city") || k.includes("location") ? <MapPin size={11} className="text-red-500" /> : k.includes("email") ? <Hash size={11} className="text-purple-500" /> : k.includes("when") || k.includes("suitable") ? <Clock size={11} className="text-amber-500" /> : k.includes("asmani") || k.includes("aasmani") || k.includes("आसमानी") ? <CheckCircle2 size={11} className="text-pink-500" /> : <Tag size={11} className="text-indigo-500" />; };
-            const labelFor = (f) => f.replace(/_/g, " ").replace(/\?/g, "").trim();
-            const basicFields = dynamicFields.filter(f => !isQuestion(f) && !isCampaign(f));
-            const questionFields = dynamicFields.filter(f => isQuestion(f));
-            const campaignFields = dynamicFields.filter(f => isCampaign(f));
-
-            const isManualEntry = edited.programId === "incoming-calls" || edited.programId === "outgoing-calls" || edited.programId === "Incoming Calls" || edited.programId === "Outgoing Calls";
-            const isIncoming = edited._isNew || edited.callType === "incoming" || edited.callType === "incoming f" || isManualEntry;
-            
-            // Allow attender to edit Khoji field
-            const getEditable = (field) => {
-              if (field === "Tags") return true;
-              if (isIncoming) return true;
-              if (addedFields.includes(field)) return true;
-              const fLower = field.toLowerCase();
-              return ["source", "called for", "khoji"].includes(fLower) || 
-                fLower.includes("asmani") || 
-                fLower.includes("aasmani") || 
-                fLower.includes("आसमानी") || 
-                fLower.includes("shivir done");
-            };
-
-            return (
-              <>
-                {/* Standard contact fields – 4-col grid */}
-                {basicFields.length > 0 && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {basicFields.map(field => {
-                        const editable = getEditable(field);
-                        return (
-                          <div
-                            key={field}
-                            className={`space-y-1 ${
-                              field === "Tags"
-                                ? "col-span-2 md:col-span-4"
-                                : [
-                                    "What do you want to get out of this call",
-                                    "How Did You Hear About Us?",
-                                    "What is stopping you from hitting results...",
-                                    "Tentative Date of the Mini Shivir you attended",
-                                    "Which Mini Shivir did you attend?",
-                                    "Your Health issues",
-                                    "What is your Tejstan/Center name"
-                                  ].includes(field)
-                                ? "col-span-2 md:col-span-4"
-                                : [
-                                    "Profession", "Source of Information", "When You want to attend the event:", 
-                                    "Shivir/event category", "Guest Designation", "Platform Name:"
-                                  ].includes(field) || field.length > 15
-                                ? "col-span-2 md:col-span-2"
-                                : "col-span-1 md:col-span-1"
-                            }`}
-                          >
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                              {iconFor(field)} {field}
-                            </label>
-                            {field === "Tags" ? (
-                              <div className="flex flex-wrap gap-1.5 p-2 bg-gray-50 border border-gray-150 rounded-xl min-h-[38px] items-center">
-                                {(() => {
-                                  const tagsVal = edited[field] || "";
-                                  const tagsArr = tagsVal.split(",").map(t => t.trim()).filter(Boolean);
-                                  if (tagsArr.length === 0) {
-                                    return <span className="text-xs text-gray-400 px-2 font-medium">No tags mapped</span>;
-                                  }
-                                  return tagsArr.map((tag, idx) => (
-                                    <span
-                                      key={idx}
-                                      className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 shadow-sm"
-                                    >
-                                      {tag}
-                                    </span>
-                                  ));
-                                })()}
-                              </div>
-                            ) : (field.toLowerCase().includes("asmani") || field.toLowerCase().includes("aasmani") || field.toLowerCase().includes("आसमानी") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id"))) ? (
-                              <div className="flex gap-2 py-1 items-center min-h-[38px]">
-                                {(() => {
-                                   const isYes = isKhojiAffirmative(edited[field]);
-                                   const isNo = isKhojiNegative(edited[field]);
-                                   return (
-                                     <>
-                                       <button
-                                         type="button"
-                                         onClick={() => handleChange(field, "Yes")}
-                                         disabled={!editable}
-                                         className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
-                                           isYes
-                                             ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
-                                             : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                                         } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
-                                       >
-                                         Yes
-                                       </button>
-                                       <button
-                                         type="button"
-                                         onClick={() => handleChange(field, "No")}
-                                         disabled={!editable}
-                                         className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
-                                           isNo
-                                             ? "bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/20"
-                                             : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                                         } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
-                                       >
-                                         No
-                                       </button>
-                                     </>
-                                   );
-                                })()}
-                              </div>
-                            ) : (
-                              <input
-                                value={edited[field] || ""}
-                                onChange={e => handleChange(field, e.target.value)}
-                                readOnly={!editable}
-                                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                                  !editable
-                                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                                }`}
-                                placeholder={`Enter ${field}...`}
-                              />
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={handleAddField}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-700 rounded-xl text-xs font-black transition-all border border-indigo-100/80 shadow-sm hover:shadow-md cursor-pointer"
-                      >
-                        <Plus size={14} className="stroke-[3]" /> Add Custom Field
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {/* Lead form question responses – full-width textareas */}
-                {questionFields.length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-[10px] font-black text-purple-400 uppercase tracking-widest flex items-center gap-1.5"><MessageSquare size={11} /> Lead Form Responses</p>
-                    {questionFields.map(field => (
-                      <div key={field} className="bg-purple-50/40 border border-purple-100 rounded-xl p-3 space-y-1.5">
-                        <label className="text-[10px] font-semibold text-purple-700 leading-snug block">{labelFor(field)}</label>
-                        <textarea
-                          value={edited[field] || ""}
-                          readOnly={true}
-                          ref={el => {
-                            if (el) {
-                              setTimeout(() => {
-                                el.style.height = 'inherit';
-                                el.style.height = `${el.scrollHeight}px`;
-                              }, 0);
-                            }
-                          }}
-                          rows={1}
-                          className="w-full bg-gray-100/60 border border-purple-100/80 rounded-lg px-3 py-2 text-sm text-gray-500 cursor-not-allowed resize-none overflow-hidden focus:outline-none transition leading-relaxed placeholder:text-gray-300"
-                          placeholder="No response..."
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {/* Campaign & Ads metadata – compact 3-col grid, always visible */}
-                {campaignFields.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5"><Tag size={10} /> Campaign / Ads Data</p>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-3 bg-gray-50/50 border border-gray-100 rounded-xl">
-                      {campaignFields.map(field => (
-                        <div key={field} className="space-y-1">
-                          <label className="text-[9px] font-black text-gray-300 uppercase tracking-widest block">{labelFor(field)}</label>
-                          <input
-                            value={edited[field] || ""}
-                            readOnly={true}
-                            className="w-full px-2 py-1.5 bg-gray-100/60 border border-gray-150 rounded-lg text-xs font-mono text-gray-400 cursor-not-allowed focus:outline-none transition"
-                            placeholder="—"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            );
-          })()}
-
-          {/* Quick Select: Source */}
+          {/* Call Type and Options */}
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <Tag size={13} className="text-amber-500" /> Source ({sourceField})
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {SOURCE_OPTIONS.map(opt => (
-                <button key={opt} onClick={() => handleChange(sourceField, String(edited[sourceField] || "") === opt ? "" : opt)}
-                  className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${String(edited[sourceField] || "") === opt ? "bg-amber-600 text-white border-amber-600 shadow scale-105" : "bg-amber-50 text-amber-700 border-amber-100 hover:bg-amber-100"
-                    }`}>{opt}</button>
-              ))}
-            </div>
-          </div>
-
-          {/* Quick Select: Called For */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <Phone size={13} className="text-blue-500" /> Called For ({calledForField})
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {CALLED_FOR_OPTIONS.map(opt => (
-                <button key={opt} onClick={() => handleChange(calledForField, String(edited[calledForField] || "") === opt ? "" : opt)}
-                  className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${String(edited[calledForField] || "") === opt ? "bg-blue-600 text-white border-blue-600 shadow scale-105" : "bg-blue-50 text-blue-700 border-blue-100 hover:bg-blue-100"
-                    }`}>{opt}</button>
-              ))}
-            </div>
-          </div>
-
-          {/* Quick Select: Call Type */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              {edited.callType === "incoming" ? <PhoneIncoming size={13} className="text-green-500" /> : <PhoneOutgoing size={13} className="text-blue-500" />} Call Type
+              Call Type
             </label>
             <div className="flex flex-wrap gap-2">
               {CALL_TYPE_OPTIONS.map(opt => (
-                <button key={opt} onClick={() => handleCallTypeChange(opt)}
-                  className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${edited.callType === opt ? "bg-slate-800 text-white border-slate-800 shadow scale-105" : "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-200"
-                    }`}>{opt}</button>
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => handleCallTypeChange(opt)}
+                  className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${
+                    edited.callType === opt
+                      ? "bg-slate-800 text-white border-slate-800 shadow-md scale-105"
+                      : "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-200"
+                  }`}
+                >
+                  {opt}
+                </button>
               ))}
             </div>
           </div>
 
-          {/* Quick Select: Program / Tag Mapping */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <Tag size={13} className="text-indigo-500" /> Program / Tag Mapping
-            </label>
-            <div className="relative">
-              <select
-                value={edited.programId || ""}
-                onChange={e => {
-                  const val = e.target.value;
-                  if (!val) {
+          {/* Primary Contact Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {/* Name */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                <User size={11} className="text-emerald-500" /> Name
+              </label>
+              <input
+                value={edited.Name || ""}
+                onChange={e => handleChange("Name", e.target.value)}
+                readOnly={!getEditable("Name")}
+                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                  !getEditable("Name")
+                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                }`}
+                placeholder="Enter Name..."
+              />
+            </div>
+
+            {/* Phone */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                <Phone size={11} className="text-blue-500" /> Phone
+              </label>
+              <input
+                value={edited.Phone || ""}
+                onChange={e => handleChange("Phone", e.target.value)}
+                readOnly={!getEditable("Phone")}
+                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                  !getEditable("Phone")
+                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                }`}
+                placeholder="Enter Phone..."
+              />
+            </div>
+
+            {/* Mobile */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                <Phone size={11} className="text-blue-500" /> Mobile
+              </label>
+              <input
+                value={edited.Mobile || ""}
+                onChange={e => handleChange("Mobile", e.target.value)}
+                readOnly={!getEditable("Mobile")}
+                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                  !getEditable("Mobile")
+                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                }`}
+                placeholder="Enter Mobile..."
+              />
+            </div>
+
+            {/* Email */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                <Hash size={11} className="text-purple-500" /> Email
+              </label>
+              <input
+                value={edited.Email || ""}
+                onChange={e => handleChange("Email", e.target.value)}
+                readOnly={!getEditable("Email")}
+                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                  !getEditable("Email")
+                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                }`}
+                placeholder="Enter Email..."
+              />
+            </div>
+
+            {/* City */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                <MapPin size={11} className="text-red-500" /> City
+              </label>
+              <input
+                value={edited.City || ""}
+                onChange={e => handleChange("City", e.target.value)}
+                readOnly={!getEditable("City")}
+                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                  !getEditable("City")
+                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                }`}
+                placeholder="Enter City..."
+              />
+            </div>
+
+            {/* State */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                <MapPin size={11} className="text-red-500" /> State
+              </label>
+              <input
+                value={edited.State || ""}
+                onChange={e => handleChange("State", e.target.value)}
+                readOnly={!getEditable("State")}
+                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                  !getEditable("State")
+                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                }`}
+                placeholder="Enter State..."
+              />
+            </div>
+
+            {/* Khoji */}
+            <div className="space-y-1 col-span-1 md:col-span-2">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                <User size={11} className="text-emerald-500" /> Khoji
+              </label>
+              <div className="flex gap-2 py-1 items-center min-h-[38px]">
+                {(() => {
+                  const isYes = isKhojiAffirmative(edited.Khoji);
+                  const isNo = isKhojiNegative(edited.Khoji);
+                  const editable = getEditable("Khoji");
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleChange("Khoji", "Yes")}
+                        disabled={!editable}
+                        className={`px-6 py-2 rounded-xl text-xs font-bold border transition ${
+                          isYes
+                            ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
+                            : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                        } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleChange("Khoji", "No")}
+                        disabled={!editable}
+                        className={`px-6 py-2 rounded-xl text-xs font-bold border transition ${
+                          isNo
+                            ? "bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/20"
+                            : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                        } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
+                      >
+                        No
+                      </button>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Tags */}
+            <div className="space-y-1 col-span-1 md:col-span-4">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                <Tag size={11} className="text-indigo-500" /> Tags
+              </label>
+              <div className="flex flex-wrap gap-1.5 p-2 bg-gray-50 border border-gray-150 rounded-xl min-h-[38px] items-center">
+                {(() => {
+                  const tagsVal = edited.Tags || "";
+                  const tagsArr = tagsVal.split(",").map(t => t.trim()).filter(Boolean);
+                  if (tagsArr.length === 0) {
+                    return <span className="text-xs text-gray-400 px-2 font-medium">No tags mapped</span>;
+                  }
+                  return tagsArr.map((tag, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 shadow-sm"
+                    >
+                      {tag}
+                    </span>
+                  ));
+                })()}
+              </div>
+            </div>
+          </div>
+
+          {/* Custom Fields section */}
+          {basicFields.length > 0 && (
+            <div className="space-y-4">
+              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                <Plus size={13} className="text-indigo-500" /> Custom Fields
+              </h4>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {basicFields.map(field => {
+                  const editable = getEditable(field);
+                  return (
+                    <div
+                      key={field}
+                      className={`space-y-1 ${
+                        field === "Tags"
+                          ? "col-span-2 md:col-span-4"
+                          : [
+                              "What do you want to get out of this call",
+                              "How Did You Hear About Us?",
+                              "What is stopping you from hitting results...",
+                              "Tentative Date of the Mini Shivir you attended",
+                              "Which Mini Shivir did you attend?",
+                              "Your Health issues",
+                              "What is your Tejstan/Center name"
+                            ].includes(field)
+                          ? "col-span-2 md:col-span-4"
+                          : [
+                              "Profession", "Source of Information", "When You want to attend the event:", 
+                              "Shivir/event category", "Guest Designation", "Platform Name:"
+                            ].includes(field) || field.length > 15
+                          ? "col-span-2 md:col-span-2"
+                          : "col-span-1 md:col-span-1"
+                      }`}
+                    >
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                        {iconFor(field)} {field}
+                      </label>
+                      {field.toLowerCase().includes("asmani") || field.toLowerCase().includes("aasmani") || field.toLowerCase().includes("आसमानी") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id")) ? (
+                        <div className="flex gap-2 py-1 items-center min-h-[38px]">
+                          {(() => {
+                             const isYes = isKhojiAffirmative(edited[field]);
+                             const isNo = isKhojiNegative(edited[field]);
+                             return (
+                               <>
+                                 <button
+                                   type="button"
+                                   onClick={() => handleChange(field, "Yes")}
+                                   disabled={!editable}
+                                   className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
+                                     isYes
+                                       ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
+                                       : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                                   } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
+                                 >
+                                   Yes
+                                 </button>
+                                 <button
+                                   type="button"
+                                   onClick={() => handleChange(field, "No")}
+                                   disabled={!editable}
+                                   className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
+                                     isNo
+                                       ? "bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/20"
+                                       : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                                   } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
+                                 >
+                                   No
+                                 </button>
+                               </>
+                             );
+                          })()}
+                        </div>
+                      ) : (
+                        <input
+                          value={edited[field] || ""}
+                          onChange={e => handleChange(field, e.target.value)}
+                          readOnly={!editable}
+                          className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                            !editable
+                              ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                              : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
+                          }`}
+                          placeholder={`Enter ${field}...`}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Add Custom Field button */}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={handleAddField}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-700 rounded-xl text-xs font-black transition-all border border-indigo-100/80 shadow-sm hover:shadow-md cursor-pointer"
+            >
+              <Plus size={14} className="stroke-[3]" /> Add Custom Field
+            </button>
+          </div>
+
+          {/* Lead form question responses – full-width textareas */}
+          {questionFields.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-[10px] font-black text-purple-400 uppercase tracking-widest flex items-center gap-1.5"><MessageSquare size={11} /> Lead Form Responses</p>
+              {questionFields.map(field => (
+                <div key={field} className="bg-purple-50/40 border border-purple-100 rounded-xl p-3 space-y-1.5">
+                  <label className="text-[10px] font-semibold text-purple-700 leading-snug block">{labelFor(field)}</label>
+                  <textarea
+                    value={edited[field] || ""}
+                    readOnly={true}
+                    ref={el => {
+                      if (el) {
+                        setTimeout(() => {
+                          el.style.height = 'inherit';
+                          el.style.height = `${el.scrollHeight}px`;
+                        }, 0);
+                      }
+                    }}
+                    rows={1}
+                    className="w-full bg-gray-100/60 border border-purple-100/80 rounded-lg px-3 py-2 text-sm text-gray-500 cursor-not-allowed resize-none overflow-hidden focus:outline-none transition leading-relaxed placeholder:text-gray-300"
+                    placeholder="No response..."
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Campaign & Ads metadata – compact 3-col grid, always visible */}
+          {campaignFields.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5"><Tag size={10} /> Campaign / Ads Data</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-3 bg-gray-50/50 border border-gray-100 rounded-xl">
+                {campaignFields.map(field => (
+                  <div key={field} className="space-y-1">
+                    <label className="text-[9px] font-black text-gray-300 uppercase tracking-widest block">{labelFor(field)}</label>
+                    <input
+                      value={edited[field] || ""}
+                      readOnly={true}
+                      className="w-full px-2 py-1.5 bg-gray-100/60 border border-gray-150 rounded-lg text-xs font-mono text-gray-400 cursor-not-allowed focus:outline-none transition"
+                      placeholder="—"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Dropdown selectors for Source, Called For, Program Mapping */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Searchable Dropdown: Source */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Tag size={13} className="text-amber-500" /> Source ({sourceField})
+              </label>
+              <SearchableDropdown
+                options={SOURCE_OPTIONS}
+                selected={String(edited[sourceField] || "")}
+                onChange={val => handleChange(sourceField, val)}
+                placeholder="Search & select source..."
+                colorClass="amber"
+                disabled={!getEditable(sourceField)}
+              />
+            </div>
+
+            {/* Searchable Dropdown: Called For */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Phone size={13} className="text-blue-500" /> Called For ({calledForField})
+              </label>
+              <SearchableDropdown
+                options={CALLED_FOR_OPTIONS}
+                selected={String(edited[calledForField] || "")}
+                onChange={val => handleChange(calledForField, val)}
+                placeholder="Search & select multiple..."
+                isMulti={true}
+                colorClass="blue"
+                disabled={!getEditable(calledForField)}
+              />
+            </div>
+
+            {/* Program Mapping */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Tag size={13} className="text-indigo-500" /> Program / Tag Mapping
+              </label>
+              <SearchableDropdown
+                options={["— Untagged —", ...localPrograms.map(p => p.name)]}
+                selected={edited.programName || "— Untagged —"}
+                onChange={val => {
+                  if (!val || val === "— Untagged —") {
                     handleChange("programId", "");
                     handleChange("programName", "");
                     handleChange("Sub Program", "");
                     handleChange("subProgram", "");
                   } else {
-                    const prog = programs.find(p => p.id === val);
+                    const prog = localPrograms.find(p => p.name === val);
                     if (prog) {
                       handleChange("programId", prog.id);
                       handleChange("programName", prog.name);
@@ -864,79 +1255,53 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
                     }
                   }
                 }}
-                className="w-full px-4 py-2 border rounded-xl text-sm font-semibold bg-gray-50 border-gray-100 text-gray-800 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white transition cursor-pointer"
-              >
-                <option value="">— Untagged —</option>
-                {programs.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
+                placeholder="Search & select program..."
+                allowCreate={true}
+                onCreate={handleCreateProgramTag}
+                colorClass="indigo"
+              />
             </div>
           </div>
 
-          <div className="space-y-8">
-            {/* Abhivyakti Quick Action & Call Status */}
-            <div className="space-y-6">
-              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col gap-3">
-                <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm uppercase tracking-wider">
-                  <Flame size={16} /> Fast Registration
-                </div>
-                <button
-                  onClick={() => handleChange("status", "Reg.Done")}
-                  className={`w-full py-3 rounded-xl font-bold transition flex items-center justify-center gap-2 ${edited.status === "Reg.Done" ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 scale-[1.02]" : "bg-white text-emerald-700 border-2 border-emerald-500 hover:bg-emerald-50"}`}
-                >
-                  <CheckCircle2 size={18} />
-                  {edited.status === "Reg.Done" ? "Added to Abhivyakti Report" : "Add to Abhivyakti Report"}
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <CheckCircle2 size={13} className="text-indigo-500" /> General Result Status
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {STATUS_OPTIONS.map(opt => {
-                    if (opt === "Reg.Done") return null; // Handled strictly above
-                    return (
-                      <button
-                        key={opt}
-                        onClick={() => handleChange("status", edited.status === opt ? "" : opt)}
-                        className={`px-3 py-2.5 rounded-xl text-[11px] font-black border transition-all ${edited.status === opt
-                          ? opt === "Interested" ? "bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-500/30 scale-105" :
-                            "bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-500/30 scale-105"
-                          : "bg-gray-50 text-gray-500 border-gray-100 hover:border-gray-300"
-                          }`}
-                      >
-                        {opt}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Objection Tracker (Conditional) */}
-              {(edited.status === "Not interested" || edited.status === "Not possible") && (
-                <div className="space-y-3 p-4 bg-red-50 border border-red-100 rounded-2xl animate-slide-up">
-                  <label className="text-[10px] font-black text-red-500 uppercase tracking-widest flex items-center gap-2">
-                    <AlertCircle size={13} /> Why are they {edited.status.toLowerCase()}?
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {OBJECTION_REASONS.map(reason => (
-                      <button
-                        key={reason}
-                        onClick={() => handleChange("objectionReason", edited.objectionReason === reason ? "" : reason)}
-                        className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${edited.objectionReason === reason
-                            ? "bg-red-500 text-white border-red-500 shadow-lg shadow-red-500/20 scale-105"
-                            : "bg-white text-red-600 border-red-200 hover:bg-red-100"
-                          }`}
-                      >
-                        {reason}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+          {/* Abhivyakti Quick Action & Call Status */}
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <CheckCircle2 size={13} className="text-indigo-500" /> General Result Status
+              </label>
+              <SearchableDropdown
+                options={STATUS_OPTIONS.filter(opt => opt !== "Reg.Done")}
+                selected={edited.status || ""}
+                onChange={val => handleChange("status", val)}
+                placeholder="Search & select status..."
+                colorClass="indigo"
+              />
             </div>
+
+            {/* Objection Tracker (Conditional) */}
+            {(edited.status === "Not interested" || edited.status === "Not possible") && (
+              <div className="space-y-3 p-4 bg-red-50 border border-red-100 rounded-2xl animate-slide-up">
+                <label className="text-[10px] font-black text-red-500 uppercase tracking-widest flex items-center gap-2">
+                  <AlertCircle size={13} /> Why are they {edited.status.toLowerCase()}?
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {OBJECTION_REASONS.map(reason => (
+                    <button
+                      key={reason}
+                      type="button"
+                      onClick={() => handleChange("objectionReason", edited.objectionReason === reason ? "" : reason)}
+                      className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${edited.objectionReason === reason
+                          ? "bg-red-500 text-white border-red-500 shadow-lg shadow-red-500/20 scale-105"
+                          : "bg-white text-red-600 border-red-200 hover:bg-red-100"
+                        }`}
+                    >
+                      {reason}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
 
             {/* Note + Callback */}
             <div className="space-y-6">
@@ -1087,9 +1452,24 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
                   </div>
                 )}
               </div>
-            </div>
+
+              {/* Fast Registration / Add to Abhivyakti Report */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col gap-3">
+                <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm uppercase tracking-wider">
+                  <Flame size={16} /> Fast Registration
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleChange("status", "Reg.Done")}
+                  className={`w-full py-3 rounded-xl font-bold transition flex items-center justify-center gap-2 ${edited.status === "Reg.Done" ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 scale-[1.02]" : "bg-white text-emerald-700 border-2 border-emerald-500 hover:bg-emerald-50"}`}
+                >
+                  <CheckCircle2 size={18} />
+                  {edited.status === "Reg.Done" ? "Added to Abhivyakti Report" : "Add to Abhivyakti Report"}
+                </button>
+              </div>
           </div>
         </div>
+
 
         <div className="p-6 border-t border-gray-100 bg-gray-50 flex items-center justify-between shadow-inner">
           <button onClick={handleDelete} className="flex items-center gap-2 text-xs font-bold text-red-400 hover:text-red-600 transition">
