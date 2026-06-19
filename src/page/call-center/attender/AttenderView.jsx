@@ -12,7 +12,7 @@ import {
   assignContactsToAttender, normalizePhone, getActiveTags,
   INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME, ensureIncomingProgram,
   OUTGOING_PROGRAM_ID, OUTGOING_PROGRAM_NAME, ensureOutgoingProgram,
-  globalSearchContacts, claimContact
+  globalSearchContacts, claimContact, removeAttenderFromContact
 } from "../../../lib/db";
 import {
   STATUS_OPTIONS,
@@ -215,8 +215,12 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
 
   const handleDeleteRow = async (id) => {
     try {
-      await updateCallLog(id, { _deleted: true });
-      toast.success("Entry removed.");
+      // Remove only this attender from the contact — does NOT affect other attenders.
+      // The Firestore subscription queries by assignedTo array-contains, so the
+      // contact vanishes from this attender's sheet automatically.
+      await removeAttenderFromContact(id, attenderId);
+      setCallLogs(prev => prev.filter(l => l.id !== id));
+      toast.success("Entry removed from your sheet.");
     } catch (err) {
       toast.error("Failed to remove.");
     }
@@ -1121,7 +1125,9 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
       {/* Edit Modal */}
       {editingRow && (
         <EditModal
+          key={editingRow.id || "new-entry"}
           row={editingRow}
+          attenderId={attenderId}
           attenderName={attenderName}
           programs={programs.filter(p => p.id !== INCOMING_PROGRAM_ID && p.id !== OUTGOING_PROGRAM_ID)}
           onSave={(updated, isOptimistic) => {
@@ -1178,7 +1184,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
 
               {!isSearchingGlobal && globalSearchResults.length > 0 && (
                 globalSearchResults.map(contact => {
-                  const alreadyMine = contact.assignedTo === attenderId;
+                  const alreadyMine = Array.isArray(contact.assignedTo) ? contact.assignedTo.includes(attenderId) : contact.assignedTo === attenderId;
                   const isAssigned = contact.isAssigned;
                   const tags = contact.tags || [];
 

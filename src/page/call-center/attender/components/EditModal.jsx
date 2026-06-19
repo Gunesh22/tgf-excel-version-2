@@ -186,7 +186,7 @@ const SearchableDropdown = ({
   );
 };
 
-export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave, onDelete, onClose }) => {
+export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs = [], onSave, onDelete, onClose }) => {
   const [edited, setEdited] = useState(() => {
     const normalized = { ...row };
     
@@ -256,6 +256,116 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
   useEffect(() => {
     setLocalPrograms(programs);
   }, [programs]);
+
+  const getOtherValuesForField = (fieldKey) => {
+    const list = [];
+
+    // Helper: find a value for fieldKey in a state/document object,
+    // checking both the exact key and common case variants.
+    const extractVal = (obj, key) => {
+      if (!obj) return undefined;
+      if (key === "programName") return obj.programName || obj.programId;
+      // Direct match
+      if (obj[key] !== undefined) return obj[key];
+      // Case-insensitive fallback (handles Source vs source etc.)
+      const lower = key.toLowerCase();
+      const found = Object.keys(obj).find(k => k.toLowerCase() === lower);
+      return found ? obj[found] : undefined;
+    };
+    
+    // 1. Get values from other attenders' attenderStates (attender-specific fields)
+    if (row.attenderStates) {
+      Object.keys(row.attenderStates).forEach(otherId => {
+        if (otherId === attenderId) return;
+        const state = row.attenderStates[otherId];
+        if (state) {
+          const name = state.attenderName || "Other Attender";
+          // For shared top-level fields (Source, Called For), attenderStates won't have them.
+          // We fall back to reading them from the top-level row document below.
+          const val = extractVal(state, fieldKey);
+          if (val !== undefined) {
+            list.push({ name, val });
+          }
+        }
+      });
+    }
+
+    // 2. For shared top-level fields (e.g. Source, Called For), if no per-attender value
+    //    was found above, show the document-level value attributed to the last editor.
+    //    This keeps the badge visible and stable regardless of who saved last.
+    if (list.length === 0) {
+      const topVal = extractVal(row._rawData || row, fieldKey);
+      // Only show if it differs from the current attender's own value in edited
+      const myVal = String(edited[fieldKey] || "").trim();
+      const topValStr = String(topVal || "").trim();
+      if (topValStr && topValStr !== myVal) {
+        const editorName = row.lastEditedBy || row.assignedName || row.attenderName || "";
+        if (editorName && editorName !== attenderName) {
+          list.push({ name: editorName, val: topVal });
+        }
+      }
+    }
+
+    // 3. Get values from legacy duplicate docs (if any)
+    if (globalDup && Array.isArray(globalDup.matches)) {
+      const otherEdits = globalDup.matches.filter(m => m.id !== row.id);
+      otherEdits.forEach(m => {
+        const name = m.assignedName || m.attenderName || "Unknown";
+        const val = extractVal(m, fieldKey);
+        if (val !== undefined) {
+          if (!list.some(item => item.name === name && item.val === val)) {
+            list.push({ name, val });
+          }
+        }
+      });
+    }
+
+    return list.filter(item => {
+      if (!item.val) return false;
+      if (Array.isArray(item.val) && item.val.length === 0) return false;
+      return String(item.val).trim() !== "";
+    });
+  };
+
+  const getLastEditedBy = () => {
+    let latestTime = 0;
+    let latestAttender = row.lastEditedBy || row.assignedName || row.attenderName || "";
+    
+    if (row.updatedAt) {
+      const t = row.updatedAt?.toMillis ? row.updatedAt.toMillis() : new Date(row.updatedAt).getTime();
+      if (t > latestTime) {
+        latestTime = t;
+      }
+    }
+
+    // Check attenderStates
+    if (row.attenderStates) {
+      Object.keys(row.attenderStates).forEach(attId => {
+        const state = row.attenderStates[attId];
+        if (state && state.updatedAt) {
+          const t = new Date(state.updatedAt).getTime();
+          if (t > latestTime) {
+            latestTime = t;
+            latestAttender = state.attenderName || "Attender";
+          }
+        }
+      });
+    }
+    
+    if (globalDup && Array.isArray(globalDup.matches)) {
+      globalDup.matches.forEach(m => {
+        if (m.updatedAt) {
+          const t = m.updatedAt?.toMillis ? m.updatedAt.toMillis() : new Date(m.updatedAt).getTime();
+          if (t > latestTime) {
+            latestTime = t;
+            latestAttender = m.lastEditedBy || m.assignedName || m.attenderName || "";
+          }
+        }
+      });
+    }
+    
+    return latestAttender;
+  };
 
   const handleCreateProgramTag = async (newTagName) => {
     const cleaned = newTagName.trim();
@@ -328,7 +438,10 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
       "callType", "status", "remark", "callbackDate", "callbackStatus", "isCallbackDue",
       "isHotLead", "createdAt", "updatedAt", "lastCalledAt", "firstCalledAt", "history",
       "_callbackDue", "_deleted", "_isNew", "registeredAt", "conversionSource", "convertedBy",
-      "GHL_ID", "Sub Program", "subProgram", "objectionReason"
+      "GHL_ID", "Sub Program", "subProgram", "objectionReason",
+      // Firestore-managed fields — never show as editable form fields
+      "lastEditedBy", "lastEditedAt", "attenderStates", "assignedTo",
+      "assignedName", "assignedAt", "isAssigned", "normalizedPhone", "registeredYearMonth"
     ];
 
     const contactKeys = Object.keys(edited).filter(k => {
@@ -400,7 +513,7 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
             const dup = res.first;
             setEdited(prev => {
               const updated = { ...prev };
-              const fieldsToMap = ["Name", "Email", "City", "State", "Khoji", "Source", "Called For"];
+              const fieldsToMap = ["Name", "Email", "City", "State", "Khoji"];
               
               fieldsToMap.forEach(f => {
                 const dupVal = getFieldWithFallback(dup, f);
@@ -470,9 +583,51 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
       }
     }
 
-    // 2. Duplicate contacts' history
+    // 2. Iterate over row.attenderStates to collect history of other attenders
+    if (row.attenderStates) {
+      Object.keys(row.attenderStates).forEach(otherAttenderId => {
+        if (otherAttenderId === attenderId) return; // already added above via edited.history / row.history
+        const state = row.attenderStates[otherAttenderId];
+        if (state) {
+          const progName = state.programName || "Other Attender";
+          // Add history entries
+          if (Array.isArray(state.history)) {
+            state.history.forEach(h => {
+              if (h.remark && String(h.remark).trim()) {
+                list.push({
+                  status: h.status || "",
+                  remark: h.remark || "",
+                  attenderName: h.attenderName || state.attenderName || "Unknown",
+                  timestamp: h.timestamp || new Date().toISOString(),
+                  isCurrentDoc: false, // can't edit inline
+                  sourceProgram: progName
+                });
+              }
+            });
+          }
+          // Standalone remark for this other attender
+          if (state.remark && String(state.remark).trim()) {
+            const attRemark = String(state.remark).trim();
+            const alreadyInHistory = Array.isArray(state.history) && state.history.some(h => h.remark === attRemark);
+            if (!alreadyInHistory) {
+              list.push({
+                status: state.status || "",
+                remark: attRemark,
+                attenderName: state.attenderName || "Unknown",
+                timestamp: state.updatedAt || new Date().toISOString(),
+                isCurrentDoc: false,
+                sourceProgram: progName
+              });
+            }
+          }
+        }
+      });
+    }
+
+    // 3. Fallback: also include duplicate contacts' history if globalDup has matches
     if (globalDup && Array.isArray(globalDup.matches)) {
       globalDup.matches.forEach(m => {
+        if (m.id === row.id) return;
         const progName = m.programName || "Duplicate Lead";
         if (Array.isArray(m.history)) {
           m.history.forEach(h => {
@@ -525,7 +680,7 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
     });
 
     return uniqueList;
-  }, [row.history, row.remark, row.status, row.programName, row.attenderName, row.assignedName, row.updatedAt, row.createdAt, globalDup, edited.history]);
+  }, [row.history, row.remark, row.status, row.programName, row.attenderName, row.assignedName, row.updatedAt, row.createdAt, row.attenderStates, globalDup, edited.history, attenderId]);
 
   // Identity helpers
   const getLogName = () => {
@@ -588,7 +743,7 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
     const keys = Object.keys(edited);
     return keys.find(k => aliases.some(a => k.toLowerCase().includes(a))) || aliases[0].charAt(0).toUpperCase() + aliases[0].slice(1);
   };
-  const sourceField = findField(["source", "sourse", "from"]);
+  const sourceField = findField(["source", "sourse"]);
   const calledForField = findField(["called for", "called_for", "calledfor"]);
 
   const isManualEntry = edited.programId === "incoming-calls" || edited.programId === "outgoing-calls" || edited.programId === "Incoming Calls" || edited.programId === "Outgoing Calls";
@@ -637,6 +792,17 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
     try {
       const { id, _callbackDue, ...rest } = edited;
       const updates = { ...rest };
+      // Never send attenderStates or internal bookkeeping back to Firestore as a whole object.
+      // updateCallLog manages attenderStates internally via dot-notation (merge-safe).
+      // Sending it here would overwrite the entire map, erasing other attenders' data.
+      delete updates.attenderStates;
+      delete updates.assignedTo;
+      delete updates.assignedName;
+      delete updates.assignedAt;
+      delete updates.isAssigned;
+      delete updates.lastEditedBy;
+      delete updates.lastEditedAt;
+      delete updates.normalizedPhone;
       if (updates.callbackDate) {
         if (typeof updates.callbackDate === "string") {
           updates.callbackDate = new Date(updates.callbackDate);
@@ -691,6 +857,8 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
         updates.history = baseHistory;
       }
 
+      updates.lastEditedBy = attenderName || "Unknown";
+
       console.log("Attempting to save updates: ", updates);
 
       // If this is a NEW incoming entry, create it in Firebase
@@ -700,7 +868,7 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
           row.attenderId, row.attenderName, updates, edited.programId, edited.programName
         );
       } else {
-        await updateCallLog(id, updates, rest.contactId || null);
+        await updateCallLog(id, updates, attenderId, attenderName);
       }
 
       console.log("✅ Save successful!");
@@ -814,6 +982,11 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
                     )}
                     <style>{`@keyframes dupPulse { 0%,100%{opacity:1} 50%{opacity:.55} }`}</style>
                   </div>
+                )}
+                {getLastEditedBy() && (
+                  <span className="text-[10px] font-bold text-white/70 uppercase tracking-wider">
+                    Last edited by: {getLastEditedBy()}
+                  </span>
                 )}
               </div>
             </div>
@@ -1205,6 +1378,12 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
                 colorClass="amber"
                 disabled={!getEditable(sourceField)}
               />
+              {getOtherValuesForField(sourceField).map((item, idx) => (
+                <div key={idx} className="text-[10px] text-amber-600 font-bold mt-1 flex items-center gap-1">
+                  <span className="opacity-70">👤 {item.name}:</span>
+                  <span className="bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 font-medium">{item.val}</span>
+                </div>
+              ))}
             </div>
 
             {/* Searchable Dropdown: Called For */}
@@ -1221,6 +1400,14 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
                 colorClass="blue"
                 disabled={!getEditable(calledForField)}
               />
+              {getOtherValuesForField(calledForField).map((item, idx) => (
+                <div key={idx} className="text-[10px] text-blue-600 font-bold mt-1 flex items-center gap-1">
+                  <span className="opacity-70">👤 {item.name}:</span>
+                  <span className="bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 font-medium">
+                    {Array.isArray(item.val) ? item.val.join(", ") : String(item.val)}
+                  </span>
+                </div>
+              ))}
             </div>
 
             {/* Program Mapping */}
@@ -1260,6 +1447,12 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
                 onCreate={handleCreateProgramTag}
                 colorClass="indigo"
               />
+              {getOtherValuesForField("programName").map((item, idx) => (
+                <div key={idx} className="text-[10px] text-indigo-600 font-bold mt-1 flex items-center gap-1">
+                  <span className="opacity-70">👤 {item.name}:</span>
+                  <span className="bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-medium">{item.val}</span>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -1276,6 +1469,12 @@ export const EditModal = ({ row, attenderName = "Unknown", programs = [], onSave
                 placeholder="Search & select status..."
                 colorClass="indigo"
               />
+              {getOtherValuesForField("status").map((item, idx) => (
+                <div key={idx} className="text-[10px] text-indigo-600 font-bold mt-1 flex items-center gap-1">
+                  <span className="opacity-70">👤 {item.name}:</span>
+                  <span className="bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-medium">{item.val}</span>
+                </div>
+              ))}
             </div>
 
             {/* Objection Tracker (Conditional) */}

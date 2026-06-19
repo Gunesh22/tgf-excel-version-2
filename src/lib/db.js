@@ -1,8 +1,8 @@
 import {
   collection, addDoc, getDocs, getDoc, doc, setDoc,
-  updateDoc, deleteDoc, query, where,
+  updateDoc, deleteDoc, query, where, or,
   serverTimestamp, writeBatch, onSnapshot,
-  limit, Timestamp, runTransaction, arrayUnion, orderBy,
+  limit, Timestamp, runTransaction, arrayUnion, arrayRemove, orderBy,
   deleteField, increment
 } from "firebase/firestore";
 import { db } from "./firebase";
@@ -563,7 +563,7 @@ export const importContacts = async (param1, param2, param3, param4 = null) => {
   });
 
   // Query Firestore in batches of 30 to check for existing contacts GLOBALLY by GHL_ID
-  const existingContactsByGhl = new Map(); // GHL_ID -> {ref, data}
+  const existingContactsByGhl = new Map(); // GHL_ID -> Array<{ref, data}>
   const ghlIdsList = Array.from(processedGhlIds).filter(Boolean);
   for (let i = 0; i < ghlIdsList.length; i += 30) {
     const ghlBatch = ghlIdsList.slice(i, i + 30);
@@ -575,13 +575,16 @@ export const importContacts = async (param1, param2, param3, param4 = null) => {
     snap.docs.forEach(docSnap => {
       const data = formatContactDoc(docSnap);
       if (data.GHL_ID) {
-        existingContactsByGhl.set(data.GHL_ID, { ref: docSnap.ref, data });
+        if (!existingContactsByGhl.has(data.GHL_ID)) {
+          existingContactsByGhl.set(data.GHL_ID, []);
+        }
+        existingContactsByGhl.get(data.GHL_ID).push({ ref: docSnap.ref, data });
       }
     });
   }
 
   // Query Firestore in batches of 30 to check for existing contacts GLOBALLY by normalizedPhone
-  const existingContactsByPhone = new Map(); // normalizedPhone -> {ref, data}
+  const existingContactsByPhone = new Map(); // normalizedPhone -> Array<{ref, data}>
   const normPhonesList = Array.from(processedPhones).filter(Boolean);
   for (let i = 0; i < normPhonesList.length; i += 30) {
     const phoneBatch = normPhonesList.slice(i, i + 30);
@@ -593,7 +596,10 @@ export const importContacts = async (param1, param2, param3, param4 = null) => {
     snap.docs.forEach(docSnap => {
       const data = formatContactDoc(docSnap);
       if (data.normalizedPhone) {
-        existingContactsByPhone.set(data.normalizedPhone, { ref: docSnap.ref, data });
+        if (!existingContactsByPhone.has(data.normalizedPhone)) {
+          existingContactsByPhone.set(data.normalizedPhone, []);
+        }
+        existingContactsByPhone.get(data.normalizedPhone).push({ ref: docSnap.ref, data });
       }
     });
   }
@@ -601,87 +607,89 @@ export const importContacts = async (param1, param2, param3, param4 = null) => {
   const batchWriteOps = [];
 
   uniqueRowsToImport.forEach(cleaned => {
-    // Find matching existing contact, prioritizing GHL_ID first, then normalizedPhone
-    let existing = null;
+    // Find matching existing contacts, prioritizing GHL_ID first, then normalizedPhone
+    let existingList = [];
     if (cleaned.GHL_ID && existingContactsByGhl.has(cleaned.GHL_ID)) {
-      existing = existingContactsByGhl.get(cleaned.GHL_ID);
+      existingList = existingContactsByGhl.get(cleaned.GHL_ID);
     } else {
       const phoneVal = cleaned.Phone || cleaned.Mobile || "";
       const norm = normalizePhone(phoneVal);
       if (norm && existingContactsByPhone.has(norm)) {
-        existing = existingContactsByPhone.get(norm);
+        existingList = existingContactsByPhone.get(norm);
       }
     }
 
-    if (existing) {
-      // Merge new fields into the existing contact document
-      const updatePayload = {};
-      let needsUpdate = false;
+    if (existingList.length > 0) {
+      existingList.forEach(existing => {
+        // Merge new fields into the existing contact document
+        const updatePayload = {};
+        let needsUpdate = false;
 
-      Object.entries(cleaned).forEach(([k, val]) => {
-        // Skip internal helpers and tag fields (handled separately)
-        if (k.startsWith("_") || k === "Tags" || k === "tags") return;
-        const strVal = val === null || val === undefined ? "" : String(val).trim();
-        if (!strVal) return;
+        Object.entries(cleaned).forEach(([k, val]) => {
+          // Skip internal helpers and tag fields (handled separately)
+          if (k.startsWith("_") || k === "Tags" || k === "tags") return;
+          const strVal = val === null || val === undefined ? "" : String(val).trim();
+          if (!strVal) return;
 
-        const existingVal = existing.data[k] === null || existing.data[k] === undefined ? "" : String(existing.data[k]).trim();
-        if (!existingVal && strVal) {
-          updatePayload[k] = strVal;
+          const existingVal = existing.data[k] === null || existing.data[k] === undefined ? "" : String(existing.data[k]).trim();
+          if (!existingVal && strVal) {
+            updatePayload[k] = strVal;
+            needsUpdate = true;
+          }
+        });
+
+        // Merge _mappedFields metadata
+        const existingMapped = existing.data._mappedFields || [];
+        const contactMapped = cleaned._mappedFields || [];
+        const combinedMapped = Array.from(new Set([...existingMapped, ...contactMapped]));
+        if (combinedMapped.length > existingMapped.length) {
+          updatePayload._mappedFields = combinedMapped;
           needsUpdate = true;
         }
+
+        // Merge tags (tags array is the SINGLE source of truth)
+        const tagsSet = new Set();
+
+        // Absorb existing tags (array + legacy Tags string)
+        const existingTagsArr = Array.isArray(existing.data.tags) ? existing.data.tags : [];
+        existingTagsArr.forEach(t => parseTags(String(t)).forEach(x => tagsSet.add(x)));
+        if (existing.data.Tags) parseTags(existing.data.Tags).forEach(x => tagsSet.add(x));
+        if (existing.data.tag) parseTags(existing.data.tag).forEach(x => tagsSet.add(x));
+
+        // Add import tag + tags from the sheet column
+        parseTags(tag).forEach(x => tagsSet.add(x));
+        (cleaned._tagsRaw || []).forEach(x => tagsSet.add(x));
+
+        const mergedTags = Array.from(tagsSet).sort();
+        const existingSorted = [...existingTagsArr].map(t => String(t).trim()).sort();
+
+        if (JSON.stringify(mergedTags) !== JSON.stringify(existingSorted) || existing.data.Tags) {
+          updatePayload.tags = mergedTags;
+          updatePayload.Tags = deleteField(); // clean up legacy field
+          needsUpdate = true;
+        }
+
+        // If incoming has GHL_ID but existing doesn't, update it
+        if (cleaned.GHL_ID && !existing.data.GHL_ID) {
+          updatePayload.GHL_ID = cleaned.GHL_ID;
+          needsUpdate = true;
+        }
+
+        // Restore soft-deleted contacts if re-imported
+        if (existing.data._deleted) {
+          updatePayload._deleted = deleteField();
+          needsUpdate = true;
+        }
+
+        if (needsUpdate) {
+          updatePayload.updatedAt = serverTimestamp();
+          batchWriteOps.push({
+            type: "update",
+            ref: existing.ref,
+            data: updatePayload
+          });
+        }
       });
-
-      // Merge _mappedFields metadata
-      const existingMapped = existing.data._mappedFields || [];
-      const contactMapped = cleaned._mappedFields || [];
-      const combinedMapped = Array.from(new Set([...existingMapped, ...contactMapped]));
-      if (combinedMapped.length > existingMapped.length) {
-        updatePayload._mappedFields = combinedMapped;
-        needsUpdate = true;
-      }
-
-      // Merge tags (tags array is the SINGLE source of truth)
-      const tagsSet = new Set();
-
-      // Absorb existing tags (array + legacy Tags string)
-      const existingTagsArr = Array.isArray(existing.data.tags) ? existing.data.tags : [];
-      existingTagsArr.forEach(t => parseTags(String(t)).forEach(x => tagsSet.add(x)));
-      if (existing.data.Tags) parseTags(existing.data.Tags).forEach(x => tagsSet.add(x));
-      if (existing.data.tag) parseTags(existing.data.tag).forEach(x => tagsSet.add(x));
-
-      // Add import tag + tags from the sheet column
-      parseTags(tag).forEach(x => tagsSet.add(x));
-      (cleaned._tagsRaw || []).forEach(x => tagsSet.add(x));
-
-      const mergedTags = Array.from(tagsSet).sort();
-      const existingSorted = [...existingTagsArr].map(t => String(t).trim()).sort();
-
-      if (JSON.stringify(mergedTags) !== JSON.stringify(existingSorted) || existing.data.Tags) {
-        updatePayload.tags = mergedTags;
-        updatePayload.Tags = deleteField(); // clean up legacy field
-        needsUpdate = true;
-      }
-
-      // If incoming has GHL_ID but existing doesn't, update it
-      if (cleaned.GHL_ID && !existing.data.GHL_ID) {
-        updatePayload.GHL_ID = cleaned.GHL_ID;
-        needsUpdate = true;
-      }
-
-      // Restore soft-deleted contacts if re-imported
-      if (existing.data._deleted) {
-        updatePayload._deleted = deleteField();
-        needsUpdate = true;
-      }
-
-      if (needsUpdate) {
-        updatePayload.updatedAt = serverTimestamp();
-        batchWriteOps.push({
-          type: "update",
-          ref: existing.ref,
-          data: updatePayload
-        });
-      }
     } else {
       // Create a new flat contact document — tags array is the ONLY tag field
       const contactRef = doc(collection(db, "contacts"));
@@ -852,7 +860,10 @@ export const deleteAttender = async (id) => {
 export const getAttenderContactCount = async (attenderId) => {
   const q = query(
     collection(db, "contacts"),
-    where("assignedTo", "==", attenderId),
+    or(
+      where("assignedTo", "==", attenderId),
+      where("assignedTo", "array-contains", attenderId)
+    ),
     where("isAssigned", "==", true)
   );
   const snap = await getDocs(q);
@@ -909,15 +920,30 @@ export const assignContactsToAttender = async (tag, programName, attenderId, att
       if (!freshSnap.exists()) continue;
       const freshData = freshSnap.data();
       if (freshData.isAssigned === false) {
+        const freshStates = freshData.attenderStates || {};
+        freshStates[attenderId] = {
+          status: "",
+          remark: "",
+          callType: "outgoing",
+          history: [],
+          callbackDate: null,
+          objectionReason: "",
+          lastCalledAt: null,
+          firstCalledAt: null,
+          attenderName: attenderName,
+          updatedAt: new Date().toISOString()
+        };
+
         transaction.update(freshSnap.ref, {
           isAssigned: true,
-          assignedTo: attenderId,
+          assignedTo: [attenderId],
           assignedName: attenderName,
           attenderId: attenderId, // for compatibility
           attenderName: attenderName, // for compatibility
           callType: "outgoing",
           assignedAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
+          updatedAt: serverTimestamp(),
+          attenderStates: freshStates
         });
         localAssigned++;
       }
@@ -944,11 +970,41 @@ export const subscribeToCallLogs = (...args) => {
 
   const q = query(
     collection(db, "contacts"),
-    where("assignedTo", "==", attenderId)
+    or(
+      where("assignedTo", "==", attenderId),
+      where("assignedTo", "array-contains", attenderId)
+    )
   );
   return onSnapshot(q, snap => {
     let logs = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
+      .map(d => {
+        const rawData = d.data();
+        const hasState = rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined;
+        const attState = hasState ? rawData.attenderStates[attenderId] : {};
+        return {
+          id: d.id,
+          ...rawData,
+          _rawData: rawData, // Preserve the exact un-overlaid document data for badge lookups
+          
+          // Overlay attender-specific state fields only if they exist, otherwise start clean/unselected
+          status: attState.status !== undefined ? attState.status : "",
+          remark: attState.remark !== undefined ? attState.remark : "",
+          callType: attState.callType !== undefined ? attState.callType : "outgoing",
+          history: attState.history !== undefined ? attState.history : [],
+          callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : null,
+          objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : "",
+          lastCalledAt: attState.lastCalledAt !== undefined ? attState.lastCalledAt : null,
+          firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : null,
+          registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : null,
+          
+          // Source and Called For are now attender-specific as well
+          Source: attState.Source !== undefined ? attState.Source : "",
+          "Called For": attState["Called For"] !== undefined ? attState["Called For"] : "",
+          
+          attenderId: attenderId,
+          attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
+        };
+      })
       .filter(log => !log._deleted);
 
     // Filter by tag client-side if a specific tag is provided
@@ -975,14 +1031,20 @@ export const subscribeToCallLogs = (...args) => {
   }, err => console.error("subscribeToCallLogs error:", err));
 };
 
-export const updateCallLog = async (logId, updates, contactId = null) => {
+export const updateCallLog = async (logId, updates, attenderId = null, attenderName = null) => {
   const contactRef = doc(db, "contacts", logId);
   
   let previousStatus = "";
+  let logData = {};
   try {
     const logSnap = await getDoc(contactRef);
     if (logSnap.exists()) {
-      previousStatus = logSnap.data().status || "";
+      logData = logSnap.data();
+      if (attenderId) {
+        previousStatus = logData.attenderStates?.[attenderId]?.status || "";
+      } else {
+        previousStatus = logData.status || "";
+      }
     }
   } catch (e) {
     console.warn("Failed to fetch previous status", e);
@@ -1005,55 +1067,131 @@ export const updateCallLog = async (logId, updates, contactId = null) => {
     updates.Tags = deleteField();
   }
 
-  // Using setDoc with merge instead of updateDoc bypasses Firebase FieldPath validation, 
-  // allowing us to save keys with slashes/dots like "Khoji/ New" from Excel files without crashing.
-  await setDoc(contactRef, { ...updates, updatedAt: serverTimestamp() }, { merge: true });
+  // Split updates into shared (top-level) and attender-specific (nested)
+  const sharedUpdates = {};
+  const attenderSpecificUpdates = {};
 
-  // If status is "Reg.Done", write to registrations (Abhivyakti Report)
-  if (updates.status === "Reg.Done") {
+  const attenderSpecificFields = [
+    "status", "remark", "callType", "history", "callbackDate",
+    "objectionReason", "lastCalledAt", "firstCalledAt", "registeredYearMonth",
+    "Source", "Called For"
+  ];
+
+  Object.keys(updates).forEach(key => {
+    if (attenderSpecificFields.includes(key)) {
+      attenderSpecificUpdates[key] = updates[key];
+    } else {
+      sharedUpdates[key] = updates[key];
+    }
+  });
+
+  const finalUpdatePayload = {
+    ...sharedUpdates,
+    updatedAt: serverTimestamp()
+  };
+
+  // If we have an attenderId, put the attenderSpecificUpdates into the attenderStates map
+  if (attenderId) {
+    // If registeredYearMonth is being set to Reg.Done or removed, we update it here
+    if (attenderSpecificUpdates.status === "Reg.Done") {
+      const now = new Date();
+      const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      attenderSpecificUpdates.registeredYearMonth = yearMonth;
+      finalUpdatePayload.registeredYearMonth = yearMonth;
+    } else if (previousStatus === "Reg.Done" && attenderSpecificUpdates.status && attenderSpecificUpdates.status !== "Reg.Done") {
+      attenderSpecificUpdates.registeredYearMonth = deleteField();
+      finalUpdatePayload.registeredYearMonth = deleteField();
+    }
+
+    // Set attenderName and update time for last-edited tracking within attenderStates
+    attenderSpecificUpdates.attenderName = attenderName || logData.attenderStates?.[attenderId]?.attenderName || "Attender";
+    attenderSpecificUpdates.updatedAt = new Date().toISOString();
+
+    // Use dot notation to merge only this attender's keys
+    Object.keys(attenderSpecificUpdates).forEach(k => {
+      finalUpdatePayload[`attenderStates.${attenderId}.${k}`] = attenderSpecificUpdates[k];
+    });
+
+    // Also update top-level compatibility fields if they are updated by this user
+    if (attenderSpecificUpdates.status !== undefined) finalUpdatePayload.status = attenderSpecificUpdates.status;
+    if (attenderSpecificUpdates.remark !== undefined) finalUpdatePayload.remark = attenderSpecificUpdates.remark;
+    if (attenderSpecificUpdates.callbackDate !== undefined) finalUpdatePayload.callbackDate = attenderSpecificUpdates.callbackDate;
+    if (attenderSpecificUpdates.callType !== undefined) finalUpdatePayload.callType = attenderSpecificUpdates.callType;
+    if (attenderSpecificUpdates.history !== undefined) finalUpdatePayload.history = attenderSpecificUpdates.history;
+    if (attenderSpecificUpdates.Source !== undefined) finalUpdatePayload.Source = attenderSpecificUpdates.Source;
+    if (attenderSpecificUpdates["Called For"] !== undefined) finalUpdatePayload["Called For"] = attenderSpecificUpdates["Called For"];
+    
+    // Track who did the last edit
+    finalUpdatePayload.lastEditedBy = attenderSpecificUpdates.attenderName;
+    finalUpdatePayload.lastEditedAt = new Date().toISOString();
+
+    // Also ensure this attender is in the assignedTo array
+    const prevAssigned = Array.isArray(logData.assignedTo)
+      ? logData.assignedTo
+      : (logData.assignedTo ? [logData.assignedTo] : []);
+    if (!prevAssigned.includes(attenderId)) {
+      prevAssigned.push(attenderId);
+      finalUpdatePayload.assignedTo = prevAssigned;
+    }
+  } else {
+    Object.assign(finalUpdatePayload, attenderSpecificUpdates);
+  }
+
+  // Write to Firebase using setDoc with merge to allow any custom field keys safely
+  await setDoc(contactRef, finalUpdatePayload, { merge: true });
+
+  // Handle "Reg.Done" registrations collection sync
+  const currentStatus = attenderSpecificUpdates.status !== undefined ? attenderSpecificUpdates.status : updates.status;
+  if (currentStatus === "Reg.Done") {
     try {
-      const logSnap = await getDoc(contactRef);
-      const logData = logSnap.exists() ? logSnap.data() : {};
-      
+      const freshSnap = await getDoc(contactRef);
+      const freshData = freshSnap.exists() ? freshSnap.data() : {};
       const now = new Date();
       const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-      // Update registeredYearMonth on the contact document itself in Firestore so we can search/filter server-side
-      await updateDoc(contactRef, { registeredYearMonth: yearMonth });
-
       const payload = {
-        ...logData,
+        ...freshData,
         registeredYearMonth: yearMonth,
         registeredAt: serverTimestamp(),
-        conversionSource: logData.Source || logData.Sourse || "Direct",
-        convertedBy: logData.assignedName || logData.attenderName || updates.assignedName || updates.attenderName || "Unknown",
-        programName: logData.programName || updates.programName || "Unknown"
+        conversionSource: freshData.Source || freshData.Sourse || "Direct",
+        convertedBy: attenderName || freshData.assignedName || freshData.attenderName || "Unknown",
+        programName: freshData.programName || updates.programName || "Unknown"
       };
 
-      // Strip out ANY undefined fields because Firebase crashes on exactly 'undefined'
       Object.keys(payload).forEach(key => {
         if (payload[key] === undefined) {
           delete payload[key];
         }
       });
 
-      // Use setDoc with the logId to gracefully upsert and prevent duplicate entries 
-      // if the attender opens and saves the same "Reg.Done" entry multiple times.
       await setDoc(doc(db, "registrations", logId), payload, { merge: true });
       await registerRegistrationMonth(yearMonth);
     } catch (e) {
       console.error("Registration write failed:", e);
     }
-  } else if (previousStatus === "Reg.Done" && updates.status && updates.status !== "Reg.Done") {
+  } else if (previousStatus === "Reg.Done" && currentStatus && currentStatus !== "Reg.Done") {
     try {
       await deleteDoc(doc(db, "registrations", logId));
-      // Revert the registeredYearMonth on the contact document too
       await updateDoc(contactRef, { registeredYearMonth: deleteField() });
       console.log("🗑️ Reverted registration deleted for log:", logId);
     } catch (e) {
       console.error("Registration deletion failed on revert:", e);
     }
   }
+};
+
+// ─────────────────────────────────────────────
+// Remove a single attender's access to a contact
+// without affecting any other attender's data.
+// Removes the attender from assignedTo[] and clears
+// their attenderStates entry.
+// ─────────────────────────────────────────────
+export const removeAttenderFromContact = async (contactId, attenderId) => {
+  const contactRef = doc(db, "contacts", contactId);
+  await updateDoc(contactRef, {
+    assignedTo: arrayRemove(attenderId),
+    [`attenderStates.${attenderId}._hidden`]: true,
+  });
 };
 
 // ────────────────────────────────────────────
@@ -1081,125 +1219,167 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   // Never store Tags string — only the array
   const { Tags: _ignored, tags: _ignored2, ...rest } = data;
 
-  const logData = {
-    ...rest,
+  const phoneVal = rest.Phone || rest["Cont No"] || rest.phone || rest.Number || rest.Mobile || "";
+  const normalizedPhone = normalizePhone(phoneVal);
+
+  let docRef = null;
+  let isExisting = false;
+  let existingDocId = null;
+  let existingData = {};
+
+  if (normalizedPhone) {
+    try {
+      const existingSnap = await getDocs(query(
+        collection(db, "contacts"),
+        where("normalizedPhone", "==", normalizedPhone)
+      ));
+      if (!existingSnap.empty) {
+        // Find ANY existing active document
+        const matchDoc = existingSnap.docs.find(docSnap => docSnap.data()._deleted !== true) || existingSnap.docs[0];
+        if (matchDoc) {
+          isExisting = true;
+          existingDocId = matchDoc.id;
+          existingData = matchDoc.data();
+        }
+      }
+    } catch (e) {
+      console.warn("[addIncomingCallLog] Phone lookup failed:", e);
+    }
+  }
+
+  // Calculate new assignedTo array
+  const prevAssigned = isExisting
+    ? (Array.isArray(existingData.assignedTo)
+        ? existingData.assignedTo
+        : (existingData.assignedTo ? [existingData.assignedTo] : []))
+    : [];
+  const assignedToSet = new Set(prevAssigned);
+  assignedToSet.add(attenderId);
+  const newAssignedTo = Array.from(assignedToSet);
+
+  // Initialize or fetch attender-specific state
+  const prevStates = isExisting ? (existingData.attenderStates || {}) : {};
+  const currentAttState = prevStates[attenderId] || {};
+  
+  // Create history entry
+  const historyEntry = {
+    timestamp: new Date().toISOString(),
+    attenderId,
+    attenderName,
+    status: data.status || "Call Log Added",
+    remark: data.remark || `Log added by ${attenderName}`
+  };
+
+  // Merge history for this attender
+  const prevHistory = Array.isArray(currentAttState.history) ? currentAttState.history : [];
+  const newHistory = [...prevHistory, historyEntry];
+
+  // Update attender-specific states
+  const updatedStates = {
+    ...prevStates,
+    [attenderId]: {
+      ...currentAttState,
+      status: data.status !== undefined ? data.status : (currentAttState.status || ""),
+      remark: data.remark !== undefined ? data.remark : (currentAttState.remark || ""),
+      callType: data.callType || currentAttState.callType || "incoming",
+      history: newHistory,
+      callbackDate: data.callbackDate !== undefined ? data.callbackDate : (currentAttState.callbackDate || null),
+      objectionReason: data.objectionReason !== undefined ? data.objectionReason : (currentAttState.objectionReason || ""),
+      Source: data.Source !== undefined ? data.Source : (currentAttState.Source || ""),
+      "Called For": data["Called For"] !== undefined ? data["Called For"] : (currentAttState["Called For"] || ""),
+      lastCalledAt: new Date().toISOString(),
+      firstCalledAt: currentAttState.firstCalledAt || new Date().toISOString(),
+      attenderName: attenderName,
+      updatedAt: new Date().toISOString()
+    }
+  };
+
+  // Build the unified log document data
+  const baseProfile = {
+    Name: rest.Name || existingData.Name || "",
+    Email: rest.Email || existingData.Email || "",
+    City: rest.City || existingData.City || "",
+    State: rest.State || existingData.State || "",
+    Mobile: rest.Mobile || existingData.Mobile || "",
+    Phone: rest.Phone || existingData.Phone || "",
+    Khoji: rest.Khoji || existingData.Khoji || "",
+    Source: rest.Source || existingData.Source || "",
+    "Called For": rest["Called For"] || existingData["Called For"] || "",
+    "Program / Tag Mapping": rest["Program / Tag Mapping"] || existingData["Program / Tag Mapping"] || "",
+    GHL_ID: rest.GHL_ID || existingData.GHL_ID || "",
+    normalizedPhone: normalizedPhone || existingData.normalizedPhone || ""
+  };
+
+  // Merge tags
+  const mergedTagsSet = new Set(finalTags);
+  if (isExisting && Array.isArray(existingData.tags)) {
+    existingData.tags.forEach(t => mergedTagsSet.add(t));
+  }
+  const mergedTags = Array.from(mergedTagsSet).sort();
+
+  const logPayload = {
+    ...existingData,
+    ...baseProfile,
+    ...Object.keys(rest).reduce((acc, k) => {
+      const attFields = ["status", "remark", "callType", "callbackDate", "objectionReason"];
+      if (!attFields.includes(k) && !Object.keys(baseProfile).includes(k)) {
+        acc[k] = rest[k];
+      }
+      return acc;
+    }, {}),
     isAssigned: true,
-    assignedTo: attenderId,
+    assignedTo: newAssignedTo,
     assignedName: attenderName,
     attenderId: attenderId, // compatibility
     attenderName: attenderName, // compatibility
+    lastEditedBy: attenderName,
+    lastEditedAt: new Date().toISOString(),
     callType: data.callType || "incoming",
-    tags: finalTags,
-    createdAt: serverTimestamp(),
+    tags: mergedTags,
+    attenderStates: updatedStates,
     updatedAt: serverTimestamp(),
-    // compatibility:
     programId: finalProgramId,
     programName: finalProgramName,
     "Sub Program": finalProgramName,
     subProgram: finalProgramName
   };
 
-  if (logData.status === "Reg.Done") {
-    logData.registeredYearMonth = yearMonth;
+  if (isExisting && existingData.createdAt) {
+    logPayload.createdAt = existingData.createdAt;
+  } else {
+    logPayload.createdAt = serverTimestamp();
   }
 
-  // Strip out ANY undefined fields
-  Object.keys(logData).forEach(key => {
-    if (logData[key] === undefined) {
-      delete logData[key];
+  if (data.status === "Reg.Done") {
+    logPayload.registeredYearMonth = yearMonth;
+  }
+
+  // Strip out undefined fields
+  Object.keys(logPayload).forEach(key => {
+    if (logPayload[key] === undefined) {
+      delete logPayload[key];
     }
   });
 
-  const phoneVal = logData.Phone || logData["Cont No"] || logData.phone || logData.Number || logData.Mobile || "";
-  logData.normalizedPhone = normalizePhone(phoneVal);
-
-  // ── Silent GHL_ID / Existing phone lookup and merge ──────────────────────
-  let docRef = null;
-  let isExisting = false;
-  let existingDocId = null;
-
-  if (logData.normalizedPhone) {
-    try {
-      const existingSnap = await getDocs(query(
-        collection(db, "contacts"),
-        where("normalizedPhone", "==", logData.normalizedPhone)
-      ));
-      if (!existingSnap.empty) {
-        // Find the best document to update (e.g. one with GHL_ID, or just the first one)
-        let targetDoc = existingSnap.docs[0];
-        for (const docSnap of existingSnap.docs) {
-          if (docSnap.data().GHL_ID) {
-            targetDoc = docSnap;
-            break;
-          }
-        }
-        
-        isExisting = true;
-        existingDocId = targetDoc.id;
-        const existingData = targetDoc.data();
-
-        // Copy GHL_ID if any existing contact has one
-        if (existingData.GHL_ID) {
-          logData.GHL_ID = existingData.GHL_ID;
-        }
-
-        // Fill missing profile fields:
-        // If the manual entry has a value, we can use it, or if it's empty, use the existing one
-        const profileFields = ["Name", "Email", "City", "State", "Source", "Khoji", "Country", "Mobile", "Phone"];
-        profileFields.forEach(f => {
-          if (!logData[f] && existingData[f]) {
-            logData[f] = existingData[f];
-          }
-        });
-
-        // Merge tags
-        const mergedTagsSet = new Set(logData.tags || []);
-        const existingTags = Array.isArray(existingData.tags) ? existingData.tags : [];
-        existingTags.forEach(t => parseTags(String(t)).forEach(x => mergedTagsSet.add(x)));
-        logData.tags = Array.from(mergedTagsSet).sort();
-
-        // Merge history array if both exist
-        const existingHistory = Array.isArray(existingData.history) ? existingData.history : [];
-        const newHistory = Array.isArray(logData.history) ? logData.history : [];
-        const mergedHistory = [...existingHistory];
-        newHistory.forEach(h => {
-          const isDup = mergedHistory.some(eh => eh.remark === h.remark && eh.status === h.status && eh.timestamp === h.timestamp);
-          if (!isDup) {
-            mergedHistory.push(h);
-          }
-        });
-        logData.history = mergedHistory;
-
-        // Keep the original createdAt
-        if (existingData.createdAt) {
-          logData.createdAt = existingData.createdAt;
-        }
-      }
-    } catch (e) {
-      console.warn("[addIncomingCallLog] GHL_ID / phone lookup failed:", e);
-    }
-  }
-
   if (isExisting && existingDocId) {
     const contactRef = doc(db, "contacts", existingDocId);
-    // Remove _deleted flag in case the existing contact was soft-deleted
-    await setDoc(contactRef, { ...logData, _deleted: deleteField(), updatedAt: serverTimestamp() }, { merge: true });
+    await setDoc(contactRef, { ...logPayload, _deleted: deleteField() }, { merge: true });
     docRef = { id: existingDocId };
   } else {
-    docRef = await addDoc(collection(db, "contacts"), logData);
+    docRef = await addDoc(collection(db, "contacts"), logPayload);
   }
 
-  // If status is "Reg.Done", write to registrations (Abhivyakti Report)
-  if (logData.status === "Reg.Done") {
+  // Handle "Reg.Done" registrations collection sync
+  if (data.status === "Reg.Done") {
     try {
       const payload = {
-        ...logData,
+        ...logPayload,
         id: docRef.id,
         registeredYearMonth: yearMonth,
         registeredAt: serverTimestamp(),
-        conversionSource: logData.Source || logData.Sourse || "Direct",
+        conversionSource: logPayload.Source || logPayload.Sourse || "Direct",
         convertedBy: attenderName || "Unknown",
-        programName: logData.programName || "Incoming Calls"
+        programName: logPayload.programName || "Incoming Calls"
       };
 
       Object.keys(payload).forEach(key => {
@@ -1322,19 +1502,41 @@ export const claimContact = async (contactId, attenderId, attenderName) => {
       status: "Claimed Lead",
       remark: `Lead claimed by ${attenderName} (previously assigned to: ${data.assignedName || "Unassigned"})`
     };
+
+    // Calculate new assignedTo array
+    const prevAssigned = Array.isArray(data.assignedTo) 
+      ? data.assignedTo 
+      : (data.assignedTo ? [data.assignedTo] : []);
+    const newAssignedSet = new Set(prevAssigned);
+    newAssignedSet.add(attenderId);
+
+    // Initialize or merge attenderState for this claiming attender
+    const newStates = data.attenderStates || {};
+    newStates[attenderId] = {
+      status: "",
+      remark: "",
+      callType: "outgoing",
+      history: [historyEntry],
+      callbackDate: null,
+      objectionReason: "",
+      lastCalledAt: new Date().toISOString(),
+      firstCalledAt: new Date().toISOString(),
+      attenderName: attenderName,
+      updatedAt: new Date().toISOString()
+    };
     
     transaction.update(contactRef, {
       isAssigned: true,
-      assignedTo: attenderId,
+      assignedTo: Array.from(newAssignedSet),
       assignedName: attenderName,
       attenderId: attenderId, // compatibility
       attenderName: attenderName, // compatibility
       callType: "outgoing",
-      status: "", // Reset status to let the new attender dial them fresh
+      status: "", // Reset status for compatibility/overall last-edited view
       remark: "", // Reset remark
-      callbackDate: null, // Reset callback dates
+      callbackDate: null, 
       isCallbackDue: false,
-      history: arrayUnion(historyEntry),
+      attenderStates: newStates,
       _deleted: deleteField(), // Ensure contact is active/undeleted when claimed
       updatedAt: serverTimestamp()
     });
@@ -1347,14 +1549,27 @@ export const claimContact = async (contactId, attenderId, attenderName) => {
 export const reassignContactsToPool = async (tag, attenderId, count, mode = "Pending") => {
   const q = query(
     collection(db, "contacts"),
-    where("assignedTo", "==", attenderId)
+    or(
+      where("assignedTo", "==", attenderId),
+      where("assignedTo", "array-contains", attenderId)
+    )
   );
   const snap = await getDocs(q);
   if (snap.empty) return 0;
 
-  // Filter client-side by tag and mode/status
+  // Filter client-side by tag and mode/status based on the specific attender's state
   let candidates = snap.docs
-    .map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
+    .map(d => {
+      const rawData = d.data();
+      const attState = rawData.attenderStates?.[attenderId] || {};
+      return {
+        id: d.id,
+        ref: d.ref,
+        ...rawData,
+        status: attState.status !== undefined ? attState.status : (rawData.status || ""),
+        callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null)
+      };
+    })
     .filter(c => !c._deleted);
 
   if (tag && tag !== "ALL") {
@@ -1373,12 +1588,37 @@ export const reassignContactsToPool = async (tag, attenderId, count, mode = "Pen
 
   const batch = writeBatch(db);
   toProcess.forEach(c => {
+    let newAssignedTo = null;
+    let isAssignedVal = false;
+    let assignedNameVal = null;
+    let attenderIdVal = null;
+    let attenderNameVal = null;
+
+    if (Array.isArray(c.assignedTo)) {
+      const filtered = c.assignedTo.filter(id => id !== attenderId);
+      if (filtered.length > 0) {
+        newAssignedTo = filtered;
+        isAssignedVal = true;
+        const firstId = filtered[0];
+        const state = c.attenderStates?.[firstId] || {};
+        assignedNameVal = state.attenderName || c.assignedName || "Attender";
+        attenderIdVal = firstId;
+        attenderNameVal = assignedNameVal;
+      }
+    } else if (c.assignedTo && c.assignedTo !== attenderId) {
+      newAssignedTo = c.assignedTo;
+      isAssignedVal = true;
+      assignedNameVal = c.assignedName;
+      attenderIdVal = c.attenderId;
+      attenderNameVal = c.attenderName;
+    }
+
     batch.update(c.ref, {
-      isAssigned: false,
-      assignedTo: null,
-      assignedName: null,
-      attenderId: null,
-      attenderName: null,
+      isAssigned: isAssignedVal,
+      assignedTo: newAssignedTo,
+      assignedName: assignedNameVal,
+      attenderId: attenderIdVal,
+      attenderName: attenderNameVal,
       updatedAt: serverTimestamp()
     });
   });
@@ -1404,14 +1644,27 @@ export const reassignContactsBetweenAttenders = async (tag, fromAttenderId, toAt
 
   const q = query(
     collection(db, "contacts"),
-    where("assignedTo", "==", fromAttenderId)
+    or(
+      where("assignedTo", "==", fromAttenderId),
+      where("assignedTo", "array-contains", fromAttenderId)
+    )
   );
   const snap = await getDocs(q);
   if (snap.empty) return 0;
 
-  // Filter client-side by tag and mode/status
+  // Filter client-side by tag and mode/status based on the specific fromAttender's state
   let candidates = snap.docs
-    .map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
+    .map(d => {
+      const rawData = d.data();
+      const attState = rawData.attenderStates?.[fromAttenderId] || {};
+      return {
+        id: d.id,
+        ref: d.ref,
+        ...rawData,
+        status: attState.status !== undefined ? attState.status : (rawData.status || ""),
+        callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null)
+      };
+    })
     .filter(c => !c._deleted);
 
   if (tag && tag !== "ALL") {
@@ -1430,11 +1683,36 @@ export const reassignContactsBetweenAttenders = async (tag, fromAttenderId, toAt
 
   const batch = writeBatch(db);
   toProcess.forEach(c => {
+    let newAssignedTo = toAttenderId;
+    if (Array.isArray(c.assignedTo)) {
+      const filtered = c.assignedTo.filter(id => id !== fromAttenderId);
+      if (!filtered.includes(toAttenderId)) {
+        filtered.push(toAttenderId);
+      }
+      newAssignedTo = filtered;
+    } else if (c.assignedTo === fromAttenderId) {
+      newAssignedTo = [toAttenderId];
+    } else if (c.assignedTo) {
+      newAssignedTo = [c.assignedTo, toAttenderId];
+    }
+
+    // Also update `attenderStates`: transfer/copy the fromAttenderId's state to toAttenderId
+    const updatedStates = c.attenderStates || {};
+    if (updatedStates[fromAttenderId]) {
+      updatedStates[toAttenderId] = {
+        ...updatedStates[fromAttenderId],
+        attenderName: toAttenderName,
+        updatedAt: new Date().toISOString()
+      };
+      delete updatedStates[fromAttenderId];
+    }
+
     batch.update(c.ref, {
-      assignedTo: toAttenderId,
+      assignedTo: newAssignedTo,
       assignedName: toAttenderName,
       attenderId: toAttenderId,
       attenderName: toAttenderName,
+      attenderStates: updatedStates,
       updatedAt: serverTimestamp()
     });
   });
@@ -1473,10 +1751,33 @@ export const subscribeToAllCallLogs = (tag, callback) => {
 export const getAttenderCallLogs = async (attenderId, tag) => {
   const q = query(
     collection(db, "contacts"),
-    where("assignedTo", "==", attenderId)
+    or(
+      where("assignedTo", "==", attenderId),
+      where("assignedTo", "array-contains", attenderId)
+    )
   );
   const snap = await getDocs(q);
-  let logs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c._deleted);
+  let logs = snap.docs.map(d => {
+    const rawData = d.data();
+    const attState = rawData.attenderStates?.[attenderId] || {};
+    return {
+      id: d.id,
+      ...rawData,
+      // Overlay attender-specific state fields if present in attenderStates
+      status: attState.status !== undefined ? attState.status : (rawData.status || ""),
+      remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
+      callType: attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing"),
+      history: attState.history !== undefined ? attState.history : (rawData.history || []),
+      callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
+      objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
+      lastCalledAt: attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null),
+      firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
+      registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : (rawData.registeredYearMonth || null),
+      
+      attenderId: attenderId,
+      attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
+    };
+  }).filter(c => !c._deleted);
   if (tag && tag !== "ALL") {
     logs = logs.filter(c => Array.isArray(c.tags) && c.tags.includes(tag));
   }
