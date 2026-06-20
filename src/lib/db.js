@@ -777,7 +777,7 @@ export const getProgramContactStats = async (tag) => {
   const docs = snap.docs.map(d => d.data()).filter(d => !d._deleted);
   const totalCount = docs.length;
 
-  const stats = { total: total || totalCount, available: 0, assigned: 0, done: 0, callback_scheduled: 0 };
+  const stats = { total: total || totalCount, available: 0, assigned: 0, done: 0, callback_scheduled: 0, pending: 0 };
   let poolAssignedCount = 0;
 
   docs.forEach(data => {
@@ -787,7 +787,7 @@ export const getProgramContactStats = async (tag) => {
 
       if (data._callbackDue || data.callbackDate) {
         stats.callback_scheduled++;
-      } else if (!data.status) {
+      } else if (!data.status || data.status === "Pending") {
         stats.assigned++;
       } else {
         stats.done++;
@@ -795,6 +795,7 @@ export const getProgramContactStats = async (tag) => {
     }
   });
 
+  stats.pending = docs.filter(d => !d.status || d.status === "Pending").length;
   stats.available = Math.max(0, stats.total - poolAssignedCount);
   return stats;
 };
@@ -1188,8 +1189,41 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
 // ─────────────────────────────────────────────
 export const removeAttenderFromContact = async (contactId, attenderId) => {
   const contactRef = doc(db, "contacts", contactId);
+  const snap = await getDoc(contactRef);
+  if (!snap.exists()) return;
+  const data = snap.data();
+
+  let newAssignedTo = null;
+  let isAssignedVal = false;
+  let assignedNameVal = null;
+  let attenderIdVal = null;
+  let attenderNameVal = null;
+
+  if (Array.isArray(data.assignedTo)) {
+    const filtered = data.assignedTo.filter(id => id !== attenderId);
+    if (filtered.length > 0) {
+      newAssignedTo = filtered;
+      isAssignedVal = true;
+      const firstId = filtered[0];
+      const state = data.attenderStates?.[firstId] || {};
+      assignedNameVal = state.attenderName || data.assignedName || "Attender";
+      attenderIdVal = firstId;
+      attenderNameVal = assignedNameVal;
+    }
+  } else if (data.assignedTo && data.assignedTo !== attenderId) {
+    newAssignedTo = data.assignedTo;
+    isAssignedVal = true;
+    assignedNameVal = data.assignedName;
+    attenderIdVal = data.attenderId;
+    attenderNameVal = data.attenderName;
+  }
+
   await updateDoc(contactRef, {
-    assignedTo: arrayRemove(attenderId),
+    isAssigned: isAssignedVal,
+    assignedTo: newAssignedTo,
+    assignedName: assignedNameVal,
+    attenderId: attenderIdVal,
+    attenderName: attenderNameVal,
     [`attenderStates.${attenderId}._hidden`]: true,
   });
 };
@@ -1577,7 +1611,7 @@ export const reassignContactsToPool = async (tag, attenderId, count, mode = "Pen
   }
 
   if (mode === "Pending") {
-    candidates = candidates.filter(c => !c.status);
+    candidates = candidates.filter(c => !c.status || c.status === "Pending");
   } else if (mode === "Callbacks") {
     candidates = candidates.filter(c => !!c.callbackDate);
   }
@@ -1672,7 +1706,7 @@ export const reassignContactsBetweenAttenders = async (tag, fromAttenderId, toAt
   }
 
   if (mode === "Pending") {
-    candidates = candidates.filter(c => !c.status);
+    candidates = candidates.filter(c => !c.status || c.status === "Pending");
   } else if (mode === "Callbacks") {
     candidates = candidates.filter(c => !!c.callbackDate);
   }

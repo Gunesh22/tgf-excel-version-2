@@ -46,7 +46,7 @@ export default function DashboardTab({ programs, attenders }) {
       if (log.callType === "incoming") s.incoming++; else s.outgoing++;
       if (log.status === "Interested") s.interested++;
       if (log.status === "Reg.Done") s.regDone++;
-      if (!log.status) s.pending++;
+      if (!log.status || log.status === "Pending") s.pending++;
     });
     return Object.values(map).sort((a, b) => b.total - a.total);
   }, [filteredLogs]);
@@ -54,21 +54,21 @@ export default function DashboardTab({ programs, attenders }) {
   const outcomeData = React.useMemo(() => {
     const map = {};
     filteredLogs.forEach(l => {
-      const s = l.status || "(no status)";
+      const s = !l.status || l.status === "Pending" ? "Pending" : l.status;
       map[s] = (map[s] || 0) + 1;
     });
     return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   }, [filteredLogs]);
 
-  const totalCalled = filteredLogs.filter(l => l.status).length;
+  const totalCalled = filteredLogs.filter(l => l.status && l.status !== "Pending").length;
   const totalRegDone = filteredLogs.filter(l => l.status === "Reg.Done").length;
   const totalInterested = filteredLogs.filter(l => l.status === "Interested").length;
-  const totalPending = filteredLogs.filter(l => !l.status).length;
+  const totalPending = filteredLogs.filter(l => !l.status || l.status === "Pending").length;
 
   const callsByHour = React.useMemo(() => {
     const map = Array(24).fill(0).map((_, i) => ({ hour: `${i}:00`, calls: 0 }));
     filteredLogs.forEach(l => {
-      if (l.status) { // Only count if actually called
+      if (l.status && l.status !== "Pending") { // Only count if actually called
         const d = l.updatedAt?.toDate ? l.updatedAt.toDate() : l.updatedAt ? new Date(l.updatedAt) : null;
         if (d) map[d.getHours()].calls++;
       }
