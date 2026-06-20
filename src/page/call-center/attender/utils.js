@@ -280,7 +280,8 @@ export const IGNORED_FIELDS = [
   "isassigned",
   "normalizedphone",
   "assignedat",
-  "registeredyearmonth"
+  "registeredyearmonth",
+  "querystatus"
 ];
 
 export const isIgnoredField = (key) => {

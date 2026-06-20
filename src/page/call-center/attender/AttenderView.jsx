@@ -56,6 +56,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   const [filterCallbackStatus, setFilterCallbackStatus] = useState([]);
   const [filterCallCount, setFilterCallCount] = useState([]);
   const [filterGeneralStatus, setFilterGeneralStatus] = useState([]);
+  const [filterQueryStatus, setFilterQueryStatus] = useState([]);
   const [filterAbhivyakti, setFilterAbhivyakti] = useState([]);
   const [filterKhoji, setFilterKhoji] = useState([]);
   const [filterDateType, setFilterDateType] = useState("All");
@@ -95,6 +96,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     setFilterSource([]); setFilterCity([]); setFilterCalledFor([]);
     setFilterCallType([]); setFilterSubProgram([]); setFilterObjectionReason([]);
     setFilterCallbackStatus([]); setFilterCallCount([]); setFilterGeneralStatus([]);
+    setFilterQueryStatus([]);
     setFilterAbhivyakti([]); setFilterKhoji([]); setFilterDateType("All"); setFilterDateRange("All");
     setCustomDateFrom(""); setCustomDateTo(""); setSearchQuery("");
   };
@@ -664,7 +666,15 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
 
       // 10b. General Result Status Filter
       if (filterGeneralStatus.length > 0) {
-        if (!filterGeneralStatus.includes(log.status)) return false;
+        const logStatus = log.status;
+        const logQueryStatus = log.queryStatus || "Pending";
+
+        const matched = filterGeneralStatus.some(f => {
+          if (f === "Query Pending") return logStatus === "Query" && logQueryStatus === "Pending";
+          if (f === "Query Solved")  return logStatus === "Query" && logQueryStatus === "Solved";
+          return f === logStatus;
+        });
+        if (!matched) return false;
       }
 
       // 10c. Abhivyakti Filter
@@ -741,7 +751,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
   }, [
     tagFilteredLogs, searchQuery, filterStatus, filterSource, filterCalledFor,
     filterCity, filterCallType, filterSubProgram, filterObjectionReason,
-    filterCallbackStatus, filterCallCount, filterGeneralStatus, filterAbhivyakti,
+    filterCallbackStatus, filterCallCount, filterGeneralStatus, filterQueryStatus, filterAbhivyakti,
     filterKhoji,
     filterDateType, filterDateRange, customDateFrom, customDateTo, customTimeFrom, customTimeTo
   ]);
@@ -1312,6 +1322,8 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
           setFilterCallCount={setFilterCallCount}
           filterGeneralStatus={filterGeneralStatus}
           setFilterGeneralStatus={setFilterGeneralStatus}
+          filterQueryStatus={filterQueryStatus}
+          setFilterQueryStatus={setFilterQueryStatus}
           filterAbhivyakti={filterAbhivyakti}
           setFilterAbhivyakti={setFilterAbhivyakti}
           filterKhoji={filterKhoji}

@@ -1267,7 +1267,7 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
     attenderId,
     attenderName,
     status: data.status || "Call Log Added",
-    remark: data.remark || `Log added by ${attenderName}`
+    remark: data.remark || ""
   };
 
   // Merge history for this attender

@@ -244,6 +244,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       ...normalized,
       // Always start with empty remark for a new note — previous remarks are shown in the history timeline
       remark: "",
+      // If status is Query, default queryStatus to Pending for backward compat
+      queryStatus: normalized.status === "Query" ? (normalized.queryStatus || "Pending") : normalized.queryStatus,
     };
   });
   const [saving, setSaving] = useState(false);
@@ -738,10 +740,14 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     });
   };
 
-  // Smart field matching: find actual key name in data that matches an alias list
+  // Smart field matching: find actual key name in data that matches an alias list.
+  // Explicitly exclude dot-notation keys (e.g. attenderStates.attenderId.source) which
+  // are internal Firestore paths and must never be used as field labels.
   const findField = (aliases) => {
-    const keys = Object.keys(edited);
-    return keys.find(k => aliases.some(a => k.toLowerCase().includes(a))) || aliases[0].charAt(0).toUpperCase() + aliases[0].slice(1);
+    const keys = Object.keys(edited).filter(k => !k.includes(".") && !k.toLowerCase().startsWith("attenderstates"));
+    return keys.find(k => aliases.some(a => k.toLowerCase() === a || k.toLowerCase() === a.replace(/_/g, " "))) 
+      || keys.find(k => aliases.some(a => k.toLowerCase().includes(a)))
+      || (aliases[0].charAt(0).toUpperCase() + aliases[0].slice(1));
   };
   const sourceField = findField(["source", "sourse"]);
   const calledForField = findField(["called for", "called_for", "calledfor"]);
@@ -1031,7 +1037,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                       : "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-200"
                   }`}
                 >
-                  {opt}
+                  {opt === "outgoing f" ? "Outgoing (F)" : opt === "incoming f" ? "Incoming (F)" : opt.charAt(0).toUpperCase() + opt.slice(1)}
                 </button>
               ))}
             </div>
@@ -1368,7 +1374,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             {/* Searchable Dropdown: Source */}
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Tag size={13} className="text-amber-500" /> Source ({sourceField})
+                <Tag size={13} className="text-amber-500" /> Source
               </label>
               <SearchableDropdown
                 options={SOURCE_OPTIONS}
@@ -1389,7 +1395,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             {/* Searchable Dropdown: Called For */}
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Phone size={13} className="text-blue-500" /> Called For ({calledForField})
+                <Phone size={13} className="text-blue-500" /> Called For
               </label>
               <SearchableDropdown
                 options={CALLED_FOR_OPTIONS}
@@ -1465,7 +1471,14 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
               <SearchableDropdown
                 options={STATUS_OPTIONS.filter(opt => opt !== "Reg.Done")}
                 selected={edited.status || ""}
-                onChange={val => handleChange("status", val)}
+                onChange={val => {
+                  setEdited(prev => ({
+                    ...prev,
+                    status: val,
+                    // Auto-default queryStatus to Pending when Query is selected
+                    queryStatus: val === "Query" ? (prev.queryStatus || "Pending") : prev.queryStatus,
+                  }));
+                }}
                 placeholder="Search & select status..."
                 colorClass="indigo"
               />
@@ -1475,6 +1488,31 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                   <span className="bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-medium">{item.val}</span>
                 </div>
               ))}
+
+              {/* Query Sub-status Toggle */}
+              {edited.status === "Query" && (
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest shrink-0">Query:</span>
+                  <div className="flex gap-1.5">
+                    {["Pending", "Solved"].map(qs => (
+                      <button
+                        key={qs}
+                        type="button"
+                        onClick={() => handleChange("queryStatus", qs)}
+                        className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all ${
+                          (edited.queryStatus || "Pending") === qs
+                            ? qs === "Pending"
+                              ? "bg-amber-500 text-white border-amber-500 shadow shadow-amber-500/20 scale-105"
+                              : "bg-emerald-500 text-white border-emerald-500 shadow shadow-emerald-500/20 scale-105"
+                            : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
+                        }`}
+                      >
+                        {qs === "Pending" ? "⏳ Pending" : "✅ Solved"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Objection Tracker (Conditional) */}

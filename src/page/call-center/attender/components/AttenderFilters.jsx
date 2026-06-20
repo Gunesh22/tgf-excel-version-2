@@ -219,6 +219,8 @@ export function AttenderFilters({
   setFilterCallCount,
   filterGeneralStatus,
   setFilterGeneralStatus,
+  filterQueryStatus,
+  setFilterQueryStatus,
   filterAbhivyakti,
   setFilterAbhivyakti,
   filterKhoji,
@@ -263,6 +265,7 @@ export function AttenderFilters({
     callbackStatus: shouldShowFilter("Callback Status") || shouldShowFilter("Pending Done"),
     callCount: shouldShowFilter("Call Count") || shouldShowFilter("Number of Calls"),
     genStatus: shouldShowFilter("Gen. Status") || shouldShowFilter("General Result"),
+    queryStatus: shouldShowFilter("Query Status") || shouldShowFilter("Query Pending") || shouldShowFilter("Query Solved"),
     abhivyakti: shouldShowFilter("Abhivyakti") || shouldShowFilter("Registration"),
     khoji: shouldShowFilter("Khoji Status") || shouldShowFilter("Maha Asmani"),
     date: shouldShowFilter("Date") || shouldShowFilter("Time") || shouldShowFilter("Calendar") || shouldShowFilter("Called Date") || shouldShowFilter("Assignment Date")
@@ -678,14 +681,29 @@ export function AttenderFilters({
 
                 {/* Gen. Status */}
                 {filterVisible.genStatus && (
-                  <MultiSelectDropdown
-                    label="Gen. Status"
-                    icon={<CheckCircle2 size={11} className="text-indigo-500" />}
-                    options={STATUS_OPTIONS.filter(opt => opt !== "Reg.Done")}
-                    selectedValues={filterGeneralStatus}
-                    onChange={val => { setFilterGeneralStatus(val); setPage(1); }}
-                    placeholder="Search status..."
-                  />
+                  <div className="space-y-2">
+                    <MultiSelectDropdown
+                      label="Gen. Status"
+                      icon={<CheckCircle2 size={11} className="text-indigo-500" />}
+                      options={[
+                        ...STATUS_OPTIONS.filter(opt => opt !== "Reg.Done"),
+                        "Query Pending",
+                        "Query Solved"
+                      ]}
+                      selectedValues={filterGeneralStatus}
+                      onChange={val => {
+                        setFilterGeneralStatus(val);
+                        setPage(1);
+                      }}
+                      placeholder="Search status..."
+                    />
+                  </div>
+                )}
+
+                {/* Query Status — standalone, always accessible */}
+                {filterVisible.queryStatus && false && (
+                  <div className="space-y-1.5">
+                  </div>
                 )}
 
                 {/* Abhivyakti */}
