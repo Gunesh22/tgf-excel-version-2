@@ -986,20 +986,20 @@ export const subscribeToCallLogs = (...args) => {
           ...rawData,
           _rawData: rawData, // Preserve the exact un-overlaid document data for badge lookups
           
-          // Overlay attender-specific state fields only if they exist, otherwise start clean/unselected
-          status: attState.status !== undefined ? attState.status : "",
-          remark: attState.remark !== undefined ? attState.remark : "",
-          callType: attState.callType !== undefined ? attState.callType : "outgoing",
-          history: attState.history !== undefined ? attState.history : [],
-          callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : null,
-          objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : "",
-          lastCalledAt: attState.lastCalledAt !== undefined ? attState.lastCalledAt : null,
-          firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : null,
-          registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : null,
+          // Overlay attender-specific state fields only if they exist, otherwise fall back to top-level/root document values
+          status: attState.status !== undefined ? attState.status : (rawData.status || ""),
+          remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
+          callType: attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing"),
+          history: attState.history !== undefined ? attState.history : (rawData.history || []),
+          callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
+          objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
+          lastCalledAt: attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null),
+          firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
+          registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : (rawData.registeredYearMonth || null),
           
           // Source and Called For are now attender-specific as well
-          Source: attState.Source !== undefined ? attState.Source : "",
-          "Called For": attState["Called For"] !== undefined ? attState["Called For"] : "",
+          Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
+          "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
           
           attenderId: attenderId,
           attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
