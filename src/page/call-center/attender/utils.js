@@ -279,6 +279,7 @@ export const IGNORED_FIELDS = [
   "assignedto",
   "isassigned",
   "normalizedphone",
+  "normalizedmobile",
   "assignedat",
   "registeredyearmonth",
   "querystatus"
@@ -410,4 +411,18 @@ export const isKhojiNegative = (val) => {
     v.includes("नही") ||
     v.includes("not")
   );
+};
+
+export const updateDynamicOptions = (data) => {
+  if (data) {
+    if (Array.isArray(data.statusOptions)) {
+      STATUS_OPTIONS.splice(0, STATUS_OPTIONS.length, ...data.statusOptions);
+    }
+    if (Array.isArray(data.sourceOptions)) {
+      SOURCE_OPTIONS.splice(0, SOURCE_OPTIONS.length, ...data.sourceOptions);
+    }
+    if (Array.isArray(data.calledForOptions)) {
+      CALLED_FOR_OPTIONS.splice(0, CALLED_FOR_OPTIONS.length, ...data.calledForOptions);
+    }
+  }
 };

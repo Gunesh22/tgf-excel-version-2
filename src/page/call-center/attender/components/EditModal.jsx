@@ -443,7 +443,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       "GHL_ID", "Sub Program", "subProgram", "objectionReason",
       // Firestore-managed fields — never show as editable form fields
       "lastEditedBy", "lastEditedAt", "attenderStates", "assignedTo",
-      "assignedName", "assignedAt", "isAssigned", "normalizedPhone", "registeredYearMonth"
+      "assignedName", "assignedAt", "isAssigned", "normalizedPhone", "normalizedMobile", "registeredYearMonth"
     ];
 
     const contactKeys = Object.keys(edited).filter(k => {
@@ -487,19 +487,35 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     return sortedKeys;
   }, [edited, addedFields]);
 
-  // Debounced duplicate check — only on phone value change, not every keystroke
-  const phoneKey = useMemo(() => {
-    return Object.keys(edited).find(k => {
+  // Debounced duplicate check — only on phone/mobile value change, not every keystroke
+  const phoneVal = useMemo(() => {
+    const key = Object.keys(edited).find(k => {
       const kl = k.toLowerCase();
-      return kl.includes("phone") || kl.includes("number") || kl.includes("cont");
-    });
+      return (kl === "phone") || (kl.includes("phone") && !kl.includes("mobile")) || kl.includes("whatsapp") || (kl.includes("cont") && !kl.includes("mobile"));
+    }) || "Phone";
+    return String(edited[key] || "").trim();
   }, [edited]);
-  const phoneVal = phoneKey ? String(edited[phoneKey] || "").trim() : "";
+
+  const mobileVal = useMemo(() => {
+    const key = Object.keys(edited).find(k => {
+      const kl = k.toLowerCase();
+      return kl.includes("mobile");
+    }) || "Mobile";
+    return String(edited[key] || "").trim();
+  }, [edited]);
 
   const dupTimerRef = useRef(null);
   useEffect(() => {
     if (dupTimerRef.current) clearTimeout(dupTimerRef.current);
-    if (!phoneVal || phoneVal.length < 5) { setGlobalDup(null); return; }
+    
+    const hasPhone = phoneVal && phoneVal.length >= 5;
+    const hasMobile = mobileVal && mobileVal.length >= 5;
+    
+    if (!hasPhone && !hasMobile) {
+      setGlobalDup(null);
+      return;
+    }
+    
     dupTimerRef.current = setTimeout(() => {
       import("../../../../lib/db").then(({ checkGlobalDuplicate }) => {
         // When this modal is for a NEW incoming entry, do NOT exclude any contact id from
@@ -507,12 +523,55 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         // auto-mapping a duplicate) hides the duplicate immediately. Only exclude when
         // editing an existing saved contact.
         const excludeId = row._isNew ? null : (edited.contactId || row.id);
-        checkGlobalDuplicate(phoneVal, excludeId).then((res) => {
-          setGlobalDup(res);
+        
+        const promises = [];
+        if (hasPhone) promises.push(checkGlobalDuplicate(phoneVal, excludeId));
+        if (hasMobile) promises.push(checkGlobalDuplicate(mobileVal, excludeId));
+        
+        Promise.all(promises).then(([res1, res2]) => {
+          // Merge results
+          const r1 = hasPhone ? res1 : null;
+          const r2 = hasMobile ? (hasPhone ? res2 : res1) : null;
+          
+          if (!r1 && !r2) {
+            setGlobalDup(null);
+            return;
+          }
+          
+          // Combine matches and tags
+          const allMatchesMap = new Map();
+          const allTagsSet = new Set();
+          
+          [r1, r2].forEach(res => {
+            if (res && Array.isArray(res.matches)) {
+              res.matches.forEach(m => {
+                allMatchesMap.set(m.id, m);
+              });
+            }
+            if (res && Array.isArray(res.allTags)) {
+              res.allTags.forEach(t => allTagsSet.add(t));
+            }
+          });
+          
+          const combinedMatches = Array.from(allMatchesMap.values());
+          if (combinedMatches.length === 0) {
+            setGlobalDup(null);
+            return;
+          }
+          
+          const combinedRes = {
+            count: combinedMatches.length,
+            allTags: Array.from(allTagsSet).sort(),
+            matches: combinedMatches,
+            first: combinedMatches[0],
+            programName: combinedMatches[0]?.programName
+          };
+          
+          setGlobalDup(combinedRes);
 
           // If we found a duplicate contact and this is a new incoming entry, auto-populate the fields!
-          if (res && res.first && row._isNew) {
-            const dup = res.first;
+          if (combinedRes.first && row._isNew) {
+            const dup = combinedRes.first;
             setEdited(prev => {
               const updated = { ...prev };
               const fieldsToMap = ["Name", "Email", "City", "State", "Khoji"];
@@ -545,7 +604,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       });
     }, 1000);
     return () => { if (dupTimerRef.current) clearTimeout(dupTimerRef.current); };
-  }, [phoneVal, row._isNew, row.id, edited.contactId]);
+  }, [phoneVal, mobileVal, row._isNew, row.id, edited.contactId]);
 
   // Aggregated Call Notes / History from current contact & duplicate contact records
   const mergedHistory = useMemo(() => {
@@ -809,6 +868,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       delete updates.lastEditedBy;
       delete updates.lastEditedAt;
       delete updates.normalizedPhone;
+      delete updates.normalizedMobile;
       if (updates.callbackDate) {
         if (typeof updates.callbackDate === "string") {
           updates.callbackDate = new Date(updates.callbackDate);

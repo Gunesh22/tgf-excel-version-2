@@ -764,7 +764,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
     "type", "callback", "call type", "call_type", "followup", "followup date",
     "history", "lastcalledat", "firstcalledat", "sub program", "subprogram",
     "ghl_id", "_contactrefid", "objectionreason",
-    "normalizedphone", "contactrefid", "conversionSource", "conversionsource",
+    "normalizedphone", "normalizedmobile", "contactrefid", "conversionSource", "conversionsource",
     "convertedat", "convertedby", "isassigned",
     "assignedname", "assignedto", "assignedat", "registeredyearmonth"
   ]), []);

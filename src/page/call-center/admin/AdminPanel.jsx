@@ -9,6 +9,7 @@ import MonthlyReportTab from "./components/MonthlyReportTab";
 import ProgramsTab from "./components/ProgramsTab";
 import AttendersTab from "./components/AttendersTab";
 import AbhivyaktiTab from "./components/AbhivyaktiTab";
+import SettingsTab from "./components/SettingsTab";
 
 export default function AdminPanel({ onExit, onAttendersChange }) {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -93,6 +94,7 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
             {activeTab === "import" && <ImportContacts programs={programs} onImportComplete={refreshAll} />}
             {activeTab === "attenders" && <AttendersTab attenders={attenders} programs={programs} onReloadAttenders={refreshAll} />}
             {activeTab === "abhivyakti" && <AbhivyaktiTab />}
+            {activeTab === "settings" && <SettingsTab />}
           </>
         )}
       </main>

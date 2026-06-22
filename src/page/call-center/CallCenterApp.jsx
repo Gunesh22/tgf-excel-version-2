@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Toaster, toast } from "react-hot-toast";
 import { Heart, Settings, BarChart3, Users, FileSpreadsheet, ClipboardCheck, ChevronRight, Layers, UserCheck, Phone } from "lucide-react";
-import { getAttenders } from "../../lib/db";
+import { getAttenders, subscribeToCallCenterOptions } from "../../lib/db";
+import { updateDynamicOptions } from "./attender/utils";
 import AttenderView from "./attender/AttenderView";
 import AdminPanel from "./admin/AdminPanel";
 
@@ -12,8 +13,17 @@ export default function CallCenterApp() {
   const [selectedAttenderName, setSelectedAttenderName] = useState("");
   const [isLoading, setIsLoading] = useState(true);
 
+  const [optionsVersion, setOptionsVersion] = useState(0);
+
   useEffect(() => {
     load();
+    const unsub = subscribeToCallCenterOptions((data) => {
+      updateDynamicOptions(data);
+      setOptionsVersion(v => v + 1);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
   const load = async () => {

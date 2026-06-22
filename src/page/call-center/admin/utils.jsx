@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  BarChart3, FolderOpen, Upload, Users, ClipboardCheck, FileText
+  BarChart3, FolderOpen, Upload, Users, ClipboardCheck, FileText, Settings
 } from "lucide-react";
 import { isKhojiField } from "../../../lib/khojiHelper";
 
@@ -13,6 +13,7 @@ export const TAB_ITEMS = [
   { id: "import", label: "Lead Distribution 📂", icon: <Upload size={18} /> },
   { id: "attenders", label: "Attenders", icon: <Users size={18} /> },
   { id: "abhivyakti", label: "Abhivyakti", icon: <ClipboardCheck size={18} /> },
+  { id: "settings", label: "Dropdown Options ⚙️", icon: <Settings size={18} /> },
 ];
 
 export const CONNECTED_STATUSES = ["Info given", "Interested", "Reg.Done", "reminder", "Query", "Already Reg.d", "Next time", "Shivir done", "Not possible"];

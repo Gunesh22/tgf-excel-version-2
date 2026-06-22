@@ -252,7 +252,7 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
     "calltype", "status", "remark", "callbackdate", "iscallbackdue",
     "createdat", "updatedat", "history", "callbackstatus", "objectionreason",
     "registeredat", "conversionsource", "convertedby", "_callbackdue", "_deleted", "_isnew",
-    "_contactrefid", "_mappedfields", "sub program", "subprogram", "ghl_id", "normalizedphone", "isassigned"
+    "_contactrefid", "_mappedfields", "sub program", "subprogram", "ghl_id", "normalizedphone", "normalizedmobile", "isassigned"
   ]);
 
   const STANDARD_FIELDS = new Set(["Name", "Phone", "Email", "City", "State", "Khoji", "Source", "Tags"]);
@@ -322,23 +322,30 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
 
     contactUpdate._mappedFields = Array.from(new Set(contactMappedFields));
 
-    // Recompute normalizedPhone safely (without evaluating Firestore delete field token)
+    // Recompute normalizedPhone and normalizedMobile safely (without evaluating Firestore delete field token)
     const newPhoneLookup = getCaseInsensitiveProp(contactUpdate, "Phone");
     const newMobileLookup = getCaseInsensitiveProp(contactUpdate, "Mobile");
     const oldPhoneLookup = getCaseInsensitiveProp(contactData, "Phone");
     const oldMobileLookup = getCaseInsensitiveProp(contactData, "Mobile");
+    
     let phoneVal = "";
     if (newPhoneLookup.found && typeof newPhoneLookup.val === "string" && newPhoneLookup.val.trim()) {
       phoneVal = newPhoneLookup.val;
-    } else if (newMobileLookup.found && typeof newMobileLookup.val === "string" && newMobileLookup.val.trim()) {
-      phoneVal = newMobileLookup.val;
     } else if (oldPhoneLookup.found && typeof oldPhoneLookup.val === "string" && oldPhoneLookup.val.trim()) {
       phoneVal = oldPhoneLookup.val;
-    } else if (oldMobileLookup.found && typeof oldMobileLookup.val === "string" && oldMobileLookup.val.trim()) {
-      phoneVal = oldMobileLookup.val;
     }
     if (phoneVal) {
       contactUpdate.normalizedPhone = normalizePhone(String(phoneVal));
+    }
+
+    let mobileVal = "";
+    if (newMobileLookup.found && typeof newMobileLookup.val === "string" && newMobileLookup.val.trim()) {
+      mobileVal = newMobileLookup.val;
+    } else if (oldMobileLookup.found && typeof oldMobileLookup.val === "string" && oldMobileLookup.val.trim()) {
+      mobileVal = oldMobileLookup.val;
+    }
+    if (mobileVal) {
+      contactUpdate.normalizedMobile = normalizePhone(String(mobileVal));
     }
 
     contactUpdate.updatedAt = serverTimestamp();
@@ -424,9 +431,9 @@ const cleanImportRow = (row) => {
     });
     clean._mappedFields = row._mappedFields.filter(f => ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Source", "Tags"].includes(f));
     
-    // Always ensure normalizedPhone is populated
-    const phoneVal = clean.Phone || clean.Mobile || "";
-    clean.normalizedPhone = normalizePhone(phoneVal);
+    // Always ensure normalizedPhone and normalizedMobile are populated
+    clean.normalizedPhone = normalizePhone(clean.Phone || "");
+    clean.normalizedMobile = normalizePhone(clean.Mobile || "");
     
     return clean;
   }
@@ -511,9 +518,9 @@ const cleanImportRow = (row) => {
     clean._mappedFields = Array.from(new Set(mappedFields));
   }
 
-  // Always ensure normalizedPhone is populated
-  const phoneVal = clean.Phone || clean.Mobile || "";
-  clean.normalizedPhone = normalizePhone(phoneVal);
+  // Always ensure normalizedPhone and normalizedMobile are populated
+  clean.normalizedPhone = normalizePhone(clean.Phone || "");
+  clean.normalizedMobile = normalizePhone(clean.Mobile || "");
 
   return clean;
 };
@@ -534,7 +541,7 @@ export const importContacts = async (param1, param2, param3, param4 = null) => {
   const MAX_BATCH_OPS = 499;
   let imported = 0;
   
-  // Track GHL IDs and phone numbers processed in this import to prevent internal duplicates in the Excel/GHL sheet
+  // Track GHL IDs and phone/mobile numbers processed in this import to prevent internal duplicates in the Excel/GHL sheet
   const processedGhlIds = new Set();
   const processedPhones = new Set();
   const uniqueRowsToImport = [];
@@ -550,15 +557,24 @@ export const importContacts = async (param1, param2, param3, param4 = null) => {
       processedGhlIds.add(cleaned.GHL_ID);
     }
 
-    // Check local duplicate by normalizedPhone
-    const phoneVal = cleaned.Phone || cleaned.Mobile || "";
-    const norm = normalizePhone(phoneVal);
-    if (norm) {
-      if (processedPhones.has(norm)) {
+    // Check local duplicate by normalizedPhone and normalizedMobile (cross-matching within the same sheet)
+    const normPhone = normalizePhone(cleaned.Phone || "");
+    const normMobile = normalizePhone(cleaned.Mobile || "");
+    
+    if (normPhone) {
+      if (processedPhones.has(normPhone)) {
         return; // Skip duplicate within the same sheet
       }
-      processedPhones.add(norm);
     }
+    if (normMobile) {
+      if (processedPhones.has(normMobile)) {
+        return; // Skip duplicate within the same sheet
+      }
+    }
+    
+    if (normPhone) processedPhones.add(normPhone);
+    if (normMobile) processedPhones.add(normMobile);
+    
     uniqueRowsToImport.push(cleaned);
   });
 
@@ -583,39 +599,68 @@ export const importContacts = async (param1, param2, param3, param4 = null) => {
     });
   }
 
-  // Query Firestore in batches of 30 to check for existing contacts GLOBALLY by normalizedPhone
-  const existingContactsByPhone = new Map(); // normalizedPhone -> Array<{ref, data}>
+  // Query Firestore in batches of 30 to check for existing contacts GLOBALLY by normalizedPhone or normalizedMobile
+  const existingContactsByPhone = new Map(); // normalizedNumber -> Array<{ref, data}>
   const normPhonesList = Array.from(processedPhones).filter(Boolean);
   for (let i = 0; i < normPhonesList.length; i += 30) {
     const phoneBatch = normPhonesList.slice(i, i + 30);
-    const q = query(
+    
+    // Query by normalizedPhone
+    const q1 = query(
       collection(db, "contacts"),
       where("normalizedPhone", "in", phoneBatch)
     );
-    const snap = await getDocs(q);
-    snap.docs.forEach(docSnap => {
-      const data = formatContactDoc(docSnap);
-      if (data.normalizedPhone) {
-        if (!existingContactsByPhone.has(data.normalizedPhone)) {
-          existingContactsByPhone.set(data.normalizedPhone, []);
+    // Query by normalizedMobile
+    const q2 = query(
+      collection(db, "contacts"),
+      where("normalizedMobile", "in", phoneBatch)
+    );
+    
+    const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+    
+    const processSnap = (snap) => {
+      snap.docs.forEach(docSnap => {
+        const data = formatContactDoc(docSnap);
+        // Index under whichever normalized number matches our search batch
+        if (data.normalizedPhone && phoneBatch.includes(data.normalizedPhone)) {
+          if (!existingContactsByPhone.has(data.normalizedPhone)) {
+            existingContactsByPhone.set(data.normalizedPhone, []);
+          }
+          const list = existingContactsByPhone.get(data.normalizedPhone);
+          if (!list.some(item => item.ref.id === docSnap.ref.id)) {
+            list.push({ ref: docSnap.ref, data });
+          }
         }
-        existingContactsByPhone.get(data.normalizedPhone).push({ ref: docSnap.ref, data });
-      }
-    });
+        if (data.normalizedMobile && phoneBatch.includes(data.normalizedMobile)) {
+          if (!existingContactsByPhone.has(data.normalizedMobile)) {
+            existingContactsByPhone.set(data.normalizedMobile, []);
+          }
+          const list = existingContactsByPhone.get(data.normalizedMobile);
+          if (!list.some(item => item.ref.id === docSnap.ref.id)) {
+            list.push({ ref: docSnap.ref, data });
+          }
+        }
+      });
+    };
+    
+    processSnap(snap1);
+    processSnap(snap2);
   }
 
   const batchWriteOps = [];
 
   uniqueRowsToImport.forEach(cleaned => {
-    // Find matching existing contacts, prioritizing GHL_ID first, then normalizedPhone
+    // Find matching existing contacts, prioritizing GHL_ID first, then normalizedPhone/normalizedMobile
     let existingList = [];
     if (cleaned.GHL_ID && existingContactsByGhl.has(cleaned.GHL_ID)) {
       existingList = existingContactsByGhl.get(cleaned.GHL_ID);
     } else {
-      const phoneVal = cleaned.Phone || cleaned.Mobile || "";
-      const norm = normalizePhone(phoneVal);
-      if (norm && existingContactsByPhone.has(norm)) {
-        existingList = existingContactsByPhone.get(norm);
+      const normPhone = normalizePhone(cleaned.Phone || "");
+      const normMobile = normalizePhone(cleaned.Mobile || "");
+      if (normPhone && existingContactsByPhone.has(normPhone)) {
+        existingList = existingContactsByPhone.get(normPhone);
+      } else if (normMobile && existingContactsByPhone.has(normMobile)) {
+        existingList = existingContactsByPhone.get(normMobile);
       }
     }
 
@@ -805,14 +850,29 @@ export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
   if (!phone) return null;
   const norm = normalizePhone(phone);
   if (!norm) return null;
-  const q = query(
+  
+  const q1 = query(
     collection(db, "contacts"),
     where("normalizedPhone", "==", norm)
   );
-  const snap = await getDocs(q);
-  const matches = snap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
+  const q2 = query(
+    collection(db, "contacts"),
+    where("normalizedMobile", "==", norm)
+  );
+  
+  const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+  
+  const matchesMap = new Map();
+  snap1.docs.forEach(d => {
+    matchesMap.set(d.id, { id: d.id, ...d.data() });
+  });
+  snap2.docs.forEach(d => {
+    matchesMap.set(d.id, { id: d.id, ...d.data() });
+  });
+  
+  const matches = Array.from(matchesMap.values())
     .filter(d => d._deleted !== true && d.id !== excludeContactId);
+    
   if (matches.length === 0) return null;
 
   // Collect all unique tags across every duplicate record
@@ -1051,11 +1111,18 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     console.warn("Failed to fetch previous status", e);
   }
 
-  // Update normalizedPhone if phone field is modified
-  const phoneFields = ["Phone", "Cont No", "Number", "Mobile", "phone number", "phone", "whatsapp"];
-  const updatedPhoneKey = Object.keys(updates).find(k => phoneFields.includes(k) || k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile"));
+  // Update normalizedPhone and normalizedMobile if phone/mobile fields are modified
+  const phoneFields = ["Phone", "phone number", "phone", "whatsapp"];
+  const mobileFields = ["Mobile", "mobile number", "mobile no", "mobile"];
+  
+  const updatedPhoneKey = Object.keys(updates).find(k => phoneFields.includes(k) || k.toLowerCase().includes("phone"));
+  const updatedMobileKey = Object.keys(updates).find(k => mobileFields.includes(k) || k.toLowerCase().includes("mobile"));
+  
   if (updatedPhoneKey) {
     updates.normalizedPhone = normalizePhone(updates[updatedPhoneKey]);
+  }
+  if (updatedMobileKey) {
+    updates.normalizedMobile = normalizePhone(updates[updatedMobileKey]);
   }
 
   // When Tags string is edited (from EditModal), convert to tags array and remove Tags field
@@ -1253,20 +1320,49 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   // Never store Tags string — only the array
   const { Tags: _ignored, tags: _ignored2, ...rest } = data;
 
-  const phoneVal = rest.Phone || rest["Cont No"] || rest.phone || rest.Number || rest.Mobile || "";
-  const normalizedPhone = normalizePhone(phoneVal);
+  const normPhone = normalizePhone(rest.Phone || rest["Cont No"] || rest.phone || rest.Number || "");
+  const normMobile = normalizePhone(rest.Mobile || "");
 
   let docRef = null;
   let isExisting = false;
   let existingDocId = null;
   let existingData = {};
 
-  if (normalizedPhone) {
+  if (normPhone || normMobile) {
     try {
-      const existingSnap = await getDocs(query(
-        collection(db, "contacts"),
-        where("normalizedPhone", "==", normalizedPhone)
-      ));
+      let existingSnap;
+      if (normPhone && normMobile) {
+        // Run both queries in parallel to ensure compatibility with standard indices
+        const q1 = query(collection(db, "contacts"), where("normalizedPhone", "in", [normPhone, normMobile]));
+        const q2 = query(collection(db, "contacts"), where("normalizedMobile", "in", [normPhone, normMobile]));
+        const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+        
+        const mergedDocs = [];
+        const seenIds = new Set();
+        [...snap1.docs, ...snap2.docs].forEach(d => {
+          if (!seenIds.has(d.id)) {
+            seenIds.add(d.id);
+            mergedDocs.push(d);
+          }
+        });
+        existingSnap = { empty: mergedDocs.length === 0, docs: mergedDocs };
+      } else {
+        const target = normPhone || normMobile;
+        const q1 = query(collection(db, "contacts"), where("normalizedPhone", "==", target));
+        const q2 = query(collection(db, "contacts"), where("normalizedMobile", "==", target));
+        const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+        
+        const mergedDocs = [];
+        const seenIds = new Set();
+        [...snap1.docs, ...snap2.docs].forEach(d => {
+          if (!seenIds.has(d.id)) {
+            seenIds.add(d.id);
+            mergedDocs.push(d);
+          }
+        });
+        existingSnap = { empty: mergedDocs.length === 0, docs: mergedDocs };
+      }
+
       if (!existingSnap.empty) {
         // Find ANY existing active document
         const matchDoc = existingSnap.docs.find(docSnap => docSnap.data()._deleted !== true) || existingSnap.docs[0];
@@ -1277,7 +1373,7 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
         }
       }
     } catch (e) {
-      console.warn("[addIncomingCallLog] Phone lookup failed:", e);
+      console.warn("[addIncomingCallLog] Phone/Mobile lookup failed:", e);
     }
   }
 
@@ -1341,7 +1437,8 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
     "Called For": rest["Called For"] || existingData["Called For"] || "",
     "Program / Tag Mapping": rest["Program / Tag Mapping"] || existingData["Program / Tag Mapping"] || "",
     GHL_ID: rest.GHL_ID || existingData.GHL_ID || "",
-    normalizedPhone: normalizedPhone || existingData.normalizedPhone || ""
+    normalizedPhone: normPhone || existingData.normalizedPhone || "",
+    normalizedMobile: normMobile || existingData.normalizedMobile || ""
   };
 
   // Merge tags
@@ -1451,6 +1548,14 @@ export const globalSearchContacts = async (queryStr) => {
         query(
           collection(db, "contacts"),
           where("normalizedPhone", "==", norm.slice(-10))
+        )
+      )
+    );
+    queries.push(
+      getDocs(
+        query(
+          collection(db, "contacts"),
+          where("normalizedMobile", "==", norm.slice(-10))
         )
       )
     );
@@ -1960,3 +2065,135 @@ export const deleteExcelFromCloud = async () => {
   const docRef = doc(db, "excelSheets", "current");
   await deleteDoc(docRef);
 };
+
+// ─────────────────────────────────────────────
+// CALL CENTER SETTINGS OPTIONS
+// ─────────────────────────────────────────────
+
+const DEFAULT_STATUS_OPTIONS = [
+  "Interested",
+  "Reg.Done",
+  "Not interested",
+  "NA",
+  "Busy",
+  "Call Cut",
+  "switched off",
+  "Invalid No",
+  "Already Reg.d",
+  "Info given",
+  "Next time",
+  "reminder",
+  "Query",
+  "Called by mistake",
+  "Not possible",
+  "Shivir done",
+  "no answer"
+];
+
+const DEFAULT_SOURCE_OPTIONS = [
+  "Facebook",
+  "Instagram",
+  "WhatsApp",
+  "YouTube",
+  "Google",
+  "Website",
+  "Books",
+  "Call Centre",
+  "Program",
+  "Khoji",
+  "Other",
+  "NA"
+];
+
+const DEFAULT_CALLED_FOR_OPTIONS = [
+  "Other",
+  "TGF Info",
+  "CBT Avd",
+  "CBT Basic",
+  "Off MA",
+  "On MA",
+  "On MA Hindi",
+  "On MA Eng.",
+  "Dhyan",
+  "Nisarg Dhyan",
+  "BUP",
+  "BUT",
+  "Hair Program",
+  "Hair Avd",
+  "Pranayam",
+  "Pranayam Avd",
+  "Program",
+  "Shravan",
+  "App",
+  "Special MA",
+  "Spiritual H",
+  "Swasthya Shivir",
+  "Ashram Visit",
+  "Mini Shivir",
+  "Kids Shivir",
+  "Reminder",
+  "Yoga 1 Month",
+  "Yoga 3 Month",
+  "Yoga 6 Month",
+  "Yoga 1 Yr",
+  "SHSH",
+  "Digestive Basic",
+  "Digestive Avd",
+  "Spine Basic",
+  "Spine Avd"
+];
+
+export const getSettingsOptions = async () => {
+  const docRef = doc(db, "settings", "call_center_options");
+  const snap = await getDoc(docRef);
+  if (snap.exists()) {
+    const data = snap.data();
+    return {
+      statusOptions: data.statusOptions || DEFAULT_STATUS_OPTIONS,
+      sourceOptions: data.sourceOptions || DEFAULT_SOURCE_OPTIONS,
+      calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS
+    };
+  }
+  
+  // Create default options if not exists
+  const defaults = {
+    statusOptions: DEFAULT_STATUS_OPTIONS,
+    sourceOptions: DEFAULT_SOURCE_OPTIONS,
+    calledForOptions: DEFAULT_CALLED_FOR_OPTIONS
+  };
+  await setDoc(docRef, defaults);
+  return defaults;
+};
+
+export const updateCallCenterOptions = async (updates) => {
+  const docRef = doc(db, "settings", "call_center_options");
+  await setDoc(docRef, updates, { merge: true });
+};
+
+export const subscribeToCallCenterOptions = (onUpdate) => {
+  const docRef = doc(db, "settings", "call_center_options");
+  return onSnapshot(docRef, (snap) => {
+    if (snap.exists()) {
+      const data = snap.data();
+      onUpdate({
+        statusOptions: data.statusOptions || DEFAULT_STATUS_OPTIONS,
+        sourceOptions: data.sourceOptions || DEFAULT_SOURCE_OPTIONS,
+        calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS
+      });
+    } else {
+      // Initialize with defaults if it doesn't exist yet
+      const defaults = {
+        statusOptions: DEFAULT_STATUS_OPTIONS,
+        sourceOptions: DEFAULT_SOURCE_OPTIONS,
+        calledForOptions: DEFAULT_CALLED_FOR_OPTIONS
+      };
+      setDoc(docRef, defaults).then(() => {
+        onUpdate(defaults);
+      }).catch(e => {
+        console.error("Failed to initialize default settings options:", e);
+        onUpdate(defaults);
+      });
+    }
+  });
+};
+
