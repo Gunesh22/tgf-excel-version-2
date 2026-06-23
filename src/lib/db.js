@@ -871,7 +871,7 @@ export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
   });
   
   const matches = Array.from(matchesMap.values())
-    .filter(d => d._deleted !== true && d.id !== excludeContactId && d.isAssigned === true);
+    .filter(d => d._deleted !== true && d.id !== excludeContactId);
     
   if (matches.length === 0) return null;
 

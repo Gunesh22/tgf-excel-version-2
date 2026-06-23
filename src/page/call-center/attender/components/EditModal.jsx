@@ -1010,45 +1010,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                     {edited.history.length} call{edited.history.length > 1 ? "s" : ""}
                   </span>
                 )}
-                {globalDup && (
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setDupPopoverOpen(v => !v)}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-400 hover:bg-amber-300 text-amber-950 font-bold text-[10px] rounded uppercase transition"
-                      style={{ animation: dupPopoverOpen ? "none" : "dupPulse 1.4s ease-in-out infinite" }}
-                    >
-                      <AlertCircle size={10} /> Duplicate Exists
-                    </button>
-                    {dupPopoverOpen && (
-                      <div
-                        className="absolute left-0 top-full mt-1.5 z-50 bg-white rounded-xl shadow-2xl border border-amber-200 p-3 min-w-[220px] max-w-[300px]"
-                        style={{ boxShadow: "0 8px 32px rgba(251,191,36,0.18)" }}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">
-                            {globalDup.count > 1 ? `${globalDup.count} duplicates — enrolled in:` : "Enrolled in:"}
-                          </span>
-                          <button onClick={() => setDupPopoverOpen(false)} className="text-gray-400 hover:text-gray-600">
-                            <X size={12} />
-                          </button>
-                        </div>
-                        {(globalDup.allTags || []).length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {globalDup.allTags.map((t, i) => (
-                              <span key={i} className="inline-flex items-center px-2 py-0.5 bg-amber-50 text-amber-800 rounded-full text-[10px] font-semibold border border-amber-200">
-                                #{t}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-gray-400 text-xs italic">No tags found</span>
-                        )}
-                      </div>
-                    )}
-                    <style>{`@keyframes dupPulse { 0%,100%{opacity:1} 50%{opacity:.55} }`}</style>
-                  </div>
-                )}
+
                 {getLastEditedBy() && (
                   <span className="text-[10px] font-bold text-white/70 uppercase tracking-wider">
                     Last edited by: {getLastEditedBy()}
