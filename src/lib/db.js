@@ -2161,7 +2161,7 @@ export const getSettingsOptions = async () => {
     sourceOptions: DEFAULT_SOURCE_OPTIONS,
     calledForOptions: DEFAULT_CALLED_FOR_OPTIONS
   };
-  await setDoc(docRef, defaults);
+  await setDoc(docRef, defaults, { merge: true });
   return defaults;
 };
 
@@ -2187,7 +2187,7 @@ export const subscribeToCallCenterOptions = (onUpdate) => {
         sourceOptions: DEFAULT_SOURCE_OPTIONS,
         calledForOptions: DEFAULT_CALLED_FOR_OPTIONS
       };
-      setDoc(docRef, defaults).then(() => {
+      setDoc(docRef, defaults, { merge: true }).then(() => {
         onUpdate(defaults);
       }).catch(e => {
         console.error("Failed to initialize default settings options:", e);
