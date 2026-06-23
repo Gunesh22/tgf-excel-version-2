@@ -7,7 +7,7 @@ import {
   ChevronDown, Check, Search
 } from "lucide-react";
 import {
-  addIncomingCallLog, updateCallLog, createProgram
+  addIncomingCallLog, updateCallLog, createProgram, checkGlobalDuplicate
 } from "../../../../lib/db";
 import {
   STATUS_OPTIONS,
@@ -308,9 +308,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       }
     }
 
-    // 3. Get values from legacy duplicate docs (if any)
+    // 3. Get values from legacy duplicate docs (if any) - only show duplicate info if it exists in someone's sheet (isAssigned is true)
     if (globalDup && Array.isArray(globalDup.matches)) {
-      const otherEdits = globalDup.matches.filter(m => m.id !== row.id);
+      const otherEdits = globalDup.matches.filter(m => m.id !== row.id && (m.isAssigned === true || m.assignedTo));
       otherEdits.forEach(m => {
         const name = m.assignedName || m.attenderName || "Unknown";
         const val = extractVal(m, fieldKey);
@@ -355,7 +355,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     }
     
     if (globalDup && Array.isArray(globalDup.matches)) {
-      globalDup.matches.forEach(m => {
+      globalDup.matches.filter(m => m.isAssigned === true || m.assignedTo).forEach(m => {
         if (m.updatedAt) {
           const t = m.updatedAt?.toMillis ? m.updatedAt.toMillis() : new Date(m.updatedAt).getTime();
           if (t > latestTime) {
@@ -507,104 +507,222 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   const dupTimerRef = useRef(null);
   useEffect(() => {
     if (dupTimerRef.current) clearTimeout(dupTimerRef.current);
-    
+
     const hasPhone = phoneVal && phoneVal.length >= 5;
     const hasMobile = mobileVal && mobileVal.length >= 5;
-    
+
     if (!hasPhone && !hasMobile) {
       setGlobalDup(null);
       return;
     }
-    
-    dupTimerRef.current = setTimeout(() => {
-      import("../../../../lib/db").then(({ checkGlobalDuplicate }) => {
-        // When this modal is for a NEW incoming entry, do NOT exclude any contact id from
-        // the duplicate lookup. Excluding `edited.contactId` (which we may set after
-        // auto-mapping a duplicate) hides the duplicate immediately. Only exclude when
-        // editing an existing saved contact.
+
+    dupTimerRef.current = setTimeout(async () => {
+      try {
+        // For NEW incoming entries, don't exclude any id so all matches show.
+        // For existing contacts, exclude self so we only flag TRUE duplicates (different docs).
         const excludeId = row._isNew ? null : (edited.contactId || row.id);
-        
-        const promises = [];
-        if (hasPhone) promises.push(checkGlobalDuplicate(phoneVal, excludeId));
-        if (hasMobile) promises.push(checkGlobalDuplicate(mobileVal, excludeId));
-        
-        Promise.all(promises).then(([res1, res2]) => {
-          // Merge results
-          const r1 = hasPhone ? res1 : null;
-          const r2 = hasMobile ? (hasPhone ? res2 : res1) : null;
-          
-          if (!r1 && !r2) {
-            setGlobalDup(null);
-            return;
+
+        const results = await Promise.all([
+          hasPhone  ? checkGlobalDuplicate(phoneVal,  excludeId) : Promise.resolve(null),
+          hasMobile ? checkGlobalDuplicate(mobileVal, excludeId) : Promise.resolve(null),
+        ]);
+
+        const [r1, r2] = results;
+
+        if (!r1 && !r2) {
+          setGlobalDup(null);
+          return;
+        }
+
+        // Merge all matches across phone + mobile results
+        const allMatchesMap = new Map();
+        const allTagsSet   = new Set();
+
+        [r1, r2].forEach(res => {
+          if (!res) return;
+          if (Array.isArray(res.matches)) {
+            res.matches.forEach(m => allMatchesMap.set(m.id, m));
           }
-          
-          // Combine matches and tags
-          const allMatchesMap = new Map();
-          const allTagsSet = new Set();
-          
-          [r1, r2].forEach(res => {
-            if (res && Array.isArray(res.matches)) {
-              res.matches.forEach(m => {
-                allMatchesMap.set(m.id, m);
-              });
-            }
-            if (res && Array.isArray(res.allTags)) {
-              res.allTags.forEach(t => allTagsSet.add(t));
-            }
-          });
-          
-          const combinedMatches = Array.from(allMatchesMap.values());
-          if (combinedMatches.length === 0) {
-            setGlobalDup(null);
-            return;
-          }
-          
-          const combinedRes = {
-            count: combinedMatches.length,
-            allTags: Array.from(allTagsSet).sort(),
-            matches: combinedMatches,
-            first: combinedMatches[0],
-            programName: combinedMatches[0]?.programName
-          };
-          
-          setGlobalDup(combinedRes);
-
-          // If we found a duplicate contact and this is a new incoming entry, auto-populate the fields!
-          if (combinedRes.first && row._isNew) {
-            const dup = combinedRes.first;
-            setEdited(prev => {
-              const updated = { ...prev };
-              const fieldsToMap = ["Name", "Email", "City", "State", "Khoji"];
-              
-              fieldsToMap.forEach(f => {
-                const dupVal = getFieldWithFallback(dup, f);
-                if (!String(updated[f] || "").trim() && dupVal) {
-                  updated[f] = dupVal;
-                }
-              });
-
-              // Map Tags specifically
-              const dupTagsVal = getFieldWithFallback(dup, "tags");
-              if (!String(updated.Tags || "").trim() && dupTagsVal) {
-                updated.Tags = dupTagsVal;
-              }
-
-              // Set contactId and GHL_ID
-              if (!updated.contactId) {
-                updated.contactId = dup.contactId || dup.id;
-              }
-              if (!updated.GHL_ID && dup.GHL_ID) {
-                updated.GHL_ID = dup.GHL_ID;
-              }
-
-              return updated;
-            });
+          if (Array.isArray(res.allTags)) {
+            res.allTags.forEach(t => allTagsSet.add(t));
           }
         });
-      });
-    }, 1000);
+
+        const combinedMatches = Array.from(allMatchesMap.values());
+        if (combinedMatches.length === 0) {
+          setGlobalDup(null);
+          return;
+        }
+
+        const dup = combinedMatches[0];
+
+        setGlobalDup({
+          count:       combinedMatches.length,
+          allTags:     Array.from(allTagsSet).sort(),
+          matches:     combinedMatches,
+          first:       dup,
+          programName: dup?.programName,
+        });
+
+        // ── Auto-fill all contact fields from the duplicate ──
+        if (dup) {
+          setEdited(prev => {
+            const updated = { ...prev };
+
+            // Standard personal fields — only fill if currently empty
+            ["Name", "Email", "City", "State", "Khoji"].forEach(f => {
+              const dupVal = getFieldWithFallback(dup, f);
+              if (!String(updated[f] || "").trim() && dupVal) {
+                updated[f] = dupVal;
+              }
+            });
+
+            // Tags
+            const dupTagsVal = getFieldWithFallback(dup, "tags") || getFieldWithFallback(dup, "Tags");
+            if (!String(updated.Tags || "").trim() && dupTagsVal) {
+              updated.Tags = dupTagsVal;
+            }
+
+            // Source & Called For — always carry over from duplicate
+            const dupSource = getFieldWithFallback(dup, "Source") || getFieldWithFallback(dup, "source");
+            if (dupSource) updated.Source = dupSource;
+
+            const dupCalledFor = getFieldWithFallback(dup, "Called For") || getFieldWithFallback(dup, "calledFor");
+            if (dupCalledFor) updated["Called For"] = dupCalledFor;
+
+            // Link contact identity
+            if (!updated.contactId) {
+              updated.contactId = dup.contactId || dup.id;
+            }
+            if (!updated.GHL_ID && dup.GHL_ID) {
+              updated.GHL_ID = dup.GHL_ID;
+            }
+
+            // All other custom / dynamic fields — fill if empty
+            const skipKeys = new Set([
+              "id", "contactid", "ghl_id", "normalizedphone", "normalizedmobile",
+              "assignedto", "assignedname", "assignedat", "isassigned", "history",
+              "createdat", "updatedat", "lasteditedby", "lasteditedat", "createdtime",
+              "attenderid", "attendername", "programid", "programname", "remark", "status",
+              "calltype", "querystatus", "objectionreason", "callbackdate", "callbackstatus",
+              "ishotlead", "firstcalledat", "lastcalledat", "_isnew", "_rawdata", "_deleted",
+              "attenderstates", "tags"
+            ]);
+
+            Object.keys(dup).forEach(k => {
+              if (skipKeys.has(k.toLowerCase())) return;
+              const dupVal = dup[k];
+              if (dupVal === undefined || dupVal === null || String(dupVal).trim() === "") return;
+              const existingKey = Object.keys(updated).find(x => x.toLowerCase() === k.toLowerCase());
+              if (existingKey) {
+                if (!String(updated[existingKey] || "").trim()) {
+                  updated[existingKey] = dupVal;
+                }
+              } else {
+                updated[k] = dupVal;
+              }
+            });
+
+            return updated;
+          });
+        }
+      } catch (err) {
+        console.error("[EditModal] Duplicate check failed:", err);
+        setGlobalDup(null);
+      }
+    }, 800);
+
     return () => { if (dupTimerRef.current) clearTimeout(dupTimerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phoneVal, mobileVal, row._isNew, row.id, edited.contactId]);
+
+  const isPhoneDuplicate = useMemo(() => {
+    if (!globalDup || !globalDup.first || !phoneVal) return false;
+    const rawNorm = phoneVal.replace(/\D/g, "");
+    if (!rawNorm) return false;
+    const norm = rawNorm.length >= 10 ? rawNorm.slice(-10) : rawNorm;
+    const first = globalDup.first;
+    return (
+      first.normalizedPhone === norm ||
+      first.normalizedMobile === norm ||
+      (Array.isArray(first.normalizedPhones) && first.normalizedPhones.includes(norm))
+    );
+  }, [globalDup, phoneVal]);
+
+  const isMobileDuplicate = useMemo(() => {
+    if (!globalDup || !globalDup.first || !mobileVal) return false;
+    const rawNorm = mobileVal.replace(/\D/g, "");
+    if (!rawNorm) return false;
+    const norm = rawNorm.length >= 10 ? rawNorm.slice(-10) : rawNorm;
+    const first = globalDup.first;
+    return (
+      first.normalizedPhone === norm ||
+      first.normalizedMobile === norm ||
+      (Array.isArray(first.normalizedPhones) && first.normalizedPhones.includes(norm))
+    );
+  }, [globalDup, mobileVal]);
+
+  const handleAutofillFromDuplicate = () => {
+    if (!globalDup || !globalDup.first) return;
+    const dup = globalDup.first;
+    setEdited(prev => {
+      const updated = { ...prev };
+      
+      // 1. Autofill standard fields
+      const fieldsToMap = ["Name", "Email", "City", "State", "Khoji"];
+      fieldsToMap.forEach(f => {
+        const dupVal = getFieldWithFallback(dup, f);
+        if (!String(updated[f] || "").trim() && dupVal) {
+          updated[f] = dupVal;
+        }
+      });
+
+      // Map Tags specifically
+      const dupTagsVal = getFieldWithFallback(dup, "tags") || getFieldWithFallback(dup, "Tags");
+      if (!String(updated.Tags || "").trim() && dupTagsVal) {
+        updated.Tags = dupTagsVal;
+      }
+
+      // Set contactId and GHL_ID
+      if (!updated.contactId) {
+        updated.contactId = dup.contactId || dup.id;
+      }
+      if (!updated.GHL_ID && dup.GHL_ID) {
+        updated.GHL_ID = dup.GHL_ID;
+      }
+
+      // 2. Autofill all other fields (custom / dynamic fields)
+      Object.keys(dup).forEach(k => {
+        const kl = k.toLowerCase();
+        if ([
+          "id", "contactid", "ghl_id", "normalizedphone", "normalizedmobile",
+          "assignedto", "assignedname", "assignedat", "isassigned", "history",
+          "createdat", "updatedat", "lasteditedby", "lasteditedat", "createdtime",
+          "attenderid", "attendername", "programid", "programname", "remark", "status",
+          "calltype", "querystatus", "objectionreason", "callbackdate", "callbackstatus",
+          "ishotlead", "firstcalledat", "lastcalledat", "_isnew", "_rawdata", "_deleted",
+          "attenderstates", "tags"
+        ].includes(kl)) {
+          return;
+        }
+
+        const dupVal = dup[k];
+        if (dupVal !== undefined && dupVal !== null && String(dupVal).trim() !== "") {
+          const existingKey = Object.keys(updated).find(x => x.toLowerCase() === kl);
+          if (existingKey) {
+            if (!String(updated[existingKey] || "").trim()) {
+              updated[existingKey] = dupVal;
+            }
+          } else {
+            updated[k] = dupVal;
+          }
+        }
+      });
+
+      return updated;
+    });
+    toast.success("Autofilled contact details from duplicate entry!");
+  };
 
   // Aggregated Call Notes / History from current contact & duplicate contact records
   const mergedHistory = useMemo(() => {
@@ -687,8 +805,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
     // 3. Fallback: also include duplicate contacts' history if globalDup has matches
     if (globalDup && Array.isArray(globalDup.matches)) {
-      globalDup.matches.forEach(m => {
-        if (m.id === row.id) return;
+      globalDup.matches.filter(m => m.id !== row.id && (m.isAssigned === true || m.assignedTo)).forEach(m => {
         const progName = m.programName || "Duplicate Lead";
         if (Array.isArray(m.history)) {
           m.history.forEach(h => {
@@ -1042,28 +1159,17 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         </div>
 
         <div ref={modalScrollRef} className="overflow-y-auto flex-1 p-8 space-y-8">
-          {/* Call Type and Options */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              Call Type
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {CALL_TYPE_OPTIONS.map(opt => (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() => handleCallTypeChange(opt)}
-                  className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${
-                    edited.callType === opt
-                      ? "bg-slate-800 text-white border-slate-800 shadow-md scale-105"
-                      : "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-200"
-                  }`}
-                >
-                  {opt === "outgoing f" ? "Outgoing (F)" : opt === "incoming f" ? "Incoming (F)" : opt.charAt(0).toUpperCase() + opt.slice(1)}
-                </button>
-              ))}
+          {globalDup && globalDup.first && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 animate-slide-up shadow-sm">
+              <AlertCircle className="text-amber-500 shrink-0" size={16} />
+              <p className="text-xs font-bold text-amber-800">
+                Already present in{" "}
+                <span className="bg-amber-200/70 px-2 py-0.5 rounded-lg text-amber-900">
+                  {globalDup.first.assignedName || globalDup.first.attenderName || globalDup.first.programName || "another sheet"}
+                </span>
+              </p>
             </div>
-          </div>
+          )}
 
           {/* Primary Contact Grid */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -1087,8 +1193,15 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
             {/* Phone */}
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                <Phone size={11} className="text-blue-500" /> Phone
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center justify-between gap-1 mb-1">
+                <span className="flex items-center gap-1">
+                  <Phone size={11} className="text-blue-500" /> Phone
+                </span>
+                {isPhoneDuplicate && (
+                  <span className="text-[9px] text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5 font-bold flex items-center gap-0.5 animate-pulse">
+                    ⚠️ Duplicate Detected
+                  </span>
+                )}
               </label>
               <input
                 value={edited.Phone || ""}
@@ -1097,6 +1210,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
                   !getEditable("Phone")
                     ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                    : isPhoneDuplicate
+                    ? "bg-amber-50 border-amber-400 text-amber-900 placeholder:text-amber-300 focus:ring-amber-500/20 focus:border-amber-500 focus:bg-white"
                     : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
                 }`}
                 placeholder="Enter Phone..."
@@ -1105,8 +1220,15 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
             {/* Mobile */}
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                <Phone size={11} className="text-blue-500" /> Mobile
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center justify-between gap-1 mb-1">
+                <span className="flex items-center gap-1">
+                  <Phone size={11} className="text-blue-500" /> Mobile
+                </span>
+                {isMobileDuplicate && (
+                  <span className="text-[9px] text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5 font-bold flex items-center gap-0.5 animate-pulse">
+                    ⚠️ Duplicate Detected
+                  </span>
+                )}
               </label>
               <input
                 value={edited.Mobile || ""}
@@ -1115,6 +1237,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
                   !getEditable("Mobile")
                     ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                    : isMobileDuplicate
+                    ? "bg-amber-50 border-amber-400 text-amber-900 placeholder:text-amber-300 focus:ring-amber-500/20 focus:border-amber-500 focus:bg-white"
                     : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
                 }`}
                 placeholder="Enter Mobile..."
@@ -1239,6 +1363,29 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                   ));
                 })()}
               </div>
+            </div>
+          </div>
+
+          {/* Call Type and Options */}
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+              Call Type
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {CALL_TYPE_OPTIONS.map(opt => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => handleCallTypeChange(opt)}
+                  className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${
+                    edited.callType === opt
+                      ? "bg-slate-800 text-white border-slate-800 shadow-md scale-105"
+                      : "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-200"
+                  }`}
+                >
+                  {opt === "outgoing f" ? "Outgoing (F)" : opt === "incoming f" ? "Incoming (F)" : opt.charAt(0).toUpperCase() + opt.slice(1)}
+                </button>
+              ))}
             </div>
           </div>
 

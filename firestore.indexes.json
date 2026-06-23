@@ -6,6 +6,14 @@
       "fields": [
         { "fieldPath": "normalizedPhone", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "contacts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tags", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "isAssigned", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

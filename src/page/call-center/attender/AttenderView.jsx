@@ -33,7 +33,7 @@ import { AttenderFilters } from "./components/AttenderFilters";
 import { ContactTable } from "./components/ContactTable";
 
 // ─── Main Attender View ───────────────────────
-export default function AttenderView({ attenderId, attenderName, onExit }) {
+export default function AttenderView({ attenderId, attenderName, optionsVersion, onExit }) {
   const [programs, setPrograms] = useState([]);
   const [selectedProgramId, setSelectedProgramId] = useState("");
   const [selectedProgramName, setSelectedProgramName] = useState("");
@@ -512,7 +512,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
       if (k && log[k]) set.add(String(log[k]).trim());
     });
     return Array.from(set).sort();
-  }, [tagFilteredLogs]);
+  }, [tagFilteredLogs, optionsVersion]);
 
   const uniqueCities = useMemo(() => {
     const set = new Set();
@@ -530,7 +530,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
       if (k && log[k]) set.add(String(log[k]).trim());
     });
     return Array.from(set).sort();
-  }, [tagFilteredLogs]);
+  }, [tagFilteredLogs, optionsVersion]);
 
   const uniqueSubPrograms = useMemo(() => {
     const set = new Set();
@@ -1136,6 +1136,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
       {editingRow && (
         <EditModal
           key={editingRow.id || "new-entry"}
+          optionsVersion={optionsVersion}
           row={editingRow}
           attenderId={attenderId}
           attenderName={attenderName}
@@ -1281,6 +1282,7 @@ export default function AttenderView({ attenderId, attenderName, onExit }) {
       {/* Filters */}
       {activeView === "sheet" && (
         <AttenderFilters
+          key={`filters-${optionsVersion}`}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
           sortBy={sortBy}

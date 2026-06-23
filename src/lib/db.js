@@ -3,7 +3,7 @@ import {
   updateDoc, deleteDoc, query, where, or,
   serverTimestamp, writeBatch, onSnapshot,
   limit, Timestamp, runTransaction, arrayUnion, arrayRemove, orderBy,
-  deleteField, increment
+  deleteField, increment, startAfter
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { isKhojiField } from "./khojiHelper";
@@ -348,6 +348,14 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
       contactUpdate.normalizedMobile = normalizePhone(String(mobileVal));
     }
 
+    const allPhones = [
+      ...extractIndividualPhones(phoneVal),
+      ...extractIndividualPhones(mobileVal)
+    ];
+    if (allPhones.length > 0) {
+      contactUpdate.normalizedPhones = Array.from(new Set(allPhones));
+    }
+
     contactUpdate.updatedAt = serverTimestamp();
 
     batchWriteOps.push({
@@ -369,9 +377,20 @@ export const remapProgramContacts = async (programId, columnMappings, skipEmptyS
   return totalUpdated;
 };
 
+export const extractIndividualPhones = (phoneStr) => {
+  if (!phoneStr) return [];
+  const parts = String(phoneStr).split(/[\n\/,;&]|\band\b/i);
+  return parts
+    .map(p => p.replace(/\D/g, "").trim())
+    .map(p => p.length >= 10 ? p.slice(-10) : p)
+    .filter(p => p.length >= 5);
+};
+
 export const normalizePhone = (phone) => {
   if (!phone) return "";
-  const cleaned = String(phone).replace(/[\s\-\.\(\)\+]/g, "").trim();
+  const individual = extractIndividualPhones(phone);
+  if (individual.length > 0) return individual[0];
+  const cleaned = String(phone).replace(/\D/g, "").trim();
   if (cleaned.length >= 10) {
     return cleaned.slice(-10);
   }
@@ -434,6 +453,7 @@ const cleanImportRow = (row) => {
     // Always ensure normalizedPhone and normalizedMobile are populated
     clean.normalizedPhone = normalizePhone(clean.Phone || "");
     clean.normalizedMobile = normalizePhone(clean.Mobile || "");
+    clean.normalizedPhones = Array.from(new Set([...extractIndividualPhones(clean.Phone), ...extractIndividualPhones(clean.Mobile)]));
     
     return clean;
   }
@@ -521,6 +541,7 @@ const cleanImportRow = (row) => {
   // Always ensure normalizedPhone and normalizedMobile are populated
   clean.normalizedPhone = normalizePhone(clean.Phone || "");
   clean.normalizedMobile = normalizePhone(clean.Mobile || "");
+  clean.normalizedPhones = Array.from(new Set([...extractIndividualPhones(clean.Phone), ...extractIndividualPhones(clean.Mobile)]));
 
   return clean;
 };
@@ -848,26 +869,29 @@ export const getProgramContactStats = async (tag) => {
 // Global Duplicate Detection (checks only assigned contacts)
 export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
   if (!phone) return null;
-  const norm = normalizePhone(phone);
-  if (!norm) return null;
+  const numbersToCheck = extractIndividualPhones(phone);
+  if (numbersToCheck.length === 0) return null;
   
-  const q1 = query(
-    collection(db, "contacts"),
-    where("normalizedPhone", "==", norm)
-  );
-  const q2 = query(
-    collection(db, "contacts"),
-    where("normalizedMobile", "==", norm)
-  );
+  const promises = [];
+  numbersToCheck.forEach(norm => {
+    promises.push(
+      getDocs(query(collection(db, "contacts"), where("normalizedPhone", "==", norm)))
+    );
+    promises.push(
+      getDocs(query(collection(db, "contacts"), where("normalizedMobile", "==", norm)))
+    );
+    promises.push(
+      getDocs(query(collection(db, "contacts"), where("normalizedPhones", "array-contains", norm)))
+    );
+  });
   
-  const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+  const snaps = await Promise.all(promises);
   
   const matchesMap = new Map();
-  snap1.docs.forEach(d => {
-    matchesMap.set(d.id, { id: d.id, ...d.data() });
-  });
-  snap2.docs.forEach(d => {
-    matchesMap.set(d.id, { id: d.id, ...d.data() });
+  snaps.forEach(snap => {
+    snap.docs.forEach(d => {
+      matchesMap.set(d.id, { id: d.id, ...d.data() });
+    });
   });
   
   const matches = Array.from(matchesMap.values())
@@ -936,29 +960,51 @@ export const getAttenderContactCount = async (attenderId) => {
 // QUEUE — Assign N contacts to attender
 // ─────────────────────────────────────────────
 export const assignContactsToAttender = async (tag, programName, attenderId, attenderName, count, subProgramName = null) => {
-  // Query candidate pool containing the selected tag
-  // We use a larger limit to ensure we find enough unassigned ones without requiring a composite index
-  const q = query(
-    collection(db, "contacts"),
-    where("tags", "array-contains", tag),
-    limit(1000)
-  );
+  let candidates = [];
+  let lastDoc = null;
+  let attempts = 0;
+  const maxAttempts = 10; // Scan up to 10,000 documents to satisfy requested count
 
-  const snap = await getDocs(q);
-  if (snap.empty) return 0;
+  while (candidates.length < count && attempts < maxAttempts) {
+    let q;
+    if (lastDoc) {
+      q = query(
+        collection(db, "contacts"),
+        where("tags", "array-contains", tag),
+        where("isAssigned", "==", false),
+        startAfter(lastDoc),
+        limit(1000)
+      );
+    } else {
+      q = query(
+        collection(db, "contacts"),
+        where("tags", "array-contains", tag),
+        where("isAssigned", "==", false),
+        limit(1000)
+      );
+    }
 
-  // Filter client-side for unassigned and non-deleted contacts
-  let candidates = snap.docs
-    .map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
-    .filter(c => c.isAssigned === false && !c._deleted);
+    const snap = await getDocs(q);
+    if (snap.empty) break;
 
-  // Filter client-side by sub-program if provided
-  if (subProgramName) {
-    candidates = candidates.filter(c => {
-      const sp = c["Sub Program"] || c.subProgram || "";
-      return sp.trim().toLowerCase() === subProgramName.trim().toLowerCase();
-    });
+    lastDoc = snap.docs[snap.docs.length - 1];
+    attempts++;
+
+    const batch = snap.docs
+      .map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
+      .filter(c => c.isAssigned === false && !c._deleted);
+
+    const filteredBatch = subProgramName
+      ? batch.filter(c => {
+          const sp = c["Sub Program"] || c.subProgram || "";
+          return sp.trim().toLowerCase() === subProgramName.trim().toLowerCase();
+        })
+      : batch;
+
+    candidates.push(...filteredBatch);
   }
+
+  if (candidates.length === 0) return 0;
 
   // Take up to count contacts
   const targetContacts = candidates.slice(0, count);
@@ -1123,6 +1169,11 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
   }
   if (updatedMobileKey) {
     updates.normalizedMobile = normalizePhone(updates[updatedMobileKey]);
+  }
+  if (updatedPhoneKey || updatedMobileKey) {
+    const phVal = updatedPhoneKey ? updates[updatedPhoneKey] : (logData.Phone || logData.phone || "");
+    const mbVal = updatedMobileKey ? updates[updatedMobileKey] : (logData.Mobile || logData.mobile || "");
+    updates.normalizedPhones = Array.from(new Set([...extractIndividualPhones(phVal), ...extractIndividualPhones(mbVal)]));
   }
 
   // When Tags string is edited (from EditModal), convert to tags array and remove Tags field
@@ -1322,46 +1373,33 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
 
   const normPhone = normalizePhone(rest.Phone || rest["Cont No"] || rest.phone || rest.Number || "");
   const normMobile = normalizePhone(rest.Mobile || "");
+  const finalNormalizedPhones = Array.from(new Set([
+    ...extractIndividualPhones(rest.Phone || rest["Cont No"] || rest.phone || rest.Number || ""),
+    ...extractIndividualPhones(rest.Mobile || "")
+  ]));
 
   let docRef = null;
   let isExisting = false;
   let existingDocId = null;
   let existingData = {};
 
-  if (normPhone || normMobile) {
+  if (finalNormalizedPhones.length > 0) {
     try {
       let existingSnap;
-      if (normPhone && normMobile) {
-        // Run both queries in parallel to ensure compatibility with standard indices
-        const q1 = query(collection(db, "contacts"), where("normalizedPhone", "in", [normPhone, normMobile]));
-        const q2 = query(collection(db, "contacts"), where("normalizedMobile", "in", [normPhone, normMobile]));
-        const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
-        
-        const mergedDocs = [];
-        const seenIds = new Set();
-        [...snap1.docs, ...snap2.docs].forEach(d => {
-          if (!seenIds.has(d.id)) {
-            seenIds.add(d.id);
-            mergedDocs.push(d);
-          }
-        });
-        existingSnap = { empty: mergedDocs.length === 0, docs: mergedDocs };
-      } else {
-        const target = normPhone || normMobile;
-        const q1 = query(collection(db, "contacts"), where("normalizedPhone", "==", target));
-        const q2 = query(collection(db, "contacts"), where("normalizedMobile", "==", target));
-        const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
-        
-        const mergedDocs = [];
-        const seenIds = new Set();
-        [...snap1.docs, ...snap2.docs].forEach(d => {
-          if (!seenIds.has(d.id)) {
-            seenIds.add(d.id);
-            mergedDocs.push(d);
-          }
-        });
-        existingSnap = { empty: mergedDocs.length === 0, docs: mergedDocs };
-      }
+      const q1 = query(collection(db, "contacts"), where("normalizedPhone", "in", finalNormalizedPhones));
+      const q2 = query(collection(db, "contacts"), where("normalizedMobile", "in", finalNormalizedPhones));
+      const q3 = query(collection(db, "contacts"), where("normalizedPhones", "array-contains-any", finalNormalizedPhones));
+      const [snap1, snap2, snap3] = await Promise.all([getDocs(q1), getDocs(q2), getDocs(q3)]);
+      
+      const mergedDocs = [];
+      const seenIds = new Set();
+      [...snap1.docs, ...snap2.docs, ...snap3.docs].forEach(d => {
+        if (!seenIds.has(d.id)) {
+          seenIds.add(d.id);
+          mergedDocs.push(d);
+        }
+      });
+      existingSnap = { empty: mergedDocs.length === 0, docs: mergedDocs };
 
       if (!existingSnap.empty) {
         // Find ANY existing active document
@@ -1438,7 +1476,11 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
     "Program / Tag Mapping": rest["Program / Tag Mapping"] || existingData["Program / Tag Mapping"] || "",
     GHL_ID: rest.GHL_ID || existingData.GHL_ID || "",
     normalizedPhone: normPhone || existingData.normalizedPhone || "",
-    normalizedMobile: normMobile || existingData.normalizedMobile || ""
+    normalizedMobile: normMobile || existingData.normalizedMobile || "",
+    normalizedPhones: Array.from(new Set([
+      ...finalNormalizedPhones,
+      ...(Array.isArray(existingData.normalizedPhones) ? existingData.normalizedPhones : [])
+    ]))
   };
 
   // Merge tags
@@ -1556,6 +1598,14 @@ export const globalSearchContacts = async (queryStr) => {
         query(
           collection(db, "contacts"),
           where("normalizedMobile", "==", norm.slice(-10))
+        )
+      )
+    );
+    queries.push(
+      getDocs(
+        query(
+          collection(db, "contacts"),
+          where("normalizedPhones", "array-contains", norm)
         )
       )
     );
@@ -1863,16 +1913,24 @@ export const reassignContactsBetweenAttenders = async (tag, fromAttenderId, toAt
 // ADMIN DASHBOARD
 // ─────────────────────────────────────────────
 export const subscribeToAllCallLogs = (tag, callback) => {
-  const q = query(
-    collection(db, "contacts"),
-    where("isAssigned", "==", true)
-  );
+  let q;
+  if (tag && tag !== "ALL") {
+    q = query(
+      collection(db, "contacts"),
+      where("tags", "array-contains", tag)
+    );
+  } else {
+    q = query(
+      collection(db, "contacts"),
+      where("isAssigned", "==", true)
+    );
+  }
 
   return onSnapshot(q, snap => {
     let logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // Filter client-side by tag
     if (tag && tag !== "ALL") {
-      logs = logs.filter(c => Array.isArray(c.tags) && c.tags.includes(tag));
+      // Filter client-side for assigned contacts
+      logs = logs.filter(c => c.isAssigned === true);
     }
     // Filter out deleted
     logs = logs.filter(c => !c._deleted);

@@ -61,6 +61,7 @@ export default function CallCenterApp() {
         <AttenderView
           attenderId={selectedAttenderId}
           attenderName={selectedAttenderName}
+          optionsVersion={optionsVersion}
           onExit={() => { setMode(null); setSelectedAttenderId(""); setSelectedAttenderName(""); }}
         />
       </>
