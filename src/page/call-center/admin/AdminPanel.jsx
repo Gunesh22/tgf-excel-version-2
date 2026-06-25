@@ -89,7 +89,7 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
         ) : (
           <>
             {activeTab === "dashboard" && <DashboardTab programs={programs} attenders={attenders} />}
-            {activeTab === "monthly" && <MonthlyReportTab programs={programs} />}
+            {activeTab === "monthly" && <MonthlyReportTab programs={programs} attenders={attenders} />}
             {activeTab === "programs" && <ProgramsTab programs={programs} attenders={attenders} onReloadPrograms={refreshAll} />}
             {activeTab === "import" && <ImportContacts programs={programs} onImportComplete={refreshAll} />}
             {activeTab === "attenders" && <AttendersTab attenders={attenders} programs={programs} onReloadAttenders={refreshAll} />}

@@ -62,6 +62,8 @@ export const cleanExportRow = (log) => {
   const cityVal = findValue(log, ["city", "location", "khoji city", "place", "city name"]);
   const countryVal = findValue(log, ["country", "nation"]);
   const tagsVal = findValue(log, ["tags", "tag"]);
+  const sourceVal = log.source || findValue(log, ["source", "sourse", "source of information", "source of informiton"]);
+  const calledForVal = log.calledFor || findValue(log, ["called for", "called_for", "calledfor"]);
   const statusVal = log.status || "Pending";
   const remarkVal = log.remark || "";
   const subProgramVal = log["Sub Program"] || log.subProgram || "";
@@ -80,6 +82,8 @@ export const cleanExportRow = (log) => {
   row["City"] = cityVal;
   row["Country"] = countryVal;
   row["Tags"] = tagsVal;
+  row["Source"] = sourceVal;
+  row["Called For"] = calledForVal;
   row["Sub Program"] = subProgramVal;
   row["Status"] = statusVal;
   row["Remark"] = remarkVal;
@@ -95,7 +99,9 @@ export const cleanExportRow = (log) => {
       "phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number",
       "email", "mail", "e-mail", "email id", "emailaddress",
       "city", "location", "khoji city", "place", "city name",
-      "country", "nation", "tags", "tag", "status", "remark", "callbackdate", "sub program"
+      "country", "nation", "tags", "tag", "status", "remark", "callbackdate", "sub program",
+      "source", "sourse", "source of information", "source of informiton",
+      "called for", "called_for", "calledfor"
     ].includes(key.toLowerCase());
     
     if (!isStandard) {

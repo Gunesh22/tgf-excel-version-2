@@ -1259,6 +1259,32 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
   // Write to Firebase using setDoc with merge to allow any custom field keys safely
   await setDoc(contactRef, finalUpdatePayload, { merge: true });
 
+  // Log interaction if status/remark/callType/callbackDate changed
+  const hasInteractionUpdate = 
+    updates.status !== undefined || 
+    updates.remark !== undefined || 
+    updates.callType !== undefined ||
+    updates.callbackDate !== undefined;
+
+  if (hasInteractionUpdate) {
+    const nameKey = Object.keys(logData).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase())) 
+      || Object.keys(updates).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase()));
+    const contactName = nameKey ? (updates[nameKey] || logData[nameKey]) : "Unknown";
+
+    await logInteraction({
+      contactId: logId,
+      contactName,
+      programId: logData.programId || updates.programId || "",
+      programName: logData.programName || updates.programName || "",
+      attenderId: attenderId || logData.attenderId || "unknown",
+      attenderName: attenderName || logData.attenderName || "Unknown",
+      status: updates.status !== undefined ? updates.status : (attenderId ? (logData.attenderStates?.[attenderId]?.status || "") : (logData.status || "")),
+      remark: updates.remark !== undefined ? updates.remark : (attenderId ? (logData.attenderStates?.[attenderId]?.remark || "") : (logData.remark || "")),
+      callType: updates.callType !== undefined ? updates.callType : (attenderId ? (logData.attenderStates?.[attenderId]?.callType || "outgoing") : (logData.callType || "outgoing")),
+      callbackDate: updates.callbackDate !== undefined ? updates.callbackDate : (attenderId ? (logData.attenderStates?.[attenderId]?.callbackDate || null) : (logData.callbackDate || null))
+    });
+  }
+
   // Handle "Reg.Done" registrations collection sync
   const currentStatus = attenderSpecificUpdates.status !== undefined ? attenderSpecificUpdates.status : updates.status;
   if (currentStatus === "Reg.Done") {
@@ -1541,6 +1567,20 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   } else {
     docRef = await addDoc(collection(db, "contacts"), logPayload);
   }
+
+  // Log interaction
+  await logInteraction({
+    contactId: docRef.id,
+    contactName: rest.Name || existingData.Name || "Unknown",
+    programId: finalProgramId,
+    programName: finalProgramName,
+    attenderId,
+    attenderName,
+    status: data.status || "Call Log Added",
+    remark: data.remark || "",
+    callType: data.callType || "incoming",
+    callbackDate: data.callbackDate || null
+  });
 
   // Handle "Reg.Done" registrations collection sync
   if (data.status === "Reg.Done") {
@@ -2253,5 +2293,59 @@ export const subscribeToCallCenterOptions = (onUpdate) => {
       });
     }
   });
+};
+
+export const logInteraction = async ({
+  contactId,
+  contactName,
+  programId,
+  programName,
+  attenderId,
+  attenderName,
+  status,
+  remark,
+  callType,
+  callbackDate = null,
+  timestamp = null
+}) => {
+  try {
+    const payload = {
+      contactId,
+      contactName: contactName || "Unknown",
+      programId: programId || "unknown-program",
+      programName: programName || "Unknown Program",
+      attenderId: attenderId || "unknown-attender",
+      attenderName: attenderName || "Unknown Attender",
+      status: status || "Pending",
+      remark: remark || "",
+      callType: callType || "outgoing",
+      callbackDate: callbackDate || null,
+      timestamp: timestamp || serverTimestamp()
+    };
+    Object.keys(payload).forEach(key => {
+      if (payload[key] === undefined) {
+        delete payload[key];
+      }
+    });
+    await addDoc(collection(db, "interactions"), payload);
+  } catch (e) {
+    console.error("Error logging interaction:", e);
+  }
+};
+
+export const subscribeToInteractions = (programId, callback) => {
+  let q = collection(db, "interactions");
+  if (programId && programId !== "ALL") {
+    q = query(q, where("programId", "==", programId));
+  }
+  return onSnapshot(q, snap => {
+    let list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    list.sort((a, b) => {
+      const ta = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp ? new Date(a.timestamp).getTime() : 0);
+      const tb = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp ? new Date(b.timestamp).getTime() : 0);
+      return tb - ta;
+    });
+    callback(list);
+  }, err => console.error("subscribeToInteractions error:", err));
 };
 

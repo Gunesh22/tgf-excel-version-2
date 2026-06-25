@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { toast } from "react-hot-toast";
 import * as XLSX from "xlsx";
 import {
-  Download, ChevronRight, ChevronDown, Calendar, TrendingUp, UserCheck, Smile, Info
+  Download, ChevronRight, ChevronDown, Calendar, TrendingUp, UserCheck, Smile, Info, Search, X, Check
 } from "lucide-react";
 import { subscribeToAllCallLogs } from "../../../../lib/db";
 import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES } from "../utils.jsx";
@@ -55,90 +55,326 @@ function MonthlyTable({ headers, rows, totals, formatValue }) {
   );
 }
 
-export default function MonthlyReportTab({ programs }) {
-  const [selectedProgramId, setSelectedProgramId] = useState("");
+function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All" }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = React.useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()));
+  const allSelected = selected.length === 0 || selected.length === options.length;
+
+  const toggle = (val) => {
+    if (selected.includes(val)) {
+      onChange(selected.filter(v => v !== val));
+    } else {
+      onChange([...selected, val]);
+    }
+  };
+
+  const toggleAll = () => {
+    if (allSelected) onChange([]);
+    else onChange(options.map(o => o.value));
+  };
+
+  const label = allSelected
+    ? allLabel
+    : selected.length === 1
+      ? (options.find(o => o.value === selected[0])?.label || "1 selected")
+      : `${selected.length} selected`;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(p => !p)}
+        className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[160px] max-w-[220px] whitespace-nowrap overflow-hidden"
+      >
+        <span className="truncate flex-1 text-left text-gray-700">{label}</span>
+        <ChevronDown size={14} className="shrink-0 text-gray-400" />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl min-w-[200px] overflow-hidden right-0">
+          <div className="p-2 border-b border-gray-100 flex items-center gap-2">
+            <Search size={13} className="text-gray-400 shrink-0" />
+            <input
+              autoFocus
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search..."
+              className="w-full text-xs focus:outline-none bg-transparent"
+            />
+            {search && <button onClick={() => setSearch("")}><X size={12} className="text-gray-400" /></button>}
+          </div>
+          <div className="max-h-60 overflow-y-auto py-1">
+            <button
+              onClick={toggleAll}
+              className="w-full px-4 py-2 text-left text-xs font-black text-indigo-600 hover:bg-indigo-50 flex items-center gap-2"
+            >
+              <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${allSelected ? "bg-indigo-600 border-indigo-600" : "border-gray-300"}`}>
+                {allSelected && <Check size={10} className="text-white stroke-[3]" />}
+              </span>
+              {allLabel}
+            </button>
+            {filtered.map(o => {
+              const active = selected.includes(o.value);
+              return (
+                <button
+                  key={o.value}
+                  onClick={() => toggle(o.value)}
+                  className="w-full px-4 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${active ? "bg-indigo-600 border-indigo-600" : "border-gray-300"}`}>
+                    {active && <Check size={10} className="text-white stroke-[3]" />}
+                  </span>
+                  <span className="truncate">{o.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function MonthlyReportTab({ programs, attenders = [] }) {
+  const [selectedProgramIds, setSelectedProgramIds] = useState([]); // empty = ALL
+  const [selectedAttenderIds, setSelectedAttenderIds] = useState([]); // empty = ALL
   const [selectedMonth, setSelectedMonth] = useState("");
+  const [selectedSources, setSelectedSources] = useState([]);
+  const [selectedCalledFors, setSelectedCalledFors] = useState([]);
+  const [selectedStatuses, setSelectedStatuses] = useState([]);
   const [callLogs, setCallLogs] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [conversionSearch, setConversionSearch] = useState("");
+  const [convPage, setConvPage] = useState(1);
   const unsubRef = React.useRef(null);
 
   useEffect(() => {
     if (unsubRef.current) unsubRef.current();
-    if (!selectedProgramId) {
-      setCallLogs([]);
-      return;
-    }
     setLoading(true);
-    unsubRef.current = subscribeToAllCallLogs(selectedProgramId, (logs) => {
+    unsubRef.current = subscribeToAllCallLogs("ALL", (logs) => {
       setCallLogs(logs);
       setLoading(false);
     });
     return () => { if (unsubRef.current) unsubRef.current(); };
-  }, [selectedProgramId]);
+  }, []);
 
-  const monthOptions = React.useMemo(() => {
-    const months = new Set();
-    callLogs.forEach(l => {
-      if (l._deleted) return;
-      const d = l.createdAt?.toDate ? l.createdAt.toDate() : l.createdAt ? new Date(l.createdAt) : null;
-      if (d) {
-        months.add(d.toLocaleDateString("en-CA", { year: "numeric", month: "2-digit" }));
-      }
+  const programOptions = React.useMemo(() => {
+    return programs.map(p => ({ value: p.id, label: p.name }));
+  }, [programs]);
+
+  const sourceOptions = React.useMemo(() => {
+    const sources = new Set();
+    callLogs.forEach(log => {
+      const sourceKey = Object.keys(log).find(k => ["source", "sourse", "source of information", "source of informiton"].includes(k.toLowerCase()));
+      const val = sourceKey ? String(log[sourceKey] || "").trim() : "";
+      if (val) sources.add(val);
     });
-    const arr = Array.from(months).sort((a, b) => b.localeCompare(a));
-    if (arr.length > 0 && !selectedMonth) {
-      setSelectedMonth(arr[0]);
-    }
-    return arr;
+    return Array.from(sources).sort().map(s => ({ value: s, label: s }));
   }, [callLogs]);
 
-  const monthFiltered = React.useMemo(() => {
-    if (!selectedMonth) return [];
-    const [yr, mn] = selectedMonth.split("-");
-    return callLogs.filter(l => {
-      if (l._deleted) return false;
-      const d = l.createdAt?.toDate ? l.createdAt.toDate() : l.createdAt ? new Date(l.createdAt) : null;
-      if (!d) return false;
-      return d.getFullYear() === parseInt(yr) && (d.getMonth() + 1) === parseInt(mn);
+  const calledForOptions = React.useMemo(() => {
+    const values = new Set();
+    callLogs.forEach(log => {
+      const key = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
+      const val = key ? String(log[key] || "").trim() : "";
+      if (val) values.add(val);
     });
-  }, [callLogs, selectedMonth]);
+    return Array.from(values).sort().map(s => ({ value: s, label: s }));
+  }, [callLogs]);
 
-  const allAttempts = React.useMemo(() => {
-    const attempts = [];
-    monthFiltered.forEach(log => {
-      const logName = Object.keys(log).find(k => k.toLowerCase().includes("name") || k.toLowerCase().includes("lead"));
-      const contactName = logName ? log[logName] : "Unknown";
-      
-      if (log.history && Array.isArray(log.history)) {
+  const statusOptions = React.useMemo(() => {
+    const statuses = new Set();
+    callLogs.forEach(log => {
+      if (log.attenderStates) {
+        Object.values(log.attenderStates).forEach(state => {
+          if (state.status) statuses.add(state.status);
+          if (state.history) {
+            state.history.forEach(h => {
+              if (h.status) statuses.add(h.status);
+            });
+          }
+        });
+      }
+      if (log.status) statuses.add(log.status);
+      if (log.history) {
         log.history.forEach(h => {
-          attempts.push({
-            timestamp: h.timestamp ? new Date(h.timestamp) : null,
-            attenderId: h.attenderId || log.attenderId,
-            attenderName: h.attenderName || log.attenderName || "Unknown",
-            status: h.status,
-            remark: h.remark,
-            contactName,
-            programName: log.programName || "Unknown",
-            contactId: log.contactId || "",
-            callType: h.callType || log.callType || "outgoing"
-          });
+          if (h.status) statuses.add(h.status);
         });
-      } else if (log.lastCalledAt) {
-        attempts.push({
-          timestamp: new Date(log.lastCalledAt),
-          attenderId: log.attenderId,
-          attenderName: log.attenderName || "Unknown",
-          status: log.status || "Viewed",
-          remark: log.remark,
+      }
+    });
+    return Array.from(statuses).sort().map(s => ({ value: s, label: s }));
+  }, [callLogs]);
+
+  const allHistoricalAttempts = React.useMemo(() => {
+    const attempts = [];
+    callLogs.forEach(log => {
+      if (log._deleted) return;
+
+      // Multi-tag filter
+      if (selectedProgramIds.length > 0) {
+        const selectedNames = selectedProgramIds.map(id => {
+          const p = programs.find(x => x.id === id);
+          return p ? p.name : id;
+        });
+        const contactTags = Array.isArray(log.tags) ? log.tags : [];
+        const matchesId = selectedProgramIds.includes(log.programId);
+        const matchesName = selectedNames.includes(log.programId) || 
+                            selectedNames.includes(log.programName) ||
+                            contactTags.some(t => selectedNames.includes(t) || selectedProgramIds.includes(t));
+
+        if (!matchesId && !matchesName) return;
+      }
+
+      // Source filter
+      const sourceKey = Object.keys(log).find(k => ["source", "sourse", "source of information", "source of informiton"].includes(k.toLowerCase()));
+      const sourceVal = sourceKey ? String(log[sourceKey] || "").trim() : "";
+      if (selectedSources.length > 0 && !selectedSources.includes(sourceVal)) {
+        return;
+      }
+
+      // Called For filter
+      const calledForKey = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
+      const calledForVal = calledForKey ? String(log[calledForKey] || "").trim() : "";
+      if (selectedCalledFors.length > 0 && !selectedCalledFors.includes(calledForVal)) {
+        return;
+      }
+
+      const nameKey = Object.keys(log).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase()));
+      const contactName = nameKey ? log[nameKey] : "Unknown";
+      const phoneKey = Object.keys(log).find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"].includes(k.toLowerCase()));
+      const contactPhone = phoneKey ? log[phoneKey] : "";
+      const contactTags = Array.isArray(log.tags) ? log.tags : [];
+      const programName = log.programName || "Unknown";
+
+      const processAttempt = (att) => {
+        if (selectedStatuses.length > 0 && !selectedStatuses.includes(att.status || "Pending")) {
+          return null;
+        }
+        return {
+          ...att,
           contactName,
-          programName: log.programName || "Unknown",
-          contactId: log.contactId || "",
-          callType: log.callType || "outgoing"
+          contactPhone,
+          contactTags,
+          programName,
+          contactId: log.id,
+          source: sourceVal,
+          calledFor: calledForVal
+        };
+      };
+
+      // 1. Loop over attenderStates
+      if (log.attenderStates && Object.keys(log.attenderStates).length > 0) {
+        Object.entries(log.attenderStates).forEach(([attId, state]) => {
+          if (state.history && Array.isArray(state.history) && state.history.length > 0) {
+            state.history.forEach(h => {
+              const att = processAttempt({
+                timestamp: h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null,
+                attenderId: attId,
+                attenderName: state.attenderName || h.attenderName || "Unknown",
+                status: h.status || "Pending",
+                remark: h.remark || "",
+                callType: h.callType || state.callType || "outgoing"
+              });
+              if (att) attempts.push(att);
+            });
+          } else if (state.lastCalledAt || state.updatedAt) {
+            const dateVal = state.lastCalledAt || state.updatedAt;
+            const att = processAttempt({
+              timestamp: dateVal ? (dateVal.toDate ? dateVal.toDate() : new Date(dateVal)) : null,
+              attenderId: attId,
+              attenderName: state.attenderName || "Unknown",
+              status: state.status || "Pending",
+              remark: state.remark || "",
+              callType: state.callType || "outgoing"
+            });
+            if (att) attempts.push(att);
+          }
         });
+      } else {
+        // 2. Legacy fallback
+        if (log.history && Array.isArray(log.history) && log.history.length > 0) {
+          log.history.forEach(h => {
+            const att = processAttempt({
+              timestamp: h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null,
+              attenderId: log.attenderId || "legacy",
+              attenderName: log.attenderName || h.attenderName || "Unknown",
+              status: h.status || "Pending",
+              remark: h.remark || "",
+              callType: h.callType || log.callType || "outgoing"
+            });
+            if (att) attempts.push(att);
+          });
+        } else {
+          const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
+          const att = processAttempt({
+            timestamp: dateVal ? (dateVal.toDate ? dateVal.toDate() : new Date(dateVal)) : null,
+            attenderId: log.attenderId || "legacy",
+            attenderName: log.attenderName || "Legacy Attender",
+            status: log.status || "Pending",
+            remark: log.remark || "",
+            callType: log.callType || "outgoing"
+          });
+          if (att) attempts.push(att);
+        }
       }
     });
     return attempts;
-  }, [monthFiltered]);
+  }, [callLogs, selectedProgramIds, selectedSources, selectedCalledFors, selectedStatuses, programs]);
+
+  const monthOptions = React.useMemo(() => {
+    const months = new Set();
+    allHistoricalAttempts.forEach(att => {
+      if (att.timestamp && !isNaN(att.timestamp.getTime())) {
+        months.add(att.timestamp.toLocaleDateString("en-CA", { year: "numeric", month: "2-digit" }));
+      }
+    });
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }, [allHistoricalAttempts]);
+
+  useEffect(() => {
+    if (monthOptions.length > 0) {
+      if (!selectedMonth || !monthOptions.includes(selectedMonth)) {
+        setSelectedMonth(monthOptions[0]);
+      }
+    } else {
+      setSelectedMonth("");
+    }
+  }, [monthOptions, selectedMonth]);
+
+  const attenderOptions = React.useMemo(() => {
+    return attenders.map(a => ({
+      value: a.id,
+      label: a.name
+    }));
+  }, [attenders]);
+
+  const allAttempts = React.useMemo(() => {
+    if (!selectedMonth) return [];
+    const [yr, mn] = selectedMonth.split("-");
+    return allHistoricalAttempts.filter(att => {
+      if (!att.timestamp || isNaN(att.timestamp.getTime())) return false;
+      
+      const dateMatch = att.timestamp.getFullYear() === parseInt(yr) && (att.timestamp.getMonth() + 1) === parseInt(mn);
+      if (!dateMatch) return false;
+
+      if (selectedAttenderIds.length > 0 && !selectedAttenderIds.includes(att.attenderId)) return false;
+
+      return true;
+    });
+  }, [allHistoricalAttempts, selectedMonth, selectedAttenderIds]);
+
+  const monthFiltered = React.useMemo(() => {
+    const contactIds = new Set(allAttempts.map(a => a.contactId));
+    return callLogs.filter(log => contactIds.has(log.id));
+  }, [callLogs, allAttempts]);
 
   const metrics = React.useMemo(() => {
     const stats = {
@@ -336,7 +572,12 @@ export default function MonthlyReportTab({ programs }) {
       "Not Connected": a.notConnected,
       "Reg.Done (Conversions)": a.conversions,
       "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
-    })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
+    })).sort((a, b) => {
+      if (b["Reg.Done (Conversions)"] !== a["Reg.Done (Conversions)"]) {
+        return b["Reg.Done (Conversions)"] - a["Reg.Done (Conversions)"];
+      }
+      return parseFloat(b["Conversion Rate (%)"]) - parseFloat(a["Conversion Rate (%)"]);
+    });
   }, [allAttempts]);
 
   const attenderPerformanceTotals = React.useMemo(() => {
@@ -350,6 +591,37 @@ export default function MonthlyReportTab({ programs }) {
     totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
     return totals;
   }, [attenderPerformance]);
+
+  const conversionsList = React.useMemo(() => {
+    return allAttempts.filter(c => c.status === "Reg.Done");
+  }, [allAttempts]);
+
+  const searchedConversions = React.useMemo(() => {
+    if (!conversionSearch.trim()) return conversionsList;
+    const term = conversionSearch.toLowerCase();
+    return conversionsList.filter(c => {
+      return (
+        (c.contactName || "").toLowerCase().includes(term) ||
+        (c.contactPhone || "").toLowerCase().includes(term) ||
+        (c.programName || "").toLowerCase().includes(term) ||
+        (c.attenderName || "").toLowerCase().includes(term) ||
+        (c.source || "").toLowerCase().includes(term) ||
+        (c.calledFor || "").toLowerCase().includes(term) ||
+        (c.remark || "").toLowerCase().includes(term)
+      );
+    });
+  }, [conversionsList, conversionSearch]);
+
+  const convPerPage = 10;
+  const totalConvPages = Math.ceil(searchedConversions.length / convPerPage) || 1;
+  const paginatedConversions = React.useMemo(() => {
+    const start = (convPage - 1) * convPerPage;
+    return searchedConversions.slice(start, start + convPerPage);
+  }, [searchedConversions, convPage]);
+
+  useEffect(() => {
+    setConvPage(1);
+  }, [conversionSearch]);
 
   const handleExport = () => {
     if (!monthFiltered.length) {
@@ -387,6 +659,8 @@ export default function MonthlyReportTab({ programs }) {
     toast.success("Excel monthly analytics report downloaded successfully!");
   };
 
+  const activeFilters = selectedProgramIds.length + selectedAttenderIds.length + selectedSources.length + selectedCalledFors.length + selectedStatuses.length;
+
   return (
     <div className="p-8 space-y-8">
       {/* Top Bar */}
@@ -396,12 +670,45 @@ export default function MonthlyReportTab({ programs }) {
           <p className="text-slate-500 mt-1">Generate comprehensive monthly analytics and export to Excel</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <select value={selectedProgramId} onChange={e => setSelectedProgramId(e.target.value)}
-            className="px-4 py-2.5 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-            <option value="">-- Select Sheet / Tag --</option>
-            <option value="ALL">🌟 ALL TAGS / PROGRAMS (Master)</option>
-            {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <MultiSelect
+            options={programOptions}
+            selected={selectedProgramIds}
+            onChange={setSelectedProgramIds}
+            placeholder="Tags"
+            allLabel="🌟 All Tags"
+          />
+
+          <MultiSelect
+            options={attenderOptions}
+            selected={selectedAttenderIds}
+            onChange={setSelectedAttenderIds}
+            placeholder="Attenders"
+            allLabel="👥 All Attenders"
+          />
+
+          <MultiSelect
+            options={sourceOptions}
+            selected={selectedSources}
+            onChange={setSelectedSources}
+            placeholder="Source"
+            allLabel="📢 All Sources"
+          />
+
+          <MultiSelect
+            options={calledForOptions}
+            selected={selectedCalledFors}
+            onChange={setSelectedCalledFors}
+            placeholder="Called For"
+            allLabel="📞 All Called For"
+          />
+
+          <MultiSelect
+            options={statusOptions}
+            selected={selectedStatuses}
+            onChange={setSelectedStatuses}
+            placeholder="Status"
+            allLabel="📊 All Statuses"
+          />
 
           {monthOptions.length > 0 && (
             <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
@@ -415,6 +722,22 @@ export default function MonthlyReportTab({ programs }) {
             </select>
           )}
 
+          {activeFilters > 0 && (
+            <button
+              onClick={() => {
+                setSelectedProgramIds([]);
+                setSelectedAttenderIds([]);
+                setSelectedSources([]);
+                setSelectedCalledFors([]);
+                setSelectedStatuses([]);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-black hover:bg-red-100 transition animate-fade-in"
+            >
+              <X size={12} /> Clear filters
+              <span className="bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">{activeFilters}</span>
+            </button>
+          )}
+
           <button onClick={handleExport} disabled={!monthFiltered.length}
             className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-sm transition-all disabled:opacity-50">
             <Download size={18} /> Export Excel Workbook
@@ -422,16 +745,9 @@ export default function MonthlyReportTab({ programs }) {
         </div>
       </div>
 
-      {!selectedProgramId ? (
-        <div className="h-64 flex items-center justify-center border-2 border-dashed border-gray-200 rounded-3xl text-gray-400">
-          <div className="text-center">
-            <Calendar size={40} className="mx-auto mb-3 opacity-30" />
-            <p>Select a sheet or tag to fetch monthly report metrics</p>
-          </div>
-        </div>
-      ) : loading ? (
+      {loading ? (
         <div className="py-20 text-center text-gray-400 font-bold">Loading monthly report datasets...</div>
-      ) : monthFiltered.length === 0 ? (
+      ) : (!selectedMonth || monthFiltered.length === 0) ? (
         <div className="py-20 text-center text-gray-400 font-bold">No call history logs found for this period.</div>
       ) : (
         <div className="space-y-6">
@@ -505,28 +821,214 @@ export default function MonthlyReportTab({ programs }) {
             />
           </MonthlySection>
 
-          <MonthlySection title="Section 4: Day-wise Calls & Conversions Timeline" defaultOpen={false}>
-            <MonthlyTable
-              headers={["Date", "Total Calls", "Connected", "Not Connected", "Reg.Done (Conversions)"]}
-              rows={dayWiseTimeline}
-              totals={dayWiseTotals}
-            />
+          <MonthlySection title="🏆 Attender Productivity Leaderboard">
+            {attenderPerformance.length === 0 ? (
+              <div className="text-center py-6 text-slate-400 font-bold text-sm">No attender history logs found for this period.</div>
+            ) : (
+              <div className="space-y-4">
+                <div className="hidden md:grid grid-cols-12 text-[10px] font-black text-slate-400 uppercase tracking-wider px-6 py-2">
+                  <div className="col-span-1">Rank</div>
+                  <div className="col-span-4">Attender Name</div>
+                  <div className="col-span-4 text-center">Conversion Rate & Efficiency</div>
+                  <div className="col-span-3 text-right">Metrics</div>
+                </div>
+                
+                <div className="space-y-2.5">
+                  {attenderPerformance.map((row, index) => {
+                    const rank = index + 1;
+                    const convRate = parseFloat(row["Conversion Rate (%)"]);
+                    const isTop3 = rank <= 3;
+                    const rankIcons = ["🥇", "🥈", "🥉"];
+                    
+                    return (
+                      <div 
+                        key={row["Attender Name"]} 
+                        className={`grid grid-cols-1 md:grid-cols-12 items-center gap-4 px-6 py-4 rounded-3xl border transition-all ${
+                          rank === 1 
+                            ? "bg-amber-50/40 border-amber-100 shadow-sm" 
+                            : rank === 2
+                            ? "bg-slate-50/40 border-slate-100 shadow-sm"
+                            : rank === 3
+                            ? "bg-orange-50/40 border-orange-100 shadow-sm"
+                            : "bg-white border-gray-100 hover:border-gray-200"
+                        }`}
+                      >
+                        {/* Rank */}
+                        <div className="col-span-1 flex items-center font-bold text-sm text-slate-600">
+                          {isTop3 ? (
+                            <span className="text-2xl">{rankIcons[index]}</span>
+                          ) : (
+                            <span className="bg-gray-100 text-gray-500 rounded-full w-7 h-7 flex items-center justify-center text-xs font-black">
+                              #{rank}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Name */}
+                        <div className="col-span-4 font-black text-slate-800 text-base">
+                          {row["Attender Name"]}
+                        </div>
+
+                        {/* Progress Bar & Conv Rate */}
+                        <div className="col-span-4 flex items-center gap-3">
+                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                            <div 
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                convRate > 20 
+                                  ? "bg-emerald-500" 
+                                  : convRate > 10 
+                                  ? "bg-indigo-500" 
+                                  : "bg-slate-400"
+                              }`}
+                              style={{ width: `${Math.min(convRate || 0, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-sm font-black text-slate-700 whitespace-nowrap">
+                            {row["Conversion Rate (%)"]}
+                          </span>
+                        </div>
+
+                        {/* Metrics details */}
+                        <div className="col-span-3 flex justify-between md:justify-end items-center gap-4 text-xs font-semibold text-slate-500">
+                          <div className="text-right">
+                            <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Conversions</span>
+                            <span className="text-base font-black text-emerald-600">{row["Reg.Done (Conversions)"]}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Connected</span>
+                            <span className="text-sm font-bold text-slate-700">{row["Connected"]}</span>
+                          </div>
+                          <div className="text-right font-medium">
+                            <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Total Calls</span>
+                            <span className="text-sm font-bold text-slate-700">{row["Total Calls"]}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </MonthlySection>
 
-          <MonthlySection title="Section 5: Time of Day Calling Trends">
-            <MonthlyTable
-              headers={["Time Interval", "Total Calls", "Connected", "Not Connected", "Reg.Done (Conversions)"]}
-              rows={timeOfDayTrend}
-              totals={timeOfDayTotals}
-            />
-          </MonthlySection>
+          <MonthlySection title={`🏆 Registered & Converted Leads list (${conversionsList.length})`}>
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-gray-100">
+                <p className="text-xs text-gray-400">Leads whose call outcome in this month is marked as Registered/Reg.Done.</p>
+                <div className="relative max-w-xs w-full">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                    <Search size={14} />
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Search conversions..."
+                    value={conversionSearch}
+                    onChange={(e) => setConversionSearch(e.target.value)}
+                    className="pl-9 pr-4 py-2 w-full bg-gray-50 border border-gray-200 rounded-2xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
 
-          <MonthlySection title="Section 6: Attender Wise Productivity & Conversion Rates">
-            <MonthlyTable
-              headers={["Attender Name", "Total Calls", "Connected", "Not Connected", "Reg.Done (Conversions)", "Conversion Rate (%)"]}
-              rows={attenderPerformance}
-              totals={attenderPerformanceTotals}
-            />
+              <div className="overflow-x-auto rounded-2xl border border-gray-100">
+                <table className="w-full text-sm bg-white">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      {["Name & Contact", "Attender", "Tag / Program", "Source / Called For", "Date & Time", "Remarks"].map(h => (
+                        <th key={h} className="px-6 py-3.5 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50 bg-white">
+                    {paginatedConversions.map((c, idx) => {
+                      const dateStr = c.timestamp instanceof Date && !isNaN(c.timestamp.getTime())
+                        ? c.timestamp.toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })
+                        : "N/A";
+                      return (
+                        <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                          {/* Name & Contact */}
+                          <td className="px-6 py-4">
+                            <div className="font-bold text-gray-800">{c.contactName || "Unnamed"}</div>
+                            <div className="text-xs text-gray-400 font-medium">{c.contactPhone || "No Phone"}</div>
+                          </td>
+                          {/* Attender */}
+                          <td className="px-6 py-4">
+                            <span className="inline-flex items-center px-2.5 py-1 bg-slate-100 text-slate-700 text-xs font-bold rounded-xl">
+                              👤 {c.attenderName}
+                            </span>
+                          </td>
+                          {/* Tag / Program */}
+                          <td className="px-6 py-4">
+                            <div className="text-gray-700 font-medium text-xs truncate max-w-[150px]">{c.programName}</div>
+                            {c.contactTags && c.contactTags.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {c.contactTags.slice(0, 2).map((t, index) => (
+                                  <span key={index} className="px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[9px] font-bold">
+                                    {t}
+                                  </span>
+                                ))}
+                                {c.contactTags.length > 2 && (
+                                  <span className="text-[9px] text-gray-400">+{c.contactTags.length - 2}</span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          {/* Source / Called For */}
+                          <td className="px-6 py-4 text-xs text-gray-600">
+                            <div className="font-medium text-gray-700">{c.source || "N/A"}</div>
+                            <div className="text-[10px] text-gray-400 font-medium mt-0.5">Called for: {c.calledFor || "N/A"}</div>
+                          </td>
+                          {/* Date & Time */}
+                          <td className="px-6 py-4 text-xs text-gray-500 whitespace-nowrap">
+                            {dateStr}
+                          </td>
+                          {/* Remarks */}
+                          <td className="px-6 py-4">
+                            <p className="text-xs text-gray-600 max-w-[200px] truncate" title={c.remark}>
+                              {c.remark || <span className="text-gray-300 italic">No remarks</span>}
+                            </p>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {paginatedConversions.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="py-12 text-center text-gray-400 font-medium bg-white">
+                          No conversions match the current filters and search query in this month.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination controls */}
+              {totalConvPages > 1 && (
+                <div className="p-4 flex items-center justify-between bg-gray-50/50 rounded-2xl border border-gray-100">
+                  <span className="text-xs text-gray-400 font-medium">
+                    Showing {Math.min(searchedConversions.length, (convPage - 1) * convPerPage + 1)}-{Math.min(searchedConversions.length, convPage * convPerPage)} of {searchedConversions.length} entries
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setConvPage(p => Math.max(1, p - 1))}
+                      disabled={convPage === 1}
+                      className="px-3 py-1.5 bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-50 text-xs font-bold rounded-xl shadow-xs transition"
+                    >
+                      Previous
+                    </button>
+                    <span className="px-3 text-xs font-bold text-gray-600">
+                      Page {convPage} of {totalConvPages}
+                    </span>
+                    <button
+                      onClick={() => setConvPage(p => Math.min(totalConvPages, p + 1))}
+                      disabled={convPage === totalConvPages}
+                      className="px-3 py-1.5 bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-50 text-xs font-bold rounded-xl shadow-xs transition"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </MonthlySection>
         </div>
       )}
