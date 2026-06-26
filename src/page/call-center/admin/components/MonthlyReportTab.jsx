@@ -89,17 +89,17 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
       : `${selected.length} selected`;
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative w-full" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen(p => !p)}
-        className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[160px] max-w-[220px] whitespace-nowrap overflow-hidden"
+        className="flex items-center justify-between gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full whitespace-nowrap overflow-hidden"
       >
         <span className="truncate flex-1 text-left text-gray-700">{label}</span>
         <ChevronDown size={14} className="shrink-0 text-gray-400" />
       </button>
       {open && (
-        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl min-w-[200px] overflow-hidden right-0">
+        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl w-full min-w-[200px] overflow-hidden right-0">
           <div className="p-2 border-b border-gray-100 flex items-center gap-2">
             <Search size={13} className="text-gray-400 shrink-0" />
             <input
@@ -669,7 +669,12 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           <h2 className="text-3xl font-black text-slate-800">Monthly Call Center Analytics</h2>
           <p className="text-slate-500 mt-1">Generate comprehensive monthly analytics and export to Excel</p>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
+      </div>
+
+      {/* Filter Bar */}
+      <div className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm space-y-4">
+        {/* Row 1: Dropdowns grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
           <MultiSelect
             options={programOptions}
             selected={selectedProgramIds}
@@ -709,39 +714,47 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             placeholder="Status"
             allLabel="📊 All Statuses"
           />
+        </div>
 
-          {monthOptions.length > 0 && (
-            <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
-              className="px-4 py-2.5 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-              {monthOptions.map(m => {
-                const [y, mn] = m.split("-");
-                const dateObj = new Date(parseInt(y), parseInt(mn) - 1, 1);
-                const display = dateObj.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
-                return <option key={m} value={m}>{display}</option>;
-              })}
-            </select>
-          )}
+        {/* Row 2: Controls & Export */}
+        <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-gray-100">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider mr-1">Select Month:</span>
+            {monthOptions.length > 0 && (
+              <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+                className="px-4 py-2 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                {monthOptions.map(m => {
+                  const [y, mn] = m.split("-");
+                  const dateObj = new Date(parseInt(y), parseInt(mn) - 1, 1);
+                  const display = dateObj.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+                  return <option key={m} value={m}>{display}</option>;
+                })}
+              </select>
+            )}
+          </div>
 
-          {activeFilters > 0 && (
-            <button
-              onClick={() => {
-                setSelectedProgramIds([]);
-                setSelectedAttenderIds([]);
-                setSelectedSources([]);
-                setSelectedCalledFors([]);
-                setSelectedStatuses([]);
-              }}
-              className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-black hover:bg-red-100 transition animate-fade-in"
-            >
-              <X size={12} /> Clear filters
-              <span className="bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">{activeFilters}</span>
+          <div className="flex items-center gap-3">
+            {activeFilters > 0 && (
+              <button
+                onClick={() => {
+                  setSelectedProgramIds([]);
+                  setSelectedAttenderIds([]);
+                  setSelectedSources([]);
+                  setSelectedCalledFors([]);
+                  setSelectedStatuses([]);
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-black hover:bg-red-100 transition animate-fade-in"
+              >
+                <X size={12} /> Clear filters
+                <span className="bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">{activeFilters}</span>
+              </button>
+            )}
+
+            <button onClick={handleExport} disabled={!monthFiltered.length}
+              className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-sm transition-all disabled:opacity-50">
+              <Download size={18} /> Export Excel Workbook
             </button>
-          )}
-
-          <button onClick={handleExport} disabled={!monthFiltered.length}
-            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-sm transition-all disabled:opacity-50">
-            <Download size={18} /> Export Excel Workbook
-          </button>
+          </div>
         </div>
       </div>
 

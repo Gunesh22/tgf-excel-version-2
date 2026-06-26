@@ -41,17 +41,17 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
       : `${selected.length} selected`;
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative w-full" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen(p => !p)}
-        className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[160px] max-w-[220px] whitespace-nowrap overflow-hidden"
+        className="flex items-center justify-between gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full whitespace-nowrap overflow-hidden"
       >
         <span className="truncate flex-1 text-left">{label}</span>
         <ChevronDown size={14} className="shrink-0 text-gray-400" />
       </button>
       {open && (
-        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl min-w-[200px] overflow-hidden">
+        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl w-full min-w-[200px] overflow-hidden">
           <div className="p-2 border-b border-gray-100 flex items-center gap-2">
             <Search size={13} className="text-gray-400 shrink-0" />
             <input
@@ -370,79 +370,89 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
         </div>
 
         {/* Filter Bar */}
-        <div className="bg-white border border-gray-100 rounded-3xl p-4 shadow-sm flex flex-wrap gap-3 items-center">
-          {/* Tags multi-select */}
-          <MultiSelect
-            options={programOptions}
-            selected={selectedProgramIds}
-            onChange={setSelectedProgramIds}
-            placeholder="Tags"
-            allLabel="🌟 All Tags"
-          />
+        <div className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm space-y-4">
+          {/* Row 1: Dropdowns grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+            {/* Tags multi-select */}
+            <MultiSelect
+              options={programOptions}
+              selected={selectedProgramIds}
+              onChange={setSelectedProgramIds}
+              placeholder="Tags"
+              allLabel="🌟 All Tags"
+            />
 
-          {/* Attenders multi-select */}
-          <MultiSelect
-            options={attenderOptions}
-            selected={selectedAttenderIds}
-            onChange={setSelectedAttenderIds}
-            placeholder="Attenders"
-            allLabel="👥 All Attenders"
-          />
+            {/* Attenders multi-select */}
+            <MultiSelect
+              options={attenderOptions}
+              selected={selectedAttenderIds}
+              onChange={setSelectedAttenderIds}
+              placeholder="Attenders"
+              allLabel="👥 All Attenders"
+            />
 
-          {/* Source multi-select */}
-          <MultiSelect
-            options={sourceOptions}
-            selected={selectedSources}
-            onChange={setSelectedSources}
-            placeholder="Source"
-            allLabel="📢 All Sources"
-          />
+            {/* Source multi-select */}
+            <MultiSelect
+              options={sourceOptions}
+              selected={selectedSources}
+              onChange={setSelectedSources}
+              placeholder="Source"
+              allLabel="📢 All Sources"
+            />
 
-          {/* Called For multi-select */}
-          <MultiSelect
-            options={calledForOptions}
-            selected={selectedCalledFors}
-            onChange={setSelectedCalledFors}
-            placeholder="Called For"
-            allLabel="📞 All Called For"
-          />
+            {/* Called For multi-select */}
+            <MultiSelect
+              options={calledForOptions}
+              selected={selectedCalledFors}
+              onChange={setSelectedCalledFors}
+              placeholder="Called For"
+              allLabel="📞 All Called For"
+            />
 
-          {/* Status multi-select */}
-          <MultiSelect
-            options={statusOptions}
-            selected={selectedStatuses}
-            onChange={setSelectedStatuses}
-            placeholder="Status"
-            allLabel="📊 All Statuses"
-          />
+            {/* Status multi-select */}
+            <MultiSelect
+              options={statusOptions}
+              selected={selectedStatuses}
+              onChange={setSelectedStatuses}
+              placeholder="Status"
+              allLabel="📊 All Statuses"
+            />
+          </div>
 
-          {/* Date range */}
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            className="px-3 py-2.5 bg-white border border-gray-200 rounded-2xl text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-          <span className="text-gray-400 text-sm font-medium">to</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            className="px-3 py-2.5 bg-white border border-gray-200 rounded-2xl text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          {/* Row 2: Date range & Clear actions */}
+          <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-gray-100">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider mr-1">Date Range:</span>
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                className="px-3 py-2 bg-white border border-gray-200 rounded-2xl text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <span className="text-gray-400 text-sm font-medium">to</span>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                className="px-3 py-2 bg-white border border-gray-200 rounded-2xl text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
 
-          {/* Active filter badge + clear */}
-          {(activeFilters > 0 || dateFrom !== todayStr || dateTo !== todayStr) && (
-            <button
-              onClick={() => {
-                setSelectedProgramIds([]);
-                setSelectedAttenderIds([]);
-                setSelectedSources([]);
-                setSelectedCalledFors([]);
-                setSelectedStatuses([]);
-                setDateFrom(todayStr);
-                setDateTo(todayStr);
-              }}
-              className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-black hover:bg-red-100 transition"
-            >
-              <X size={12} /> Clear filters
-              {activeFilters > 0 && <span className="bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">{activeFilters}</span>}
-            </button>
-          )}
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400 font-semibold">{filteredLogs.length} entries</span>
 
-          <span className="text-xs text-gray-400 font-semibold ml-auto">{filteredLogs.length} entries</span>
+              {/* Active filter badge + clear */}
+              {(activeFilters > 0 || dateFrom !== todayStr || dateTo !== todayStr) && (
+                <button
+                  onClick={() => {
+                    setSelectedProgramIds([]);
+                    setSelectedAttenderIds([]);
+                    setSelectedSources([]);
+                    setSelectedCalledFors([]);
+                    setSelectedStatuses([]);
+                    setDateFrom(todayStr);
+                    setDateTo(todayStr);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-black hover:bg-red-100 transition"
+                >
+                  <X size={12} /> Clear filters
+                  {activeFilters > 0 && <span className="bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">{activeFilters}</span>}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
