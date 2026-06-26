@@ -146,7 +146,12 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
 export default function MonthlyReportTab({ programs, attenders = [], settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] } }) {
   const [selectedProgramIds, setSelectedProgramIds] = useState([]); // empty = ALL
   const [selectedAttenderIds, setSelectedAttenderIds] = useState([]); // empty = ALL
-  const [selectedMonth, setSelectedMonth] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date();
+    const yr = d.getFullYear();
+    const mn = String(d.getMonth() + 1).padStart(2, "0");
+    return `${yr}-${mn}`;
+  });
   const [selectedSources, setSelectedSources] = useState([]);
   const [selectedCalledFors, setSelectedCalledFors] = useState([]);
   const [selectedStatuses, setSelectedStatuses] = useState([]);
@@ -329,25 +334,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     return attempts;
   }, [callLogs, selectedProgramIds, selectedSources, selectedCalledFors, selectedStatuses, programs]);
 
-  const monthOptions = React.useMemo(() => {
-    const months = new Set();
-    allHistoricalAttempts.forEach(att => {
-      if (att.timestamp && !isNaN(att.timestamp.getTime())) {
-        months.add(att.timestamp.toLocaleDateString("en-CA", { year: "numeric", month: "2-digit" }));
-      }
-    });
-    return Array.from(months).sort((a, b) => b.localeCompare(a));
-  }, [allHistoricalAttempts]);
 
-  useEffect(() => {
-    if (monthOptions.length > 0) {
-      if (!selectedMonth || !monthOptions.includes(selectedMonth)) {
-        setSelectedMonth(monthOptions[0]);
-      }
-    } else {
-      setSelectedMonth("");
-    }
-  }, [monthOptions, selectedMonth]);
 
   const attenderOptions = React.useMemo(() => {
     return attenders.map(a => ({
@@ -720,17 +707,12 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-gray-100">
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider mr-1">Select Month:</span>
-            {monthOptions.length > 0 && (
-              <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
-                className="px-4 py-2 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                {monthOptions.map(m => {
-                  const [y, mn] = m.split("-");
-                  const dateObj = new Date(parseInt(y), parseInt(mn) - 1, 1);
-                  const display = dateObj.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
-                  return <option key={m} value={m}>{display}</option>;
-                })}
-              </select>
-            )}
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={e => setSelectedMonth(e.target.value)}
+              className="px-4 py-2 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
           </div>
 
           <div className="flex items-center gap-3">
