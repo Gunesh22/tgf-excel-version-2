@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-hot-toast";
 import { Settings, ArrowLeft, ChevronRight, Loader } from "lucide-react";
-import { getPrograms, getAttenders } from "../../../lib/db";
+import { getPrograms, getAttenders, subscribeToCallCenterOptions } from "../../../lib/db";
 import ImportContacts from "../ImportContacts";
 import { TAB_ITEMS } from "./utils.jsx";
 import DashboardTab from "./components/DashboardTab";
@@ -16,9 +16,16 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
   const [programs, setPrograms] = useState([]);
   const [attenders, setAttenders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [settingsOptions, setSettingsOptions] = useState({ statusOptions: [], sourceOptions: [], calledForOptions: [] });
 
   useEffect(() => {
     loadAll();
+    const unsub = subscribeToCallCenterOptions((data) => {
+      setSettingsOptions(data);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
   const loadAll = async () => {
@@ -88,8 +95,8 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
           </div>
         ) : (
           <>
-            {activeTab === "dashboard" && <DashboardTab programs={programs} attenders={attenders} />}
-            {activeTab === "monthly" && <MonthlyReportTab programs={programs} attenders={attenders} />}
+            {activeTab === "dashboard" && <DashboardTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} />}
+            {activeTab === "monthly" && <MonthlyReportTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} />}
             {activeTab === "programs" && <ProgramsTab programs={programs} attenders={attenders} onReloadPrograms={refreshAll} />}
             {activeTab === "import" && <ImportContacts programs={programs} onImportComplete={refreshAll} />}
             {activeTab === "attenders" && <AttendersTab attenders={attenders} programs={programs} onReloadAttenders={refreshAll} />}

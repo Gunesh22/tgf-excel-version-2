@@ -96,7 +96,7 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
 }
 
 // ── Main Dashboard ─────────────────────────────────────────────────────────
-export default function DashboardTab({ programs, attenders }) {
+export default function DashboardTab({ programs, attenders, settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] } }) {
   const todayStr = new Date().toISOString().split("T")[0];
 
   const [selectedProgramIds, setSelectedProgramIds] = useState([]); // empty = ALL
@@ -122,27 +122,27 @@ export default function DashboardTab({ programs, attenders }) {
   const attenderOptions = attenders.map(a => ({ value: a.id, label: a.name }));
 
   const sourceOptions = useMemo(() => {
-    const sources = new Set();
+    const sources = new Set(settingsOptions?.sourceOptions || []);
     callLogs.forEach(log => {
       const sourceKey = Object.keys(log).find(k => ["source", "sourse", "source of information", "source of informiton"].includes(k.toLowerCase()));
       const val = sourceKey ? String(log[sourceKey] || "").trim() : "";
       if (val) sources.add(val);
     });
     return Array.from(sources).sort().map(s => ({ value: s, label: s }));
-  }, [callLogs]);
+  }, [callLogs, settingsOptions]);
 
   const calledForOptions = useMemo(() => {
-    const values = new Set();
+    const values = new Set(settingsOptions?.calledForOptions || []);
     callLogs.forEach(log => {
       const key = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
       const val = key ? String(log[key] || "").trim() : "";
       if (val) values.add(val);
     });
     return Array.from(values).sort().map(s => ({ value: s, label: s }));
-  }, [callLogs]);
+  }, [callLogs, settingsOptions]);
 
   const statusOptions = useMemo(() => {
-    const statuses = new Set();
+    const statuses = new Set(settingsOptions?.statusOptions || []);
     callLogs.forEach(log => {
       if (log.attenderStates) {
         Object.values(log.attenderStates).forEach(state => {
@@ -162,7 +162,7 @@ export default function DashboardTab({ programs, attenders }) {
       }
     });
     return Array.from(statuses).sort().map(s => ({ value: s, label: s }));
-  }, [callLogs]);
+  }, [callLogs, settingsOptions]);
 
   const flattenedLogs = useMemo(() => {
     const list = [];

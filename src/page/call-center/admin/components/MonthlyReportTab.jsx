@@ -143,7 +143,7 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
   );
 }
 
-export default function MonthlyReportTab({ programs, attenders = [] }) {
+export default function MonthlyReportTab({ programs, attenders = [], settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] } }) {
   const [selectedProgramIds, setSelectedProgramIds] = useState([]); // empty = ALL
   const [selectedAttenderIds, setSelectedAttenderIds] = useState([]); // empty = ALL
   const [selectedMonth, setSelectedMonth] = useState("");
@@ -171,27 +171,27 @@ export default function MonthlyReportTab({ programs, attenders = [] }) {
   }, [programs]);
 
   const sourceOptions = React.useMemo(() => {
-    const sources = new Set();
+    const sources = new Set(settingsOptions?.sourceOptions || []);
     callLogs.forEach(log => {
       const sourceKey = Object.keys(log).find(k => ["source", "sourse", "source of information", "source of informiton"].includes(k.toLowerCase()));
       const val = sourceKey ? String(log[sourceKey] || "").trim() : "";
       if (val) sources.add(val);
     });
     return Array.from(sources).sort().map(s => ({ value: s, label: s }));
-  }, [callLogs]);
+  }, [callLogs, settingsOptions]);
 
   const calledForOptions = React.useMemo(() => {
-    const values = new Set();
+    const values = new Set(settingsOptions?.calledForOptions || []);
     callLogs.forEach(log => {
       const key = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
       const val = key ? String(log[key] || "").trim() : "";
       if (val) values.add(val);
     });
     return Array.from(values).sort().map(s => ({ value: s, label: s }));
-  }, [callLogs]);
+  }, [callLogs, settingsOptions]);
 
   const statusOptions = React.useMemo(() => {
-    const statuses = new Set();
+    const statuses = new Set(settingsOptions?.statusOptions || []);
     callLogs.forEach(log => {
       if (log.attenderStates) {
         Object.values(log.attenderStates).forEach(state => {
@@ -211,7 +211,7 @@ export default function MonthlyReportTab({ programs, attenders = [] }) {
       }
     });
     return Array.from(statuses).sort().map(s => ({ value: s, label: s }));
-  }, [callLogs]);
+  }, [callLogs, settingsOptions]);
 
   const allHistoricalAttempts = React.useMemo(() => {
     const attempts = [];
