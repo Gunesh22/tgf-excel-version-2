@@ -315,6 +315,24 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     if (globalDup && Array.isArray(globalDup.matches)) {
       const otherEdits = globalDup.matches.filter(m => m.id !== row.id && (m.isAssigned === true || m.assignedTo));
       otherEdits.forEach(m => {
+        // First check nested attenderStates inside duplicate matches
+        if (m.attenderStates) {
+          Object.keys(m.attenderStates).forEach(otherId => {
+            if (otherId === attenderId) return; // skip current attender
+            const state = m.attenderStates[otherId];
+            if (state) {
+              const name = state.attenderName || "Other Attender";
+              const val = extractVal(state, fieldKey);
+              if (val !== undefined) {
+                if (!list.some(item => item.name === name && item.val === val)) {
+                  list.push({ name, val });
+                }
+              }
+            }
+          });
+        }
+
+        // Also check the top-level values of the duplicate match
         const name = m.assignedName || m.attenderName || "Unknown";
         const val = extractVal(m, fieldKey);
         if (val !== undefined) {
@@ -584,13 +602,6 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
               updated.Tags = dupTagsVal;
             }
 
-            // Source & Called For — always carry over from duplicate
-            const dupSource = getFieldWithFallback(dup, "Source") || getFieldWithFallback(dup, "source");
-            if (dupSource) updated.Source = dupSource;
-
-            const dupCalledFor = getFieldWithFallback(dup, "Called For") || getFieldWithFallback(dup, "calledFor");
-            if (dupCalledFor) updated["Called For"] = dupCalledFor;
-
             // Link contact identity
             if (!updated.contactId) {
               updated.contactId = dup.contactId || dup.id;
@@ -607,7 +618,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
               "attenderid", "attendername", "programid", "programname", "remark", "status",
               "calltype", "querystatus", "objectionreason", "callbackdate", "callbackstatus",
               "ishotlead", "firstcalledat", "lastcalledat", "_isnew", "_rawdata", "_deleted",
-              "attenderstates", "tags"
+              "attenderstates", "tags", "source", "called for", "called_for", "calledfor"
             ]);
 
             Object.keys(dup).forEach(k => {
@@ -702,7 +713,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           "attenderid", "attendername", "programid", "programname", "remark", "status",
           "calltype", "querystatus", "objectionreason", "callbackdate", "callbackstatus",
           "ishotlead", "firstcalledat", "lastcalledat", "_isnew", "_rawdata", "_deleted",
-          "attenderstates", "tags"
+          "attenderstates", "tags", "source", "called for", "called_for", "calledfor"
         ].includes(kl)) {
           return;
         }
@@ -808,6 +819,47 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     if (globalDup && Array.isArray(globalDup.matches)) {
       globalDup.matches.filter(m => m.id !== row.id && (m.isAssigned === true || m.assignedTo)).forEach(m => {
         const progName = m.programName || "Duplicate Lead";
+
+        // A) Extract nested history/remarks from m.attenderStates
+        if (m.attenderStates) {
+          Object.keys(m.attenderStates).forEach(otherId => {
+            if (otherId === attenderId) return; // skip current attender
+            const state = m.attenderStates[otherId];
+            if (state) {
+              const attProgName = state.programName || progName;
+              if (Array.isArray(state.history)) {
+                state.history.forEach(h => {
+                  if (h.remark && String(h.remark).trim()) {
+                    list.push({
+                      status: h.status || "",
+                      remark: h.remark || "",
+                      attenderName: h.attenderName || state.attenderName || "Unknown",
+                      timestamp: h.timestamp || new Date().toISOString(),
+                      isCurrentDoc: false,
+                      sourceProgram: attProgName
+                    });
+                  }
+                });
+              }
+              if (state.remark && String(state.remark).trim()) {
+                const attRemark = String(state.remark).trim();
+                const alreadyInStateHistory = Array.isArray(state.history) && state.history.some(h => h.remark === attRemark);
+                if (!alreadyInStateHistory) {
+                  list.push({
+                    status: state.status || "",
+                    remark: attRemark,
+                    attenderName: state.attenderName || "Unknown",
+                    timestamp: state.updatedAt || new Date().toISOString(),
+                    isCurrentDoc: false,
+                    sourceProgram: attProgName
+                  });
+                }
+              }
+            }
+          });
+        }
+
+        // B) Extract top-level history/remarks of the duplicate match
         if (Array.isArray(m.history)) {
           m.history.forEach(h => {
             if (h.remark && String(h.remark).trim()) {
@@ -1160,13 +1212,61 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         </div>
 
         <div ref={modalScrollRef} className="overflow-y-auto flex-1 p-8 space-y-8">
-          {globalDup && globalDup.first && (
+          {globalDup && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 animate-slide-up shadow-sm">
               <AlertCircle className="text-amber-500 shrink-0" size={16} />
               <p className="text-xs font-bold text-amber-800">
                 Already present in{" "}
                 <span className="bg-amber-200/70 px-2 py-0.5 rounded-lg text-amber-900">
-                  {globalDup.first.assignedName || globalDup.first.attenderName || globalDup.first.programName || "another sheet"}
+                  {(() => {
+                    const attenders = new Set();
+                    const programs = new Set();
+
+                    globalDup.matches.forEach(m => {
+                      if (m.attenderStates) {
+                        Object.keys(m.attenderStates).forEach(attId => {
+                          const state = m.attenderStates[attId];
+                          if (state) {
+                            if (state.attenderName && state.attenderName !== "Unknown") {
+                              attenders.add(state.attenderName);
+                            }
+                            if (state.programName) {
+                              programs.add(state.programName);
+                            }
+                          }
+                        });
+                      }
+                      
+                      const topName = m.assignedName || m.attenderName;
+                      if (topName && topName !== "Unknown") {
+                        attenders.add(topName);
+                      }
+                      if (m.programName) {
+                        programs.add(m.programName);
+                      }
+                    });
+
+                    // Remove current attender name if present
+                    if (attenderName) {
+                      attenders.delete(attenderName);
+                    }
+
+                    const attList = Array.from(attenders).filter(Boolean);
+                    const progList = Array.from(programs).filter(Boolean);
+
+                    let infoStr = "";
+                    if (attList.length > 0) {
+                      infoStr += attList.join(", ");
+                    } else {
+                      infoStr += "another attender";
+                    }
+
+                    if (progList.length > 0) {
+                      infoStr += ` (${progList.join(", ")})`;
+                    }
+
+                    return infoStr;
+                  })()}
                 </span>
               </p>
             </div>
