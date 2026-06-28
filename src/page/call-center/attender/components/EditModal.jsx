@@ -257,6 +257,10 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   const handleDismissRef = useRef(null);
   const [addedFields, setAddedFields] = useState([]);
   const [localPrograms, setLocalPrograms] = useState(programs);
+  const [showCalledForPrompt, setShowCalledForPrompt] = useState(false);
+  const [promptSelection, setPromptSelection] = useState([]);
+  const [pendingSave, setPendingSave] = useState(false);
+  const [showUndoStatusPrompt, setShowUndoStatusPrompt] = useState(false);
 
   useEffect(() => {
     setLocalPrograms(programs);
@@ -1011,21 +1015,37 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     return dynamicFields.filter(f => isCampaign(f));
   }, [dynamicFields]);
 
-  const handleSaveAndClose = async () => {
+  const handleSaveAndClose = async (overrideFields = null) => {
     if (saving) return; // Prevent double save
 
+    const targetEdited = (overrideFields && typeof overrideFields === "object" && !overrideFields.target && !overrideFields.nativeEvent)
+      ? { ...edited, ...overrideFields }
+      : edited;
+
     // Objection Tracker Validation
-    if ((edited.status === "Not interested" || edited.status === "Not possible") && !edited.objectionReason) {
-      toast.error(`Please select a reason for "${edited.status}" before saving.`, { duration: 4000, position: 'top-center' });
+    if ((targetEdited.status === "Not interested" || targetEdited.status === "Not possible") && !targetEdited.objectionReason) {
+      toast.error(`Please select a reason for "${targetEdited.status}" before saving.`, { duration: 4000, position: 'top-center' });
       return;
+    }
+
+    // REGISTRATION DONE VALIDATION
+    if (targetEdited.status === "Reg.Done" && CALLED_FOR_OPTIONS.length > 1) {
+      const calledForVal = targetEdited[calledForField] || "";
+      const selectedArr = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
+      if (selectedArr.length !== 1) {
+        setPromptSelection("");
+        setPendingSave(true);
+        setShowCalledForPrompt(true);
+        return;
+      }
     }
 
     setSaving(true);
 
-    if (onSave) onSave(edited, true);
+    if (onSave) onSave(targetEdited, true);
 
     try {
-      const { id, _callbackDue, ...rest } = edited;
+      const { id, _callbackDue, ...rest } = targetEdited;
       const updates = { ...rest };
       // Never send attenderStates or internal bookkeeping back to Firestore as a whole object.
       // updateCallLog manages attenderStates internally via dot-notation (merge-safe).
@@ -1067,7 +1087,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
       // Track call timestamp — always record when attender touched this contact
       updates.lastCalledAt = new Date().toISOString();
-      if (!row.firstCalledAt && !edited.firstCalledAt) {
+      if (!row.firstCalledAt && !targetEdited.firstCalledAt) {
         updates.firstCalledAt = new Date().toISOString();
       }
 
@@ -1078,7 +1098,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       const statusChanged = row.status !== updates.status;
       const hasNewRemark = String(updates.remark || "").trim().length > 0;
       
-      let baseHistory = Array.isArray(edited.history) ? edited.history : (Array.isArray(row.history) ? row.history : []);
+      let baseHistory = Array.isArray(targetEdited.history) ? targetEdited.history : (Array.isArray(row.history) ? row.history : []);
       if (statusChanged || hasNewRemark) {
         const safeName = attenderName || "Unknown";
         const newHist = {
@@ -1088,7 +1108,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           timestamp: new Date().toISOString()
         };
         updates.history = [...baseHistory, newHist];
-      } else if (Array.isArray(edited.history)) {
+      } else if (Array.isArray(targetEdited.history)) {
         // Even if no new note/status change, we want to persist any edits to past notes!
         updates.history = baseHistory;
       }
@@ -1101,7 +1121,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       if (row._isNew) {
         delete updates._isNew;
         await addIncomingCallLog(
-          row.attenderId, row.attenderName, updates, edited.programId, edited.programName
+          row.attenderId, row.attenderName, updates, targetEdited.programId, targetEdited.programName
         );
       } else {
         await updateCallLog(id, updates, attenderId, attenderName);
@@ -1143,6 +1163,15 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     if (typeof edited.callbackDate === "string") return edited.callbackDate;
     if (edited.callbackDate?.toDate) return edited.callbackDate.toDate().toISOString().split("T")[0];
     return "";
+  };
+
+  const getPromptOptions = () => {
+    const calledForVal = edited[calledForField] || "";
+    const selectedArr = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
+    if (selectedArr.length === 0) {
+      return CALLED_FOR_OPTIONS;
+    }
+    return selectedArr;
   };
 
   const modalScrollRef = useRef(null);
@@ -1739,9 +1768,19 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 <CheckCircle2 size={13} className="text-indigo-500" /> General Result Status
               </label>
               <SearchableDropdown
-                options={STATUS_OPTIONS.filter(opt => opt !== "Reg.Done")}
+                options={STATUS_OPTIONS}
                 selected={edited.status || ""}
                 onChange={val => {
+                  if (val === "Reg.Done") {
+                    const calledForVal = edited[calledForField] || "";
+                    const selectedArr = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
+                    if (selectedArr.length !== 1 && CALLED_FOR_OPTIONS.length > 1) {
+                      setPromptSelection("");
+                      setPendingSave(false);
+                      setShowCalledForPrompt(true);
+                      return;
+                    }
+                  }
                   setEdited(prev => ({
                     ...prev,
                     status: val,
@@ -1965,14 +2004,44 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm uppercase tracking-wider">
                   <Flame size={16} /> Fast Registration
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleChange("status", "Reg.Done")}
-                  className={`w-full py-3 rounded-xl font-bold transition flex items-center justify-center gap-2 ${edited.status === "Reg.Done" ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 scale-[1.02]" : "bg-white text-emerald-700 border-2 border-emerald-500 hover:bg-emerald-50"}`}
-                >
-                  <CheckCircle2 size={18} />
-                  {edited.status === "Reg.Done" ? "Added to Abhivyakti Report" : "Add to Abhivyakti Report"}
-                </button>
+                {edited.status === "Reg.Done" ? (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={true}
+                      className="flex-1 py-3 rounded-xl font-bold bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle2 size={18} />
+                      Added to Abhivyakti
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowUndoStatusPrompt(true)}
+                      className="px-4 py-3 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs transition flex items-center justify-center gap-1 active:scale-95 hover:scale-105"
+                    >
+                      Undo
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const calledForVal = edited[calledForField] || "";
+                      const selectedArr = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
+                      if (selectedArr.length !== 1 && CALLED_FOR_OPTIONS.length > 1) {
+                        setPromptSelection("");
+                        setPendingSave(false);
+                        setShowCalledForPrompt(true);
+                      } else {
+                        handleChange("status", "Reg.Done");
+                      }
+                    }}
+                    className="w-full py-3 rounded-xl font-bold transition flex items-center justify-center gap-2 bg-white text-emerald-700 border-2 border-emerald-500 hover:bg-emerald-50 active:scale-95"
+                  >
+                    <CheckCircle2 size={18} />
+                    Add to Abhivyakti Report
+                  </button>
+                )}
               </div>
           </div>
         </div>
@@ -1990,6 +2059,140 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           </button>
         </div>
       </div>
+
+      {/* Called For compulsory prompt */}
+      {showCalledForPrompt && (
+        <div 
+          onClick={e => e.stopPropagation()} 
+          className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in"
+        >
+          <div className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl border border-indigo-150 animate-slide-up flex flex-col max-h-[85vh]">
+            <div className="flex items-center gap-3 mb-4 text-indigo-900">
+              <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600">
+                <Phone size={20} />
+              </div>
+              <div>
+                <h4 className="font-black text-lg leading-none">Select Registered Program</h4>
+                <p className="text-[11px] text-gray-500 mt-1 font-semibold">Select exactly which program this lead has registered for.</p>
+              </div>
+            </div>
+
+            {/* Options List */}
+            <div className="flex-1 overflow-y-auto space-y-2 py-2 pr-1 min-h-[200px]">
+              {getPromptOptions().map(opt => {
+                const isSel = promptSelection === opt;
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => {
+                      setPromptSelection(opt);
+                    }}
+                    className={`w-full px-4 py-3 rounded-2xl text-xs font-bold border transition-all text-left flex items-center justify-between ${
+                      isSel
+                        ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-600/20 scale-[1.01]"
+                        : "bg-gray-50 border-gray-150 text-gray-700 hover:bg-gray-100"
+                    }`}
+                  >
+                    <span>{opt}</span>
+                    {isSel && <CheckCircle2 size={16} />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 mt-5 pt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCalledForPrompt(false);
+                  setPendingSave(false);
+                }}
+                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-gray-600 font-bold rounded-2xl text-xs transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!promptSelection) {
+                    toast.error("Please select exactly 1 option.");
+                    return;
+                  }
+                  const valStr = promptSelection;
+                  handleChange(calledForField, valStr);
+                  handleChange("status", "Reg.Done");
+                  setShowCalledForPrompt(false);
+                  
+                  if (pendingSave) {
+                    setPendingSave(false);
+                    handleSaveAndClose({ [calledForField]: valStr, status: "Reg.Done" });
+                  } else {
+                    toast.success("Called For and Registration status updated!");
+                  }
+                }}
+                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black rounded-2xl text-xs transition shadow-lg shadow-indigo-500/25"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Undo Status Selection Prompt */}
+      {showUndoStatusPrompt && (
+        <div 
+          onClick={e => e.stopPropagation()} 
+          className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in"
+        >
+          <div className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl border border-rose-150 animate-slide-up flex flex-col max-h-[85vh]">
+            <div className="flex items-center gap-3 mb-4 text-rose-900">
+              <div className="w-10 h-10 bg-rose-50 rounded-xl flex items-center justify-center text-rose-600">
+                <X size={20} />
+              </div>
+              <div>
+                <h4 className="font-black text-lg leading-none">Undo Registration</h4>
+                <p className="text-[11px] text-gray-500 mt-1 font-semibold">Please select the new status for this lead.</p>
+              </div>
+            </div>
+
+            {/* Status Options List */}
+            <div className="flex-1 overflow-y-auto space-y-2 py-2 pr-1 min-h-[250px]">
+              {STATUS_OPTIONS.filter(opt => opt !== "Reg.Done").map(opt => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => {
+                    setEdited(prev => ({
+                      ...prev,
+                      status: opt,
+                      [calledForField]: ""
+                    }));
+                    setShowUndoStatusPrompt(false);
+                    toast.success(`Registration undone. Status set to "${opt}"`);
+                  }}
+                  className="w-full px-4 py-3 rounded-2xl text-xs font-bold border border-gray-150 bg-gray-50 text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 transition text-left mb-1.5"
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 mt-5 pt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setShowUndoStatusPrompt(false)}
+                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-gray-600 font-bold rounded-2xl text-xs transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
