@@ -56,7 +56,8 @@ export default function AbhivyaktiTab() {
         const dStr = d.toLocaleDateString("en-IN");
         dayMap[dStr] = (dayMap[dStr] || 0) + 1;
       }
-      if (r.convertedBy || r.attenderName) {
+      const hasRealAttender = (r.convertedBy && r.convertedBy !== "Unknown") || (r.attenderName && r.attenderName !== "Unknown");
+      if (hasRealAttender) {
         stats.totalAttenderAssisted++;
       }
     });
@@ -105,11 +106,18 @@ export default function AbhivyaktiTab() {
         map[dStr] = { date: dStr, total: 0, assisted: 0, direct: 0 };
       }
       map[dStr].total++;
-      if (r.convertedBy || r.attenderName) map[dStr].assisted++;
+      const hasRealAttender = (r.convertedBy && r.convertedBy !== "Unknown") || (r.attenderName && r.attenderName !== "Unknown");
+      if (hasRealAttender) map[dStr].assisted++;
       else map[dStr].direct++;
     });
 
-    const parsedMonth = selectedMonth ? new Date(selectedMonth + "-01") : new Date();
+    let parsedMonth;
+    if (selectedMonth) {
+      const [year, month] = selectedMonth.split("-").map(Number);
+      parsedMonth = new Date(year, month - 1, 1);
+    } else {
+      parsedMonth = new Date();
+    }
     const daysInMonth = new Date(parsedMonth.getFullYear(), parsedMonth.getMonth() + 1, 0).getDate();
     const list = [];
     
@@ -141,7 +149,7 @@ export default function AbhivyaktiTab() {
     const map = {};
     monthFiltered.forEach(r => {
       const name = r.convertedBy || r.attenderName;
-      if (!name) return;
+      if (!name || name === "Unknown") return;
       if (!map[name]) {
         map[name] = { name, count: 0 };
       }
@@ -177,9 +185,8 @@ export default function AbhivyaktiTab() {
         if (row[k]?.toDate) row[k] = row[k].toDate().toLocaleString("en-IN");
       });
       if (row.callbackDate?.toDate) row.callbackDate = row.callbackDate.toDate().toLocaleDateString("en-IN");
-      if (r.attenderName || r.convertedBy) {
-        row["Attended By"] = r.attenderName || r.convertedBy;
-      }
+      const attendedBy = (r.attenderName && r.attenderName !== "Unknown") ? r.attenderName : ((r.convertedBy && r.convertedBy !== "Unknown") ? r.convertedBy : "Direct / Online");
+      row["Attended By"] = attendedBy;
       return row;
     });
     const wsRaw = XLSX.utils.json_to_sheet(rows);

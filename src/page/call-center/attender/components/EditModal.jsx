@@ -189,6 +189,9 @@ const SearchableDropdown = ({
 export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs = [], onSave, onDelete, onClose }) => {
   const [edited, setEdited] = useState(() => {
     const normalized = { ...row };
+    if (normalized.callType) {
+      normalized.callType = String(normalized.callType).toLowerCase();
+    }
     
     // Whitelist fields to normalize
     const standardFields = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Tags", "Source", "Called For"];
@@ -435,23 +438,21 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   // Identify fields from the contact that aren't internal bookkeeping fields
   const dynamicFields = useMemo(() => {
     const standardOrder = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Tags", "Source", "Called For"];
-    const internalKeys = [
-      "id", "contactId", "programId", "programName", "attenderId", "attenderName",
-      "callType", "status", "remark", "callbackDate", "callbackStatus", "isCallbackDue",
-      "isHotLead", "createdAt", "updatedAt", "lastCalledAt", "firstCalledAt", "history",
-      "_callbackDue", "_deleted", "_isNew", "registeredAt", "conversionSource", "convertedBy",
-      "GHL_ID", "Sub Program", "subProgram", "objectionReason",
-      // Firestore-managed fields — never show as editable form fields
-      "lastEditedBy", "lastEditedAt", "attenderStates", "assignedTo",
-      "assignedName", "assignedAt", "isAssigned", "normalizedPhone", "normalizedMobile", "registeredYearMonth"
-    ];
+    const excludedKeysLower = new Set([
+      "id", "contactid", "programid", "programname", "attenderid", "attendername",
+      "calltype", "call type", "status", "remark", "callbackdate", "callbackstatus", "iscallbackdue",
+      "ishotlead", "createdat", "updatedat", "lastcalledat", "firstcalledat", "history",
+      "_callbackdue", "_deleted", "_isnew", "registeredat", "conversionsource", "convertedby",
+      "ghl_id", "ghlid", "sub program", "subprogram", "objectionreason",
+      "lasteditedby", "lasteditedat", "attenderstates", "assignedto",
+      "assignedname", "assignedat", "isassigned", "normalizedphone", "normalizedmobile", "registeredyearmonth",
+      "name", "phone", "mobile", "email", "city", "state", "khoji", "tags", "source", "called for", "calledfor", "sourse"
+    ]);
 
     const contactKeys = Object.keys(edited).filter(k => {
-      if (internalKeys.includes(k)) return false;
+      const kLower = k.toLowerCase().trim();
+      if (excludedKeysLower.has(kLower)) return false;
       if (k.startsWith("_")) return false;
-      
-      // Skip standard fields since they are explicitly rendered at the top of the form
-      if (standardOrder.includes(k)) return false;
 
       // Always show newly added fields in this modal session
       if (addedFields.includes(k)) return true;
@@ -928,7 +929,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   const sourceField = findField(["source", "sourse"]);
   const calledForField = findField(["called for", "called_for", "calledfor"]);
 
-  const isManualEntry = edited.programId === "incoming-calls" || edited.programId === "outgoing-calls" || edited.programId === "Incoming Calls" || edited.programId === "Outgoing Calls";
+  const isManualEntry = edited.isManualEntry || edited.programId === "incoming-calls" || edited.programId === "outgoing-calls" || edited.programId === "Incoming Calls" || edited.programId === "Outgoing Calls";
   const isIncoming = edited._isNew || edited.callType === "incoming" || edited.callType === "incoming f" || isManualEntry;
 
   const getEditable = (field) => {

@@ -1096,7 +1096,7 @@ export const subscribeToCallLogs = (...args) => {
           // Overlay attender-specific state fields only if they exist, otherwise fall back to top-level/root document values
           status: attState.status !== undefined ? attState.status : (rawData.status || ""),
           remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
-          callType: attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing"),
+          callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
           history: attState.history !== undefined ? attState.history : (rawData.history || []),
           callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
           objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
@@ -1256,8 +1256,36 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     Object.assign(finalUpdatePayload, attenderSpecificUpdates);
   }
 
-  // Write to Firebase using setDoc with merge to allow any custom field keys safely
-  await setDoc(contactRef, finalUpdatePayload, { merge: true });
+  // Strip out undefined fields
+  Object.keys(finalUpdatePayload).forEach(key => {
+    if (finalUpdatePayload[key] === undefined) {
+      delete finalUpdatePayload[key];
+    }
+  });
+
+  // Separate root-level/custom fields from deep attenderStates updates.
+  // This is because updateDoc/batch.update parses keys as paths (crashing on special chars like '/' in custom headers),
+  // whereas setDoc/batch.set with merge: true does not parse keys (but fails to parse dot-notation nested maps).
+  const rootPayload = {};
+  const deepUpdates = {};
+
+  Object.keys(finalUpdatePayload).forEach(key => {
+    if (key.startsWith("attenderStates.")) {
+      deepUpdates[key] = finalUpdatePayload[key];
+    } else {
+      rootPayload[key] = finalUpdatePayload[key];
+    }
+  });
+
+  // Execute atomically using a writeBatch to prevent partial updates or duplicate snapshot triggers
+  const batch = writeBatch(db);
+  if (Object.keys(rootPayload).length > 0) {
+    batch.set(contactRef, rootPayload, { merge: true });
+  }
+  if (Object.keys(deepUpdates).length > 0) {
+    batch.update(contactRef, deepUpdates);
+  }
+  await batch.commit();
 
   // Log interaction if status/remark/callType/callbackDate changed
   const hasInteractionUpdate = 
@@ -1540,7 +1568,8 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
     programId: finalProgramId,
     programName: finalProgramName,
     "Sub Program": finalProgramName,
-    subProgram: finalProgramName
+    subProgram: finalProgramName,
+    isManualEntry: true
   };
 
   if (isExisting && existingData.createdAt) {
