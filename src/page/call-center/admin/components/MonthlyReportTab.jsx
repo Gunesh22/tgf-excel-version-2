@@ -270,8 +270,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           contactTags,
           programName,
           contactId: log.id,
-          source: sourceVal,
-          calledFor: calledForVal
+          source: att.source || sourceVal,
+          calledFor: att.calledFor || calledForVal
         };
       };
 
@@ -286,7 +286,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                 attenderName: state.attenderName || h.attenderName || "Unknown",
                 status: h.status || "Pending",
                 remark: h.remark || "",
-                callType: h.callType || state.callType || "outgoing"
+                callType: h.callType || state.callType || "outgoing",
+                calledFor: h.calledFor || "",
+                source: h.source || ""
               });
               if (att) attempts.push(att);
             });
@@ -298,7 +300,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
               attenderName: state.attenderName || "Unknown",
               status: state.status || "Pending",
               remark: state.remark || "",
-              callType: state.callType || "outgoing"
+              callType: state.callType || "outgoing",
+              calledFor: state["Called For"] || state.calledFor || "",
+              source: state.Source || state.source || ""
             });
             if (att) attempts.push(att);
           }
@@ -313,7 +317,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
               attenderName: log.attenderName || h.attenderName || "Unknown",
               status: h.status || "Pending",
               remark: h.remark || "",
-              callType: h.callType || log.callType || "outgoing"
+              callType: h.callType || log.callType || "outgoing",
+              calledFor: h.calledFor || "",
+              source: h.source || ""
             });
             if (att) attempts.push(att);
           });
@@ -325,7 +331,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             attenderName: log.attenderName || "Legacy Attender",
             status: log.status || "Pending",
             remark: log.remark || "",
-            callType: log.callType || "outgoing"
+            callType: log.callType || "outgoing",
+            calledFor: log["Called For"] || log.calledFor || "",
+            source: log.Source || log.source || ""
           });
           if (att) attempts.push(att);
         }

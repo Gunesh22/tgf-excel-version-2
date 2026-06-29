@@ -201,8 +201,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
             createdAt: log.createdAt,
             updatedAt: state.updatedAt ? new Date(state.updatedAt) : (log.updatedAt?.toDate ? log.updatedAt.toDate() : new Date(log.updatedAt || log.createdAt)),
             lastCalledAt: state.lastCalledAt || null,
-            source: sourceVal,
-            calledFor: calledForVal
+            source: state.Source || state.source || sourceVal,
+            calledFor: state["Called For"] || state.calledFor || calledForVal
           });
         });
       } else {
@@ -224,8 +224,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
           createdAt: log.createdAt,
           updatedAt: log.updatedAt?.toDate ? log.updatedAt.toDate() : new Date(log.updatedAt || log.createdAt),
           lastCalledAt: log.lastCalledAt || null,
-          source: sourceVal,
-          calledFor: calledForVal
+          source: log.Source || log.source || sourceVal,
+          calledFor: log["Called For"] || log.calledFor || calledForVal
         });
       }
     });

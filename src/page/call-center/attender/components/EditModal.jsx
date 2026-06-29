@@ -268,89 +268,108 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
   const getOtherValuesForField = (fieldKey) => {
     const list = [];
+    const seenKeys = new Set();
 
-    // Helper: find a value for fieldKey in a state/document object,
-    // checking both the exact key and common case variants.
     const extractVal = (obj, key) => {
       if (!obj) return undefined;
       if (key === "programName") return obj.programName || obj.programId;
-      // Direct match
       if (obj[key] !== undefined) return obj[key];
-      // Case-insensitive fallback (handles Source vs source etc.)
-      const lower = key.toLowerCase();
-      const found = Object.keys(obj).find(k => k.toLowerCase() === lower);
+      const cleanStr = (s) => String(s).toLowerCase().replace(/[\s_-]/g, "");
+      const targetClean = cleanStr(key);
+      const found = Object.keys(obj).find(k => cleanStr(k) === targetClean);
       return found ? obj[found] : undefined;
     };
-    
-    // 1. Get values from other attenders' attenderStates (attender-specific fields)
+
+    const addToList = (rawName, val) => {
+      if (val === undefined || val === null) return;
+      const valStr = String(Array.isArray(val) ? val.join(", ") : val).trim();
+      if (!valStr) return;
+
+      const name = rawName === attenderName ? "You" : rawName;
+      const uniqueKey = `${name}_${valStr}`.toLowerCase();
+      if (!seenKeys.has(uniqueKey)) {
+        seenKeys.add(uniqueKey);
+        list.push({ name, val: valStr });
+      }
+    };
+
+    // 1. Gather from current contact's attenderStates
     if (row.attenderStates) {
-      Object.keys(row.attenderStates).forEach(otherId => {
-        if (otherId === attenderId) return;
-        const state = row.attenderStates[otherId];
+      Object.keys(row.attenderStates).forEach(attId => {
+        const state = row.attenderStates[attId];
         if (state) {
-          const name = state.attenderName || "Other Attender";
-          // For shared top-level fields (Source, Called For), attenderStates won't have them.
-          // We fall back to reading them from the top-level row document below.
+          const name = state.attenderName || (attId === attenderId ? "You" : "Attender");
           const val = extractVal(state, fieldKey);
-          if (val !== undefined) {
-            list.push({ name, val });
+          addToList(name, val);
+
+          // History logs inside state
+          if (Array.isArray(state.history)) {
+            state.history.forEach(h => {
+              const hVal = extractVal(h, fieldKey);
+              const hName = h.attenderName || name;
+              addToList(hName, hVal);
+            });
           }
         }
       });
     }
 
-    // 2. For shared top-level fields (e.g. Source, Called For), if no per-attender value
-    //    was found above, show the document-level value attributed to the last editor.
-    //    This keeps the badge visible and stable regardless of who saved last.
-    if (list.length === 0) {
-      const topVal = extractVal(row._rawData || row, fieldKey);
-      // Only show if it differs from the current attender's own value in edited
-      const myVal = String(edited[fieldKey] || "").trim();
-      const topValStr = String(topVal || "").trim();
-      if (topValStr && topValStr !== myVal) {
-        const editorName = row.lastEditedBy || row.assignedName || row.attenderName || "";
-        if (editorName && editorName !== attenderName) {
-          list.push({ name: editorName, val: topVal });
-        }
-      }
-    }
+    // 2. Gather from current contact's top-level and history
+    const topVal = extractVal(row._rawData || row, fieldKey);
+    const topName = row.lastEditedBy || row.assignedName || row.attenderName || "Original";
+    addToList(topName, topVal);
 
-    // 3. Get values from legacy duplicate docs (if any) - only show duplicate info if it exists in someone's sheet (isAssigned is true)
+    const currentHist = Array.isArray(edited.history) ? edited.history : (Array.isArray(row.history) ? row.history : []);
+    currentHist.forEach(h => {
+      const hVal = extractVal(h, fieldKey);
+      const hName = h.attenderName || topName;
+      addToList(hName, hVal);
+    });
+
+    // 3. Gather from duplicate matches
     if (globalDup && Array.isArray(globalDup.matches)) {
-      const otherEdits = globalDup.matches.filter(m => m.id !== row.id && (m.isAssigned === true || m.assignedTo));
-      otherEdits.forEach(m => {
-        // First check nested attenderStates inside duplicate matches
+      globalDup.matches.forEach(m => {
+        // Top-level value of duplicate
+        const mVal = extractVal(m, fieldKey);
+        const mName = m.lastEditedBy || m.assignedName || m.attenderName || "Duplicate";
+        addToList(mName, mVal);
+
+        // History logs of duplicate
+        if (Array.isArray(m.history)) {
+          m.history.forEach(h => {
+            const hVal = extractVal(h, fieldKey);
+            const hName = h.attenderName || mName;
+            addToList(hName, hVal);
+          });
+        }
+
+        // attenderStates of duplicate
         if (m.attenderStates) {
-          Object.keys(m.attenderStates).forEach(otherId => {
-            if (otherId === attenderId) return; // skip current attender
-            const state = m.attenderStates[otherId];
+          Object.keys(m.attenderStates).forEach(attId => {
+            const state = m.attenderStates[attId];
             if (state) {
-              const name = state.attenderName || "Other Attender";
+              const name = state.attenderName || "Attender";
               const val = extractVal(state, fieldKey);
-              if (val !== undefined) {
-                if (!list.some(item => item.name === name && item.val === val)) {
-                  list.push({ name, val });
-                }
+              addToList(name, val);
+
+              if (Array.isArray(state.history)) {
+                state.history.forEach(h => {
+                  const hVal = extractVal(h, fieldKey);
+                  const hName = h.attenderName || name;
+                  addToList(hName, hVal);
+                });
               }
             }
           });
         }
-
-        // Also check the top-level values of the duplicate match
-        const name = m.assignedName || m.attenderName || "Unknown";
-        const val = extractVal(m, fieldKey);
-        if (val !== undefined) {
-          if (!list.some(item => item.name === name && item.val === val)) {
-            list.push({ name, val });
-          }
-        }
       });
     }
 
+    // Filter out currently active input value to keep the badges focused on past history
+    const myCurrentVal = String(edited[fieldKey] || "").trim().toLowerCase();
     return list.filter(item => {
-      if (!item.val) return false;
-      if (Array.isArray(item.val) && item.val.length === 0) return false;
-      return String(item.val).trim() !== "";
+      const itemValStr = String(item.val).trim().toLowerCase();
+      return itemValStr !== myCurrentVal;
     });
   };
 
@@ -468,7 +487,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       "ghl_id", "ghlid", "sub program", "subprogram", "objectionreason",
       "lasteditedby", "lasteditedat", "attenderstates", "assignedto",
       "assignedname", "assignedat", "isassigned", "normalizedphone", "normalizedmobile", "registeredyearmonth",
-      "name", "phone", "mobile", "email", "city", "state", "khoji", "tags", "source", "called for", "calledfor", "sourse"
+      "name", "phone", "mobile", "email", "city", "state", "khoji", "tags", "source", "called for", "calledfor", "sourse",
+      "ismanualentry", "ismanual", "is_manual_entry"
     ]);
 
     const contactKeys = Object.keys(edited).filter(k => {
@@ -579,12 +599,16 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
         const dup = combinedMatches[0];
 
+        // Only show duplicate banner/warning if the contact is actively assigned to an attender
+        const hasAssignedMatch = combinedMatches.some(m => m.isAssigned === true || (Array.isArray(m.assignedTo) && m.assignedTo.length > 0));
+
         setGlobalDup({
           count:       combinedMatches.length,
           allTags:     Array.from(allTagsSet).sort(),
           matches:     combinedMatches,
           first:       dup,
           programName: dup?.programName,
+          showWarning: hasAssignedMatch
         });
 
         // ── Auto-fill all contact fields from the duplicate ──
@@ -653,7 +677,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   }, [phoneVal, mobileVal, row._isNew, row.id, edited.contactId]);
 
   const isPhoneDuplicate = useMemo(() => {
-    if (!globalDup || !globalDup.first || !phoneVal) return false;
+    if (!globalDup || !globalDup.showWarning || !globalDup.first || !phoneVal) return false;
     const rawNorm = phoneVal.replace(/\D/g, "");
     if (!rawNorm) return false;
     const norm = rawNorm.length >= 10 ? rawNorm.slice(-10) : rawNorm;
@@ -666,7 +690,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   }, [globalDup, phoneVal]);
 
   const isMobileDuplicate = useMemo(() => {
-    if (!globalDup || !globalDup.first || !mobileVal) return false;
+    if (!globalDup || !globalDup.showWarning || !globalDup.first || !mobileVal) return false;
     const rawNorm = mobileVal.replace(/\D/g, "");
     if (!rawNorm) return false;
     const norm = rawNorm.length >= 10 ? rawNorm.slice(-10) : rawNorm;
@@ -778,10 +802,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       }
     }
 
-    // 2. Iterate over row.attenderStates to collect history of other attenders
+    // 2. Iterate over row.attenderStates to collect history of all sessions
     if (row.attenderStates) {
       Object.keys(row.attenderStates).forEach(otherAttenderId => {
-        if (otherAttenderId === attenderId) return; // already added above via edited.history / row.history
         const state = row.attenderStates[otherAttenderId];
         if (state) {
           const progName = state.programName || "Other Attender";
@@ -794,7 +817,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                   remark: h.remark || "",
                   attenderName: h.attenderName || state.attenderName || "Unknown",
                   timestamp: h.timestamp || new Date().toISOString(),
-                  isCurrentDoc: false, // can't edit inline
+                  isCurrentDoc: otherAttenderId === attenderId,
                   sourceProgram: progName
                 });
               }
@@ -810,7 +833,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 remark: attRemark,
                 attenderName: state.attenderName || "Unknown",
                 timestamp: state.updatedAt || new Date().toISOString(),
-                isCurrentDoc: false,
+                isCurrentDoc: otherAttenderId === attenderId,
                 sourceProgram: progName
               });
             }
@@ -821,13 +844,12 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
     // 3. Fallback: also include duplicate contacts' history if globalDup has matches
     if (globalDup && Array.isArray(globalDup.matches)) {
-      globalDup.matches.filter(m => m.id !== row.id && (m.isAssigned === true || m.assignedTo)).forEach(m => {
+      globalDup.matches.filter(m => m.id !== row.id).forEach(m => {
         const progName = m.programName || "Duplicate Lead";
 
         // A) Extract nested history/remarks from m.attenderStates
         if (m.attenderStates) {
           Object.keys(m.attenderStates).forEach(otherId => {
-            if (otherId === attenderId) return; // skip current attender
             const state = m.attenderStates[otherId];
             if (state) {
               const attProgName = state.programName || progName;
@@ -1105,7 +1127,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           status: updates.status || "",
           remark: updates.remark || "",
           attenderName: safeName,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          calledFor: targetEdited["Called For"] || targetEdited.calledFor || "",
+          source: targetEdited.Source || targetEdited.source || targetEdited.Sourse || targetEdited.sourse || ""
         };
         updates.history = [...baseHistory, newHist];
       } else if (Array.isArray(targetEdited.history)) {
@@ -1241,60 +1265,76 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         </div>
 
         <div ref={modalScrollRef} className="overflow-y-auto flex-1 p-8 space-y-8">
-          {globalDup && (
+          {globalDup && globalDup.showWarning && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 animate-slide-up shadow-sm">
               <AlertCircle className="text-amber-500 shrink-0" size={16} />
               <p className="text-xs font-bold text-amber-800">
-                Already present in{" "}
-                <span className="bg-amber-200/70 px-2 py-0.5 rounded-lg text-amber-900">
+                ⚠️ Duplicate Detected:{" "}
+                <span className="bg-amber-200/70 px-2 py-0.5 rounded-lg text-amber-900 ml-1">
                   {(() => {
                     const attenders = new Set();
-                    const programs = new Set();
+                    const calledFors = new Set();
+                    let isAssignedToMe = false;
+                    let isAssignedToOthers = false;
+                    let isUnassigned = false;
 
                     globalDup.matches.forEach(m => {
+                      const docAssigned = m.isAssigned === true || (Array.isArray(m.assignedTo) && m.assignedTo.length > 0);
+                      if (!docAssigned) {
+                        isUnassigned = true;
+                      }
+
+                      // Gather Called For values
+                      const docCalledFor = m["Called For"] || m.calledFor || "";
+                      if (docCalledFor && docCalledFor !== "Unknown") {
+                        calledFors.add(docCalledFor);
+                      }
+
                       if (m.attenderStates) {
                         Object.keys(m.attenderStates).forEach(attId => {
                           const state = m.attenderStates[attId];
                           if (state) {
                             if (state.attenderName && state.attenderName !== "Unknown") {
-                              attenders.add(state.attenderName);
+                              if (attId === attenderId || state.attenderName === attenderName) {
+                                isAssignedToMe = true;
+                              } else {
+                                attenders.add(state.attenderName);
+                                isAssignedToOthers = true;
+                              }
                             }
-                            if (state.programName) {
-                              programs.add(state.programName);
+                            const stateCalledFor = state["Called For"] || state.calledFor || "";
+                            if (stateCalledFor && stateCalledFor !== "Unknown") {
+                              calledFors.add(stateCalledFor);
                             }
                           }
                         });
                       }
                       
                       const topName = m.assignedName || m.attenderName;
+                      const topId = m.attenderId;
                       if (topName && topName !== "Unknown") {
-                        attenders.add(topName);
-                      }
-                      if (m.programName) {
-                        programs.add(m.programName);
+                        if (topId === attenderId || topName === attenderName) {
+                          isAssignedToMe = true;
+                        } else {
+                          attenders.add(topName);
+                          isAssignedToOthers = true;
+                        }
                       }
                     });
 
-                    // Remove current attender name if present
-                    if (attenderName) {
-                      attenders.delete(attenderName);
-                    }
-
                     const attList = Array.from(attenders).filter(Boolean);
-                    const progList = Array.from(programs).filter(Boolean);
+                    const cfList = Array.from(calledFors).filter(Boolean);
+                    const cfStr = cfList.length > 0 ? ` for ${cfList.join(", ")}` : "";
 
-                    let infoStr = "";
-                    if (attList.length > 0) {
-                      infoStr += attList.join(", ");
+                    if (isAssignedToOthers && attList.length > 0) {
+                      return `Already assigned to ${attList.join(", ")}${cfStr}`;
+                    } else if (isAssignedToMe) {
+                      return `Already assigned to you${cfStr}`;
+                    } else if (isUnassigned) {
+                      return `Already present in database (Unassigned)${cfStr}`;
                     } else {
-                      infoStr += "another attender";
+                      return `Already present in database${cfStr}`;
                     }
-
-                    if (progList.length > 0) {
-                      infoStr += ` (${progList.join(", ")})`;
-                    }
-
-                    return infoStr;
                   })()}
                 </span>
               </p>

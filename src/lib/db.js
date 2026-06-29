@@ -1315,6 +1315,9 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
 
   // Handle "Reg.Done" registrations collection sync
   const currentStatus = attenderSpecificUpdates.status !== undefined ? attenderSpecificUpdates.status : updates.status;
+  const previousCalledFor = logData?.["Called For"] || logData?.calledFor || "";
+  const currentCalledFor = updates["Called For"] !== undefined ? updates["Called For"] : (updates.calledFor !== undefined ? updates.calledFor : previousCalledFor);
+
   if (currentStatus === "Reg.Done") {
     try {
       const freshSnap = await getDoc(contactRef);
@@ -1337,16 +1340,28 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
         }
       });
 
-      await setDoc(doc(db, "registrations", logId), payload, { merge: true });
+      const calledForVal = payload["Called For"] || payload.calledFor || "Unknown";
+      const cleanedCalledFor = String(calledForVal).trim().replace(/[^a-zA-Z0-9]/g, "_");
+      const registrationId = `${logId}_${cleanedCalledFor}`;
+
+      await setDoc(doc(db, "registrations", registrationId), payload, { merge: true });
       await registerRegistrationMonth(yearMonth);
     } catch (e) {
       console.error("Registration write failed:", e);
     }
   } else if (previousStatus === "Reg.Done" && currentStatus && currentStatus !== "Reg.Done") {
     try {
-      await deleteDoc(doc(db, "registrations", logId));
-      await updateDoc(contactRef, { registeredYearMonth: deleteField() });
-      console.log("🗑️ Reverted registration deleted for log:", logId);
+      // Only delete if they are correcting a mistake for the SAME Called For program.
+      // If the Called For program has changed, it's a new pitch, not a correction, so keep the old registration!
+      if (String(previousCalledFor).trim().toLowerCase() === String(currentCalledFor).trim().toLowerCase()) {
+        const cleanedCalledFor = String(currentCalledFor).trim().replace(/[^a-zA-Z0-9]/g, "_");
+        const registrationId = `${logId}_${cleanedCalledFor}`;
+        await deleteDoc(doc(db, "registrations", registrationId));
+        await updateDoc(contactRef, { registeredYearMonth: deleteField() });
+        console.log("🗑️ Reverted registration deleted for log:", registrationId);
+      } else {
+        console.log("ℹ️ Skipping registration delete since program changed:", previousCalledFor, "->", currentCalledFor);
+      }
     } catch (e) {
       console.error("Registration deletion failed on revert:", e);
     }
@@ -1489,7 +1504,9 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
     attenderId,
     attenderName,
     status: data.status || "Call Log Added",
-    remark: data.remark || ""
+    remark: data.remark || "",
+    calledFor: data["Called For"] || data.calledFor || "",
+    source: data.Source || data.source || data.Sourse || data.sourse || ""
   };
 
   // Merge history for this attender
@@ -1630,7 +1647,11 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
         }
       });
 
-      await setDoc(doc(db, "registrations", docRef.id), payload, { merge: true });
+      const calledForVal = payload["Called For"] || payload.calledFor || "Unknown";
+      const cleanedCalledFor = String(calledForVal).trim().replace(/[^a-zA-Z0-9]/g, "_");
+      const registrationId = `${docRef.id}_${cleanedCalledFor}`;
+
+      await setDoc(doc(db, "registrations", registrationId), payload, { merge: true });
       await registerRegistrationMonth(yearMonth);
     } catch (e) {
       console.error("Incoming registration write failed:", e);
