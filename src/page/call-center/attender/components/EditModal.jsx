@@ -1124,7 +1124,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       const newCalledFor = String(targetEdited[calledForField] || targetEdited.calledFor || "").trim();
       const oldSource = String(row[sourceField] || row.source || "").trim();
       const newSource = String(targetEdited[sourceField] || targetEdited.source || "").trim();
-      const cleanStr = (s) => String(s).toLowerCase().replace(/[\s_-]/g, "");
+      const cleanStr = (s) => s ? String(s).toLowerCase().replace(/[\s_-]/g, "") : "";
 
       if (baseHistory.length > 0) {
         const isCalledForProtected = baseHistory.some(h => 
