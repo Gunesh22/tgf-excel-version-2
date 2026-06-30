@@ -1117,10 +1117,43 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       // Only push a new history entry if:
       //   a) the status actually changed from what was previously saved, OR
       //   b) the attender typed a new remark this session (non-empty)
+      let baseHistory = Array.isArray(targetEdited.history) ? targetEdited.history : (Array.isArray(row.history) ? row.history : []);
+
+      // Conditionally update past history entries if correcting a mistake (not protected by a Reg.Done)
+      const oldCalledFor = String(row[calledForField] || row.calledFor || "").trim();
+      const newCalledFor = String(targetEdited[calledForField] || targetEdited.calledFor || "").trim();
+      const oldSource = String(row[sourceField] || row.source || "").trim();
+      const newSource = String(targetEdited[sourceField] || targetEdited.source || "").trim();
+      const cleanStr = (s) => String(s).toLowerCase().replace(/[\s_-]/g, "");
+
+      if (baseHistory.length > 0) {
+        const isCalledForProtected = baseHistory.some(h => 
+          cleanStr(h.calledFor) === cleanStr(oldCalledFor) && h.status === "Reg.Done"
+        );
+        
+        baseHistory = baseHistory.map(h => {
+          const updatedEntry = { ...h };
+          if (oldCalledFor && newCalledFor && cleanStr(h.calledFor) === cleanStr(oldCalledFor)) {
+            if (!isCalledForProtected) {
+              updatedEntry.calledFor = newCalledFor;
+            }
+          }
+          if (oldSource && newSource && cleanStr(h.source) === cleanStr(oldSource)) {
+            if (!isCalledForProtected) {
+              updatedEntry.source = newSource;
+            }
+          }
+          return updatedEntry;
+        });
+      }
+
+      // Maintain a timeline of interactions.
+      // Only push a new history entry if:
+      //   a) the status actually changed from what was previously saved, OR
+      //   b) the attender typed a new remark this session (non-empty)
       const statusChanged = row.status !== updates.status;
       const hasNewRemark = String(updates.remark || "").trim().length > 0;
       
-      let baseHistory = Array.isArray(targetEdited.history) ? targetEdited.history : (Array.isArray(row.history) ? row.history : []);
       if (statusChanged || hasNewRemark) {
         const safeName = attenderName || "Unknown";
         const newHist = {
@@ -1132,8 +1165,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           source: targetEdited.Source || targetEdited.source || targetEdited.Sourse || targetEdited.sourse || ""
         };
         updates.history = [...baseHistory, newHist];
-      } else if (Array.isArray(targetEdited.history)) {
-        // Even if no new note/status change, we want to persist any edits to past notes!
+      } else {
+        // Persist the corrected/updated baseHistory even if no new call attempt log was added
         updates.history = baseHistory;
       }
 
