@@ -146,11 +146,19 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
 export default function MonthlyReportTab({ programs, attenders = [], settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] } }) {
   const [selectedProgramIds, setSelectedProgramIds] = useState([]); // empty = ALL
   const [selectedAttenderIds, setSelectedAttenderIds] = useState([]); // empty = ALL
-  const [selectedMonth, setSelectedMonth] = useState(() => {
+  const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     const yr = d.getFullYear();
     const mn = String(d.getMonth() + 1).padStart(2, "0");
-    return `${yr}-${mn}`;
+    return `${yr}-${mn}-01`;
+  });
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    const yr = d.getFullYear();
+    const mn = d.getMonth();
+    const lastDay = new Date(yr, mn + 1, 0).getDate();
+    const mnStr = String(mn + 1).padStart(2, "0");
+    return `${yr}-${mnStr}-${lastDay}`;
   });
   const [selectedSources, setSelectedSources] = useState([]);
   const [selectedCalledFors, setSelectedCalledFors] = useState([]);
@@ -359,19 +367,28 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
   }, [attenders]);
 
   const allAttempts = React.useMemo(() => {
-    if (!selectedMonth) return [];
-    const [yr, mn] = selectedMonth.split("-");
     return allHistoricalAttempts.filter(att => {
       if (!att.timestamp || isNaN(att.timestamp.getTime())) return false;
       
-      const dateMatch = att.timestamp.getFullYear() === parseInt(yr) && (att.timestamp.getMonth() + 1) === parseInt(mn);
-      if (!dateMatch) return false;
+      const attDate = new Date(att.timestamp.getFullYear(), att.timestamp.getMonth(), att.timestamp.getDate());
+      
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        if (attDate.getTime() < start.getTime()) return false;
+      }
+      
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(0, 0, 0, 0);
+        if (attDate.getTime() > end.getTime()) return false;
+      }
 
       if (selectedAttenderIds.length > 0 && !selectedAttenderIds.includes(att.attenderId)) return false;
 
       return true;
     });
-  }, [allHistoricalAttempts, selectedMonth, selectedAttenderIds]);
+  }, [allHistoricalAttempts, startDate, endDate, selectedAttenderIds]);
 
   const monthFiltered = React.useMemo(() => {
     const contactIds = new Set(allAttempts.map(a => a.contactId));
@@ -522,13 +539,17 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       if (c.status === "Reg.Done") map[dStr].conversions++;
     });
 
-    const parsedMonth = selectedMonth ? new Date(selectedMonth + "-01") : new Date();
-    const daysInMonth = new Date(parsedMonth.getFullYear(), parsedMonth.getMonth() + 1, 0).getDate();
-    const list = [];
+    if (!startDate || !endDate) return [];
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(0, 0, 0, 0);
     
-    for (let day = 1; day <= daysInMonth; day++) {
-      const checkDate = new Date(parsedMonth.getFullYear(), parsedMonth.getMonth(), day);
-      const dStr = checkDate.toLocaleDateString("en-IN");
+    const list = [];
+    let current = new Date(start);
+    let count = 0;
+    while (current.getTime() <= end.getTime() && count < 366) {
+      const dStr = current.toLocaleDateString("en-IN");
       const data = map[dStr] || { date: dStr, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
       list.push({
         "Date": dStr,
@@ -539,9 +560,11 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         "Outgoing": data.outgoing,
         "Reg.Done (Conversions)": data.conversions
       });
+      current.setDate(current.getDate() + 1);
+      count++;
     }
     return list;
-  }, [allAttempts, selectedMonth]);
+  }, [allAttempts, startDate, endDate]);
 
   const dayWiseTotals = React.useMemo(() => {
     const totals = { 
@@ -941,8 +964,10 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     XLSX.utils.book_append_sheet(wb, wsSourceVsCalledFor, "Source vs Called For");
 
     // Write file
-    XLSX.writeFile(wb, `CallCenter_MonthlyReport_${selectedMonth}.xlsx`);
-    toast.success("Excel monthly analytics report downloaded successfully!");
+    const startStr = startDate ? startDate.replace(/-/g, "") : "start";
+    const endStr = endDate ? endDate.replace(/-/g, "") : "end";
+    XLSX.writeFile(wb, `CallCenter_Report_${startStr}_to_${endStr}.xlsx`);
+    toast.success("Excel analytics report downloaded successfully!");
   };
 
   const activeFilters = selectedProgramIds.length + selectedAttenderIds.length + selectedSources.length + selectedCalledFors.length + selectedStatuses.length;
@@ -952,8 +977,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       {/* Top Bar */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-3xl font-black text-slate-800">Monthly Call Center Analytics</h2>
-          <p className="text-slate-500 mt-1">Generate comprehensive monthly analytics and export to Excel</p>
+          <h2 className="text-3xl font-black text-slate-800">Call Center Analytics Report</h2>
+          <p className="text-slate-500 mt-1">Generate comprehensive custom range analytics and export to Excel</p>
         </div>
       </div>
 
@@ -1004,14 +1029,40 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
         {/* Row 2: Controls & Export */}
         <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-gray-100">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider mr-1">Select Month:</span>
-            <input
-              type="month"
-              value={selectedMonth}
-              onChange={e => setSelectedMonth(e.target.value)}
-              className="px-4 py-2 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">From:</span>
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                className="px-4 py-2 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">To:</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                className="px-4 py-2 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <button
+              onClick={() => {
+                const d = new Date();
+                const yr = d.getFullYear();
+                const mn = d.getMonth();
+                const firstDayStr = `${yr}-${String(mn + 1).padStart(2, "0")}-01`;
+                const lastDay = new Date(yr, mn + 1, 0).getDate();
+                const lastDayStr = `${yr}-${String(mn + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+                setStartDate(firstDayStr);
+                setEndDate(lastDayStr);
+              }}
+              className="px-4 py-2 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-2xl text-xs font-black hover:bg-indigo-100 transition"
+            >
+              📅 This Month
+            </button>
           </div>
 
           <div className="flex items-center gap-3">
@@ -1040,8 +1091,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       </div>
 
       {loading ? (
-        <div className="py-20 text-center text-gray-400 font-bold">Loading monthly report datasets...</div>
-      ) : (!selectedMonth || monthFiltered.length === 0) ? (
+        <div className="py-20 text-center text-gray-400 font-bold">Loading report datasets...</div>
+      ) : (!startDate || !endDate || monthFiltered.length === 0) ? (
         <div className="py-20 text-center text-gray-400 font-bold">No call history logs found for this period.</div>
       ) : (
         <div className="space-y-6">
@@ -1079,14 +1130,14 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                 <Smile size={22} />
               </div>
               <div>
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Direct Registrations (Month)</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Direct Registrations (Period)</p>
                 <p className="text-2xl font-black text-gray-800 mt-1">{metrics.totalConversions}</p>
               </div>
             </div>
           </div>
 
           {/* Collapsible Sections */}
-          <MonthlySection title="Section 1: General Monthly KPIs Summary">
+          <MonthlySection title="Section 1: General KPIs Summary">
             <MonthlyTable
               headers={["metric", "value"]}
               rows={section1}
@@ -1240,7 +1291,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           <MonthlySection title={`🏆 Registered & Converted Leads list (${conversionsList.length})`}>
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-gray-100">
-                <p className="text-xs text-gray-400">Leads whose call outcome in this month is marked as Registered/Reg.Done.</p>
+                <p className="text-xs text-gray-400">Leads whose call outcome in this period is marked as Registered/Reg.Done.</p>
                 <div className="relative max-w-xs w-full">
                   <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
                     <Search size={14} />
@@ -1319,7 +1370,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                     {paginatedConversions.length === 0 && (
                       <tr>
                         <td colSpan={6} className="py-12 text-center text-gray-400 font-medium bg-white">
-                          No conversions match the current filters and search query in this month.
+                          No conversions match the current filters and search query in this period.
                         </td>
                       </tr>
                     )}
