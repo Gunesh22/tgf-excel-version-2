@@ -452,7 +452,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
   const section1 = React.useMemo(() => {
     const list = [
-      { metric: "Total Unique Call Attempts", value: allAttempts.length },
+      { metric: "Total Calls Attempted", value: allAttempts.length },
       { metric: "Connected Calls", value: metrics.connectedCalls },
       { metric: "Not Connected Calls", value: metrics.notConnectedCalls },
       { metric: "Incoming Calls", value: metrics.incomingCalls },
