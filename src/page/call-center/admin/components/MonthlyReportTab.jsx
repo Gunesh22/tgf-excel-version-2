@@ -215,7 +215,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         });
       }
     });
-    return Array.from(statuses).sort().map(s => ({ value: s, label: s }));
+    return Array.from(statuses).filter(s => s !== "Pending").sort().map(s => ({ value: s, label: s }));
   }, [callLogs, settingsOptions]);
 
   const allHistoricalAttempts = React.useMemo(() => {
@@ -260,11 +260,18 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       const programName = log.programName || "Unknown";
 
       const processAttempt = (att) => {
-        if (selectedStatuses.length > 0 && !selectedStatuses.includes(att.status || "Pending")) {
+        const status = att.status || "Pending";
+        const isConnected = CONNECTED_STATUSES.includes(status);
+        const isNotConnected = NOT_CONNECTED_STATUSES.includes(status);
+        if (!isConnected && !isNotConnected) {
+          return null;
+        }
+        if (selectedStatuses.length > 0 && !selectedStatuses.includes(status)) {
           return null;
         }
         return {
           ...att,
+          status,
           contactName,
           contactPhone,
           contactTags,
@@ -379,6 +386,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       avgCallsPerDay: 0,
       highestCallDay: "-",
       totalConversions: 0,
+      incomingCalls: 0,
+      outgoingCalls: 0,
     };
 
     allAttempts.forEach(c => {
@@ -390,6 +399,12 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       }
       if (c.status === "Reg.Done") {
         stats.totalConversions++;
+      }
+      const type = (c.callType || "").toLowerCase();
+      if (type === "incoming") {
+        stats.incomingCalls++;
+      } else {
+        stats.outgoingCalls++;
       }
     });
 
@@ -416,44 +431,72 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       { metric: "Total Unique Call Attempts", value: allAttempts.length },
       { metric: "Connected Calls", value: metrics.connectedCalls },
       { metric: "Not Connected Calls", value: metrics.notConnectedCalls },
+      { metric: "Incoming Calls", value: metrics.incomingCalls },
+      { metric: "Outgoing Calls", value: metrics.outgoingCalls },
       { metric: "Direct Registrations / Conversions (Reg.Done)", value: metrics.totalConversions },
     ];
-    const totalContactsInMonth = new Set(monthFiltered.map(l => l.contactId)).size;
+    const totalContactsInMonth = new Set(monthFiltered.map(l => l.id)).size;
     list.push({ metric: "Unique Leads Contacted", value: totalContactsInMonth });
     return list;
   }, [allAttempts, metrics, monthFiltered]);
 
   const connectedBreakdown = React.useMemo(() => {
     const map = {};
-    CONNECTED_STATUSES.forEach(s => { map[s] = 0; });
+    CONNECTED_STATUSES.forEach(s => {
+      map[s] = { total: 0, incoming: 0, outgoing: 0 };
+    });
     let total = 0;
     allAttempts.forEach(c => {
       if (CONNECTED_STATUSES.includes(c.status)) {
-        map[c.status] = (map[c.status] || 0) + 1;
+        if (!map[c.status]) {
+          map[c.status] = { total: 0, incoming: 0, outgoing: 0 };
+        }
+        map[c.status].total++;
+        const type = (c.callType || "").toLowerCase();
+        if (type === "incoming") {
+          map[c.status].incoming++;
+        } else {
+          map[c.status].outgoing++;
+        }
         total++;
       }
     });
-    return Object.entries(map).map(([status, count]) => ({
+    return Object.entries(map).map(([status, countObj]) => ({
       "Call Outcome Status": status,
-      "No. of Calls": count,
-      "Percentage (%)": total ? `${((count / total) * 100).toFixed(1)}%` : "0.0%"
+      "No. of Calls": countObj.total,
+      "Incoming": countObj.incoming,
+      "Outgoing": countObj.outgoing,
+      "Percentage (%)": total ? `${((countObj.total / total) * 100).toFixed(1)}%` : "0.0%"
     }));
   }, [allAttempts]);
 
   const notConnectedBreakdown = React.useMemo(() => {
     const map = {};
-    NOT_CONNECTED_STATUSES.forEach(s => { map[s] = 0; });
+    NOT_CONNECTED_STATUSES.forEach(s => {
+      map[s] = { total: 0, incoming: 0, outgoing: 0 };
+    });
     let total = 0;
     allAttempts.forEach(c => {
       if (NOT_CONNECTED_STATUSES.includes(c.status)) {
-        map[c.status] = (map[c.status] || 0) + 1;
+        if (!map[c.status]) {
+          map[c.status] = { total: 0, incoming: 0, outgoing: 0 };
+        }
+        map[c.status].total++;
+        const type = (c.callType || "").toLowerCase();
+        if (type === "incoming") {
+          map[c.status].incoming++;
+        } else {
+          map[c.status].outgoing++;
+        }
         total++;
       }
     });
-    return Object.entries(map).map(([status, count]) => ({
+    return Object.entries(map).map(([status, countObj]) => ({
       "Call Outcome Status": status,
-      "No. of Calls": count,
-      "Percentage (%)": total ? `${((count / total) * 100).toFixed(1)}%` : "0.0%"
+      "No. of Calls": countObj.total,
+      "Incoming": countObj.incoming,
+      "Outgoing": countObj.outgoing,
+      "Percentage (%)": total ? `${((countObj.total / total) * 100).toFixed(1)}%` : "0.0%"
     }));
   }, [allAttempts]);
 
@@ -463,11 +506,19 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       if (!c.timestamp) return;
       const dStr = c.timestamp.toLocaleDateString("en-IN");
       if (!map[dStr]) {
-        map[dStr] = { date: dStr, total: 0, connected: 0, notConnected: 0, conversions: 0 };
+        map[dStr] = { date: dStr, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
       }
       map[dStr].total++;
       if (CONNECTED_STATUSES.includes(c.status)) map[dStr].connected++;
       else if (NOT_CONNECTED_STATUSES.includes(c.status)) map[dStr].notConnected++;
+      
+      const type = (c.callType || "").toLowerCase();
+      if (type === "incoming") {
+        map[dStr].incoming++;
+      } else {
+        map[dStr].outgoing++;
+      }
+
       if (c.status === "Reg.Done") map[dStr].conversions++;
     });
 
@@ -478,12 +529,14 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     for (let day = 1; day <= daysInMonth; day++) {
       const checkDate = new Date(parsedMonth.getFullYear(), parsedMonth.getMonth(), day);
       const dStr = checkDate.toLocaleDateString("en-IN");
-      const data = map[dStr] || { date: dStr, total: 0, connected: 0, notConnected: 0, conversions: 0 };
+      const data = map[dStr] || { date: dStr, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
       list.push({
         "Date": dStr,
         "Total Calls": data.total,
         "Connected": data.connected,
         "Not Connected": data.notConnected,
+        "Incoming": data.incoming,
+        "Outgoing": data.outgoing,
         "Reg.Done (Conversions)": data.conversions
       });
     }
@@ -491,11 +544,21 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
   }, [allAttempts, selectedMonth]);
 
   const dayWiseTotals = React.useMemo(() => {
-    const totals = { "Date": "Total", "Total Calls": 0, "Connected": 0, "Not Connected": 0, "Reg.Done (Conversions)": 0 };
+    const totals = { 
+      "Date": "Total", 
+      "Total Calls": 0, 
+      "Connected": 0, 
+      "Not Connected": 0, 
+      "Incoming": 0, 
+      "Outgoing": 0, 
+      "Reg.Done (Conversions)": 0 
+    };
     dayWiseTimeline.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Connected"] += row["Connected"];
       totals["Not Connected"] += row["Not Connected"];
+      totals["Incoming"] += row["Incoming"];
+      totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
     });
     return totals;
@@ -512,7 +575,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
     const map = {};
     intervals.forEach(i => {
-      map[i.label] = { total: 0, connected: 0, notConnected: 0, conversions: 0 };
+      map[i.label] = { total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
     });
 
     allAttempts.forEach(c => {
@@ -523,6 +586,14 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         map[match.label].total++;
         if (CONNECTED_STATUSES.includes(c.status)) map[match.label].connected++;
         else if (NOT_CONNECTED_STATUSES.includes(c.status)) map[match.label].notConnected++;
+        
+        const type = (c.callType || "").toLowerCase();
+        if (type === "incoming") {
+          map[match.label].incoming++;
+        } else {
+          map[match.label].outgoing++;
+        }
+
         if (c.status === "Reg.Done") map[match.label].conversions++;
       }
     });
@@ -532,16 +603,28 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Total Calls": map[i.label].total,
       "Connected": map[i.label].connected,
       "Not Connected": map[i.label].notConnected,
+      "Incoming": map[i.label].incoming,
+      "Outgoing": map[i.label].outgoing,
       "Reg.Done (Conversions)": map[i.label].conversions
     }));
   }, [allAttempts]);
 
   const timeOfDayTotals = React.useMemo(() => {
-    const totals = { "Time Interval": "Total", "Total Calls": 0, "Connected": 0, "Not Connected": 0, "Reg.Done (Conversions)": 0 };
+    const totals = { 
+      "Time Interval": "Total", 
+      "Total Calls": 0, 
+      "Connected": 0, 
+      "Not Connected": 0, 
+      "Incoming": 0, 
+      "Outgoing": 0, 
+      "Reg.Done (Conversions)": 0 
+    };
     timeOfDayTrend.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Connected"] += row["Connected"];
       totals["Not Connected"] += row["Not Connected"];
+      totals["Incoming"] += row["Incoming"];
+      totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
     });
     return totals;
@@ -551,12 +634,20 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     const map = {};
     allAttempts.forEach(c => {
       if (!map[c.attenderId]) {
-        map[c.attenderId] = { name: c.attenderName, total: 0, connected: 0, notConnected: 0, conversions: 0 };
+        map[c.attenderId] = { name: c.attenderName, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
       }
       const item = map[c.attenderId];
       item.total++;
       if (CONNECTED_STATUSES.includes(c.status)) item.connected++;
       else if (NOT_CONNECTED_STATUSES.includes(c.status)) item.notConnected++;
+      
+      const type = (c.callType || "").toLowerCase();
+      if (type === "incoming") {
+        item.incoming++;
+      } else {
+        item.outgoing++;
+      }
+
       if (c.status === "Reg.Done") item.conversions++;
     });
 
@@ -565,6 +656,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Total Calls": a.total,
       "Connected": a.connected,
       "Not Connected": a.notConnected,
+      "Incoming": a.incoming,
+      "Outgoing": a.outgoing,
       "Reg.Done (Conversions)": a.conversions,
       "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => {
@@ -576,11 +669,22 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
   }, [allAttempts]);
 
   const attenderPerformanceTotals = React.useMemo(() => {
-    const totals = { "Attender Name": "Total", "Total Calls": 0, "Connected": 0, "Not Connected": 0, "Reg.Done (Conversions)": 0, "Conversion Rate (%)": "0.0%" };
+    const totals = { 
+      "Attender Name": "Total", 
+      "Total Calls": 0, 
+      "Connected": 0, 
+      "Not Connected": 0, 
+      "Incoming": 0, 
+      "Outgoing": 0, 
+      "Reg.Done (Conversions)": 0, 
+      "Conversion Rate (%)": "0.0%" 
+    };
     attenderPerformance.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Connected"] += row["Connected"];
       totals["Not Connected"] += row["Not Connected"];
+      totals["Incoming"] += row["Incoming"];
+      totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
     });
     totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
@@ -592,12 +696,20 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     allAttempts.forEach(c => {
       const prog = String(c.calledFor || "").trim() || "Unknown";
       if (!map[prog]) {
-        map[prog] = { name: prog, total: 0, connected: 0, notConnected: 0, conversions: 0 };
+        map[prog] = { name: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
       }
       const item = map[prog];
       item.total++;
       if (CONNECTED_STATUSES.includes(c.status)) item.connected++;
       else if (NOT_CONNECTED_STATUSES.includes(c.status)) item.notConnected++;
+      
+      const type = (c.callType || "").toLowerCase();
+      if (type === "incoming") {
+        item.incoming++;
+      } else {
+        item.outgoing++;
+      }
+
       if (c.status === "Reg.Done") item.conversions++;
     });
 
@@ -606,17 +718,30 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Total Calls": a.total,
       "Connected": a.connected,
       "Not Connected": a.notConnected,
+      "Incoming": a.incoming,
+      "Outgoing": a.outgoing,
       "Reg.Done (Conversions)": a.conversions,
       "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
   }, [allAttempts]);
 
   const calledForBreakdownTotals = React.useMemo(() => {
-    const totals = { "Called For": "Total", "Total Calls": 0, "Connected": 0, "Not Connected": 0, "Reg.Done (Conversions)": 0, "Conversion Rate (%)": "0.0%" };
+    const totals = { 
+      "Called For": "Total", 
+      "Total Calls": 0, 
+      "Connected": 0, 
+      "Not Connected": 0, 
+      "Incoming": 0, 
+      "Outgoing": 0, 
+      "Reg.Done (Conversions)": 0, 
+      "Conversion Rate (%)": "0.0%" 
+    };
     calledForBreakdown.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Connected"] += row["Connected"];
       totals["Not Connected"] += row["Not Connected"];
+      totals["Incoming"] += row["Incoming"];
+      totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
     });
     totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
@@ -628,12 +753,20 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     allAttempts.forEach(c => {
       const src = String(c.source || "").trim() || "Unknown";
       if (!map[src]) {
-        map[src] = { name: src, total: 0, connected: 0, notConnected: 0, conversions: 0 };
+        map[src] = { name: src, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
       }
       const item = map[src];
       item.total++;
       if (CONNECTED_STATUSES.includes(c.status)) item.connected++;
       else if (NOT_CONNECTED_STATUSES.includes(c.status)) item.notConnected++;
+      
+      const type = (c.callType || "").toLowerCase();
+      if (type === "incoming") {
+        item.incoming++;
+      } else {
+        item.outgoing++;
+      }
+
       if (c.status === "Reg.Done") item.conversions++;
     });
 
@@ -642,22 +775,96 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Total Calls": a.total,
       "Connected": a.connected,
       "Not Connected": a.notConnected,
+      "Incoming": a.incoming,
+      "Outgoing": a.outgoing,
       "Reg.Done (Conversions)": a.conversions,
       "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
   }, [allAttempts]);
 
   const sourceBreakdownTotals = React.useMemo(() => {
-    const totals = { "Source": "Total", "Total Calls": 0, "Connected": 0, "Not Connected": 0, "Reg.Done (Conversions)": 0, "Conversion Rate (%)": "0.0%" };
+    const totals = { 
+      "Source": "Total", 
+      "Total Calls": 0, 
+      "Connected": 0, 
+      "Not Connected": 0, 
+      "Incoming": 0, 
+      "Outgoing": 0, 
+      "Reg.Done (Conversions)": 0, 
+      "Conversion Rate (%)": "0.0%" 
+    };
     sourceBreakdown.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Connected"] += row["Connected"];
       totals["Not Connected"] += row["Not Connected"];
+      totals["Incoming"] += row["Incoming"];
+      totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
     });
     totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
     return totals;
   }, [sourceBreakdown]);
+
+  const sourceVsCalledForBreakdown = React.useMemo(() => {
+    const map = {};
+    allAttempts.forEach(c => {
+      const src = String(c.source || "").trim() || "Unknown";
+      const prog = String(c.calledFor || "").trim() || "Unknown";
+      const key = `${src} &&& ${prog}`;
+      if (!map[key]) {
+        map[key] = { source: src, calledFor: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
+      }
+      const item = map[key];
+      item.total++;
+      if (CONNECTED_STATUSES.includes(c.status)) item.connected++;
+      else if (NOT_CONNECTED_STATUSES.includes(c.status)) item.notConnected++;
+      
+      const type = (c.callType || "").toLowerCase();
+      if (type === "incoming") {
+        item.incoming++;
+      } else {
+        item.outgoing++;
+      }
+
+      if (c.status === "Reg.Done") item.conversions++;
+    });
+
+    return Object.values(map).map(a => ({
+      "Source": a.source,
+      "Called For": a.calledFor,
+      "Total Calls": a.total,
+      "Connected": a.connected,
+      "Not Connected": a.notConnected,
+      "Incoming": a.incoming,
+      "Outgoing": a.outgoing,
+      "Reg.Done (Conversions)": a.conversions,
+      "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
+    })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
+  }, [allAttempts]);
+
+  const sourceVsCalledForBreakdownTotals = React.useMemo(() => {
+    const totals = {
+      "Source": "Total",
+      "Called For": "-",
+      "Total Calls": 0,
+      "Connected": 0,
+      "Not Connected": 0,
+      "Incoming": 0,
+      "Outgoing": 0,
+      "Reg.Done (Conversions)": 0,
+      "Conversion Rate (%)": "0.0%"
+    };
+    sourceVsCalledForBreakdown.forEach(row => {
+      totals["Total Calls"] += row["Total Calls"];
+      totals["Connected"] += row["Connected"];
+      totals["Not Connected"] += row["Not Connected"];
+      totals["Incoming"] += row["Incoming"];
+      totals["Outgoing"] += row["Outgoing"];
+      totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
+    });
+    totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
+    return totals;
+  }, [sourceVsCalledForBreakdown]);
 
   const conversionsList = React.useMemo(() => {
     return allAttempts.filter(c => c.status === "Reg.Done");
@@ -728,6 +935,10 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     // 8. Source-wise Breakdown
     const wsSource = XLSX.utils.json_to_sheet([...sourceBreakdown, sourceBreakdownTotals]);
     XLSX.utils.book_append_sheet(wb, wsSource, "Source Breakdowns");
+
+    // 9. Source vs Called For Breakdown
+    const wsSourceVsCalledFor = XLSX.utils.json_to_sheet([...sourceVsCalledForBreakdown, sourceVsCalledForBreakdownTotals]);
+    XLSX.utils.book_append_sheet(wb, wsSourceVsCalledFor, "Source vs Called For");
 
     // Write file
     XLSX.writeFile(wb, `CallCenter_MonthlyReport_${selectedMonth}.xlsx`);
@@ -888,7 +1099,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
               <span>These are calls where an attender was able to speak to the contact (e.g. Info given, Interested, Next time).</span>
             </div>
             <MonthlyTable
-              headers={["Call Outcome Status", "No. of Calls", "Percentage (%)"]}
+              headers={["Call Outcome Status", "No. of Calls", "Incoming", "Outgoing", "Percentage (%)"]}
               rows={connectedBreakdown}
             />
           </MonthlySection>
@@ -899,14 +1110,14 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
               <span>These are attempts where no direct communication happened (e.g. Busy, Switched Off, Called by mistake).</span>
             </div>
             <MonthlyTable
-              headers={["Call Outcome Status", "No. of Calls", "Percentage (%)"]}
+              headers={["Call Outcome Status", "No. of Calls", "Incoming", "Outgoing", "Percentage (%)"]}
               rows={notConnectedBreakdown}
             />
           </MonthlySection>
 
           <MonthlySection title="Section 4: Called For Program Breakdowns">
             <MonthlyTable
-              headers={["Called For", "Total Calls", "Connected", "Not Connected", "Reg.Done (Conversions)", "Conversion Rate (%)"]}
+              headers={["Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Conversion Rate (%)"]}
               rows={calledForBreakdown}
               totals={calledForBreakdownTotals}
             />
@@ -914,9 +1125,17 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
           <MonthlySection title="Section 5: Source-wise Breakdowns & Conversions">
             <MonthlyTable
-              headers={["Source", "Total Calls", "Connected", "Not Connected", "Reg.Done (Conversions)", "Conversion Rate (%)"]}
+              headers={["Source", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Conversion Rate (%)"]}
               rows={sourceBreakdown}
               totals={sourceBreakdownTotals}
+            />
+          </MonthlySection>
+
+          <MonthlySection title="Section 6: Source vs Called For Breakdowns">
+            <MonthlyTable
+              headers={["Source", "Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Conversion Rate (%)"]}
+              rows={sourceVsCalledForBreakdown}
+              totals={sourceVsCalledForBreakdownTotals}
             />
           </MonthlySection>
 
@@ -988,18 +1207,26 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                         </div>
 
                         {/* Metrics details */}
-                        <div className="col-span-3 flex justify-between md:justify-end items-center gap-4 text-xs font-semibold text-slate-500">
+                        <div className="col-span-3 flex justify-between md:justify-end items-center gap-3 text-xs font-semibold text-slate-500">
                           <div className="text-right">
                             <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Conversions</span>
-                            <span className="text-base font-black text-emerald-600">{row["Reg.Done (Conversions)"]}</span>
+                            <span className="text-sm font-black text-emerald-600">{row["Reg.Done (Conversions)"]}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Incoming</span>
+                            <span className="text-xs font-bold text-slate-700">{row["Incoming"]}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Outgoing</span>
+                            <span className="text-xs font-bold text-slate-700">{row["Outgoing"]}</span>
                           </div>
                           <div className="text-right">
                             <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Connected</span>
-                            <span className="text-sm font-bold text-slate-700">{row["Connected"]}</span>
+                            <span className="text-xs font-bold text-slate-700">{row["Connected"]}</span>
                           </div>
                           <div className="text-right font-medium">
-                            <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Total Calls</span>
-                            <span className="text-sm font-bold text-slate-700">{row["Total Calls"]}</span>
+                            <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Total</span>
+                            <span className="text-xs font-bold text-slate-700">{row["Total Calls"]}</span>
                           </div>
                         </div>
                       </div>
