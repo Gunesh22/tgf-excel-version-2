@@ -405,6 +405,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totalConversions: 0,
       incomingCalls: 0,
       outgoingCalls: 0,
+      incomingConversions: 0,
+      outgoingConversions: 0,
     };
 
     allAttempts.forEach(c => {
@@ -414,10 +416,15 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       } else if (NOT_CONNECTED_STATUSES.includes(c.status)) {
         stats.notConnectedCalls++;
       }
+      const type = (c.callType || "").toLowerCase();
       if (c.status === "Reg.Done") {
         stats.totalConversions++;
+        if (type === "incoming") {
+          stats.incomingConversions++;
+        } else {
+          stats.outgoingConversions++;
+        }
       }
-      const type = (c.callType || "").toLowerCase();
       if (type === "incoming") {
         stats.incomingCalls++;
       } else {
@@ -451,6 +458,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       { metric: "Incoming Calls", value: metrics.incomingCalls },
       { metric: "Outgoing Calls", value: metrics.outgoingCalls },
       { metric: "Direct Registrations / Conversions (Reg.Done)", value: metrics.totalConversions },
+      { metric: "Incoming Conversions (Reg.Done)", value: metrics.incomingConversions },
+      { metric: "Outgoing Conversions (Reg.Done)", value: metrics.outgoingConversions },
     ];
     const totalContactsInMonth = new Set(monthFiltered.map(l => l.id)).size;
     list.push({ metric: "Unique Leads Contacted", value: totalContactsInMonth });
@@ -523,7 +532,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       if (!c.timestamp) return;
       const dStr = c.timestamp.toLocaleDateString("en-IN");
       if (!map[dStr]) {
-        map[dStr] = { date: dStr, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
+        map[dStr] = { date: dStr, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
       }
       map[dStr].total++;
       if (CONNECTED_STATUSES.includes(c.status)) map[dStr].connected++;
@@ -536,7 +545,14 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         map[dStr].outgoing++;
       }
 
-      if (c.status === "Reg.Done") map[dStr].conversions++;
+      if (c.status === "Reg.Done") {
+        map[dStr].conversions++;
+        if (type === "incoming") {
+          map[dStr].incomingConversions++;
+        } else {
+          map[dStr].outgoingConversions++;
+        }
+      }
     });
 
     if (!startDate || !endDate) return [];
@@ -550,7 +566,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     let count = 0;
     while (current.getTime() <= end.getTime() && count < 366) {
       const dStr = current.toLocaleDateString("en-IN");
-      const data = map[dStr] || { date: dStr, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
+      const data = map[dStr] || { date: dStr, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
       list.push({
         "Date": dStr,
         "Total Calls": data.total,
@@ -558,7 +574,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         "Not Connected": data.notConnected,
         "Incoming": data.incoming,
         "Outgoing": data.outgoing,
-        "Reg.Done (Conversions)": data.conversions
+        "Reg.Done (Conversions)": data.conversions,
+        "Incoming Conversions": data.incomingConversions,
+        "Outgoing Conversions": data.outgoingConversions
       });
       current.setDate(current.getDate() + 1);
       count++;
@@ -574,7 +592,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Not Connected": 0, 
       "Incoming": 0, 
       "Outgoing": 0, 
-      "Reg.Done (Conversions)": 0 
+      "Reg.Done (Conversions)": 0,
+      "Incoming Conversions": 0,
+      "Outgoing Conversions": 0
     };
     dayWiseTimeline.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
@@ -583,6 +603,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Incoming"] += row["Incoming"];
       totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
+      totals["Incoming Conversions"] += row["Incoming Conversions"];
+      totals["Outgoing Conversions"] += row["Outgoing Conversions"];
     });
     return totals;
   }, [dayWiseTimeline]);
@@ -598,7 +620,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
     const map = {};
     intervals.forEach(i => {
-      map[i.label] = { total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
+      map[i.label] = { total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
     });
 
     allAttempts.forEach(c => {
@@ -617,7 +639,14 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           map[match.label].outgoing++;
         }
 
-        if (c.status === "Reg.Done") map[match.label].conversions++;
+        if (c.status === "Reg.Done") {
+          map[match.label].conversions++;
+          if (type === "incoming") {
+            map[match.label].incomingConversions++;
+          } else {
+            map[match.label].outgoingConversions++;
+          }
+        }
       }
     });
 
@@ -628,7 +657,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Not Connected": map[i.label].notConnected,
       "Incoming": map[i.label].incoming,
       "Outgoing": map[i.label].outgoing,
-      "Reg.Done (Conversions)": map[i.label].conversions
+      "Reg.Done (Conversions)": map[i.label].conversions,
+      "Incoming Conversions": map[i.label].incomingConversions,
+      "Outgoing Conversions": map[i.label].outgoingConversions
     }));
   }, [allAttempts]);
 
@@ -640,7 +671,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Not Connected": 0, 
       "Incoming": 0, 
       "Outgoing": 0, 
-      "Reg.Done (Conversions)": 0 
+      "Reg.Done (Conversions)": 0,
+      "Incoming Conversions": 0,
+      "Outgoing Conversions": 0
     };
     timeOfDayTrend.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
@@ -649,6 +682,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Incoming"] += row["Incoming"];
       totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
+      totals["Incoming Conversions"] += row["Incoming Conversions"];
+      totals["Outgoing Conversions"] += row["Outgoing Conversions"];
     });
     return totals;
   }, [timeOfDayTrend]);
@@ -657,7 +692,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     const map = {};
     allAttempts.forEach(c => {
       if (!map[c.attenderId]) {
-        map[c.attenderId] = { name: c.attenderName, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
+        map[c.attenderId] = { name: c.attenderName, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
       }
       const item = map[c.attenderId];
       item.total++;
@@ -671,7 +706,14 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         item.outgoing++;
       }
 
-      if (c.status === "Reg.Done") item.conversions++;
+      if (c.status === "Reg.Done") {
+        item.conversions++;
+        if (type === "incoming") {
+          item.incomingConversions++;
+        } else {
+          item.outgoingConversions++;
+        }
+      }
     });
 
     return Object.values(map).map(a => ({
@@ -682,6 +724,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Incoming": a.incoming,
       "Outgoing": a.outgoing,
       "Reg.Done (Conversions)": a.conversions,
+      "Incoming Conversions": a.incomingConversions,
+      "Outgoing Conversions": a.outgoingConversions,
       "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => {
       if (b["Reg.Done (Conversions)"] !== a["Reg.Done (Conversions)"]) {
@@ -700,6 +744,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Incoming": 0, 
       "Outgoing": 0, 
       "Reg.Done (Conversions)": 0, 
+      "Incoming Conversions": 0,
+      "Outgoing Conversions": 0,
       "Conversion Rate (%)": "0.0%" 
     };
     attenderPerformance.forEach(row => {
@@ -709,6 +755,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Incoming"] += row["Incoming"];
       totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
+      totals["Incoming Conversions"] += row["Incoming Conversions"];
+      totals["Outgoing Conversions"] += row["Outgoing Conversions"];
     });
     totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
     return totals;
@@ -719,7 +767,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     allAttempts.forEach(c => {
       const prog = String(c.calledFor || "").trim() || "Unknown";
       if (!map[prog]) {
-        map[prog] = { name: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
+        map[prog] = { name: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
       }
       const item = map[prog];
       item.total++;
@@ -733,7 +781,14 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         item.outgoing++;
       }
 
-      if (c.status === "Reg.Done") item.conversions++;
+      if (c.status === "Reg.Done") {
+        item.conversions++;
+        if (type === "incoming") {
+          item.incomingConversions++;
+        } else {
+          item.outgoingConversions++;
+        }
+      }
     });
 
     return Object.values(map).map(a => ({
@@ -744,6 +799,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Incoming": a.incoming,
       "Outgoing": a.outgoing,
       "Reg.Done (Conversions)": a.conversions,
+      "Incoming Conversions": a.incomingConversions,
+      "Outgoing Conversions": a.outgoingConversions,
       "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
   }, [allAttempts]);
@@ -757,6 +814,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Incoming": 0, 
       "Outgoing": 0, 
       "Reg.Done (Conversions)": 0, 
+      "Incoming Conversions": 0,
+      "Outgoing Conversions": 0,
       "Conversion Rate (%)": "0.0%" 
     };
     calledForBreakdown.forEach(row => {
@@ -766,6 +825,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Incoming"] += row["Incoming"];
       totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
+      totals["Incoming Conversions"] += row["Incoming Conversions"];
+      totals["Outgoing Conversions"] += row["Outgoing Conversions"];
     });
     totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
     return totals;
@@ -776,7 +837,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     allAttempts.forEach(c => {
       const src = String(c.source || "").trim() || "Unknown";
       if (!map[src]) {
-        map[src] = { name: src, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
+        map[src] = { name: src, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
       }
       const item = map[src];
       item.total++;
@@ -790,7 +851,14 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         item.outgoing++;
       }
 
-      if (c.status === "Reg.Done") item.conversions++;
+      if (c.status === "Reg.Done") {
+        item.conversions++;
+        if (type === "incoming") {
+          item.incomingConversions++;
+        } else {
+          item.outgoingConversions++;
+        }
+      }
     });
 
     return Object.values(map).map(a => ({
@@ -801,6 +869,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Incoming": a.incoming,
       "Outgoing": a.outgoing,
       "Reg.Done (Conversions)": a.conversions,
+      "Incoming Conversions": a.incomingConversions,
+      "Outgoing Conversions": a.outgoingConversions,
       "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
   }, [allAttempts]);
@@ -814,6 +884,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Incoming": 0, 
       "Outgoing": 0, 
       "Reg.Done (Conversions)": 0, 
+      "Incoming Conversions": 0,
+      "Outgoing Conversions": 0,
       "Conversion Rate (%)": "0.0%" 
     };
     sourceBreakdown.forEach(row => {
@@ -823,6 +895,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Incoming"] += row["Incoming"];
       totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
+      totals["Incoming Conversions"] += row["Incoming Conversions"];
+      totals["Outgoing Conversions"] += row["Outgoing Conversions"];
     });
     totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
     return totals;
@@ -835,7 +909,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       const prog = String(c.calledFor || "").trim() || "Unknown";
       const key = `${src} &&& ${prog}`;
       if (!map[key]) {
-        map[key] = { source: src, calledFor: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0 };
+        map[key] = { source: src, calledFor: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
       }
       const item = map[key];
       item.total++;
@@ -849,7 +923,14 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         item.outgoing++;
       }
 
-      if (c.status === "Reg.Done") item.conversions++;
+      if (c.status === "Reg.Done") {
+        item.conversions++;
+        if (type === "incoming") {
+          item.incomingConversions++;
+        } else {
+          item.outgoingConversions++;
+        }
+      }
     });
 
     return Object.values(map).map(a => ({
@@ -861,6 +942,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Incoming": a.incoming,
       "Outgoing": a.outgoing,
       "Reg.Done (Conversions)": a.conversions,
+      "Incoming Conversions": a.incomingConversions,
+      "Outgoing Conversions": a.outgoingConversions,
       "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
   }, [allAttempts]);
@@ -875,6 +958,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Incoming": 0,
       "Outgoing": 0,
       "Reg.Done (Conversions)": 0,
+      "Incoming Conversions": 0,
+      "Outgoing Conversions": 0,
       "Conversion Rate (%)": "0.0%"
     };
     sourceVsCalledForBreakdown.forEach(row => {
@@ -884,6 +969,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Incoming"] += row["Incoming"];
       totals["Outgoing"] += row["Outgoing"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
+      totals["Incoming Conversions"] += row["Incoming Conversions"];
+      totals["Outgoing Conversions"] += row["Outgoing Conversions"];
     });
     totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
     return totals;
@@ -1168,7 +1255,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
           <MonthlySection title="Section 4: Called For Program Breakdowns">
             <MonthlyTable
-              headers={["Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Conversion Rate (%)"]}
+              headers={["Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
               rows={calledForBreakdown}
               totals={calledForBreakdownTotals}
             />
@@ -1176,7 +1263,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
           <MonthlySection title="Section 5: Source-wise Breakdowns & Conversions">
             <MonthlyTable
-              headers={["Source", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Conversion Rate (%)"]}
+              headers={["Source", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
               rows={sourceBreakdown}
               totals={sourceBreakdownTotals}
             />
@@ -1184,7 +1271,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
           <MonthlySection title="Section 6: Source vs Called For Breakdowns">
             <MonthlyTable
-              headers={["Source", "Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Conversion Rate (%)"]}
+              headers={["Source", "Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
               rows={sourceVsCalledForBreakdown}
               totals={sourceVsCalledForBreakdownTotals}
             />
@@ -1262,6 +1349,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                           <div className="text-right">
                             <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Conversions</span>
                             <span className="text-sm font-black text-emerald-600">{row["Reg.Done (Conversions)"]}</span>
+                            <span className="block text-[9px] font-semibold text-emerald-500">({row["Incoming Conversions"]} In / {row["Outgoing Conversions"]} Out)</span>
                           </div>
                           <div className="text-right">
                             <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Incoming</span>
