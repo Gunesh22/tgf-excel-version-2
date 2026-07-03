@@ -28,6 +28,16 @@ import {
 import { EditModal } from "./components/EditModal";
 import { MyPerformanceDashboard } from "./components/MyPerformanceDashboard";
 import { ColumnsSelector } from "./components/ColumnsSelector";
+
+function parseTimestamp(t) {
+  if (!t) return null;
+  if (t instanceof Date) return t;
+  if (typeof t.toDate === "function") return t.toDate();
+  if (typeof t === "object" && t.seconds !== undefined) {
+    return new Date(t.seconds * 1000 + Math.round((t.nanoseconds || 0) / 1000000));
+  }
+  return new Date(t);
+}
 import { Pagination } from "./components/Pagination";
 import { AttenderFilters } from "./components/AttenderFilters";
 import { ContactTable } from "./components/ContactTable";
@@ -359,7 +369,11 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
 
     let historyStr = "";
     if (log.history && Array.isArray(log.history)) {
-      historyStr = log.history.map(h => `[${new Date(h.timestamp).toLocaleDateString("en-IN")}] ${h.attenderName}: ${h.status} - ${h.remark}`).join(" | ");
+      historyStr = log.history.map(h => {
+        const d = parseTimestamp(h.timestamp);
+        const dateStr = d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "Invalid Date";
+        return `[${dateStr}] ${h.attenderName}: ${h.status} - ${h.remark}`;
+      }).join(" | ");
     }
     row["Call History Timeline"] = historyStr;
 
@@ -882,11 +896,13 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       totalAttempts += attemptsCount;
 
       hist.forEach(h => {
-        const dStr = new Date(h.timestamp).toLocaleDateString("en-IN");
+        const d = parseTimestamp(h.timestamp);
+        const dStr = d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "Invalid Date";
         dailyActivity[dStr] = (dailyActivity[dStr] || 0) + 1;
       });
       if (hist.length === 0 && status && log.updatedAt) {
-        const dStr = log.updatedAt.toDate ? log.updatedAt.toDate().toLocaleDateString("en-IN") : new Date(log.updatedAt).toLocaleDateString("en-IN");
+        const d = parseTimestamp(log.updatedAt);
+        const dStr = d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "Invalid Date";
         dailyActivity[dStr] = (dailyActivity[dStr] || 0) + 1;
       }
 

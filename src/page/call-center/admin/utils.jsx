@@ -4,6 +4,16 @@ import {
 } from "lucide-react";
 import { isKhojiField } from "../../../lib/khojiHelper";
 
+function parseTimestamp(t) {
+  if (!t) return null;
+  if (t instanceof Date) return t;
+  if (typeof t.toDate === "function") return t.toDate();
+  if (typeof t === "object" && t.seconds !== undefined) {
+    return new Date(t.seconds * 1000 + Math.round((t.nanoseconds || 0) / 1000000));
+  }
+  return new Date(t);
+}
+
 export const COLORS = ["#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"];
 
 export const TAB_ITEMS = [
@@ -115,7 +125,11 @@ export const cleanExportRow = (log) => {
 
   let historyStr = "";
   if (log.history && Array.isArray(log.history)) {
-    historyStr = log.history.map(h => `[${new Date(h.timestamp).toLocaleDateString("en-IN")}] ${h.attenderName}: ${h.status} - ${h.remark}`).join(" | ");
+    historyStr = log.history.map(h => {
+      const d = parseTimestamp(h.timestamp);
+      const dateStr = d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "Invalid Date";
+      return `[${dateStr}] ${h.attenderName}: ${h.status} - ${h.remark}`;
+    }).join(" | ");
   }
   row["Call History Timeline"] = historyStr;
 

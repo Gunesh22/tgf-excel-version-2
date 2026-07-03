@@ -14,12 +14,22 @@ const DATE_FILTERS = [
   { label: "All Time",   key: "all" },
 ];
 
+function parseTimestamp(t) {
+  if (!t) return null;
+  if (t instanceof Date) return t;
+  if (typeof t.toDate === "function") return t.toDate();
+  if (typeof t === "object" && t.seconds !== undefined) {
+    return new Date(t.seconds * 1000 + Math.round((t.nanoseconds || 0) / 1000000));
+  }
+  return new Date(t);
+}
+
 function getTimestampFromLog(log) {
   if (log.updatedAt) {
-    return log.updatedAt.toDate ? log.updatedAt.toDate() : new Date(log.updatedAt);
+    return parseTimestamp(log.updatedAt);
   }
   if (log.createdAt) {
-    return log.createdAt.toDate ? log.createdAt.toDate() : new Date(log.createdAt);
+    return parseTimestamp(log.createdAt);
   }
   return null;
 }
@@ -41,7 +51,10 @@ function filterLogsByDate(logs, range) {
     // Use history entries to determine activity in range
     const hist = log.history || [];
     if (hist.length > 0) {
-      return hist.some(h => new Date(h.timestamp) >= start);
+      return hist.some(h => {
+        const d = parseTimestamp(h.timestamp);
+        return d && d >= start;
+      });
     }
     const ts = getTimestampFromLog(log);
     return ts && ts >= start;
@@ -67,12 +80,12 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName }) => {
     let count = 0;
     logs.forEach(log => {
       (log.history || []).forEach(h => {
-        if (new Date(h.timestamp).toLocaleDateString("en-IN") === todayStr) count++;
+        const d = parseTimestamp(h.timestamp);
+        if (d && d.toLocaleDateString("en-IN") === todayStr) count++;
       });
     });
     return count;
   }, [logs]);
-
   const callbacksDue = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     return logs.filter(l => {

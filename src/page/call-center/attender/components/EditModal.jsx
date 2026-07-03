@@ -1948,7 +1948,10 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                           <div className="flex-1 bg-white rounded-xl p-3 border border-gray-100 shadow-sm mb-1">
                             <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                               <span className="text-[10px] font-black text-gray-500 uppercase tracking-wide">
-                                📅 {new Date(h.timestamp).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                                📅 {(() => {
+                                  const d = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : (h.timestamp.seconds ? new Date(h.timestamp.seconds * 1000) : new Date(h.timestamp))) : null;
+                                  return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "Unknown Date";
+                                })()}
                               </span>
                               {h.status && (
                                 <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${h.status === "Interested" ? "bg-blue-100 text-blue-700" :
