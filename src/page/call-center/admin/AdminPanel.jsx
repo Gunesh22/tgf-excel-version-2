@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-hot-toast";
 import { Settings, ArrowLeft, ChevronRight, Loader } from "lucide-react";
-import { getPrograms, getAttenders, subscribeToCallCenterOptions } from "../../../lib/db";
+import { getPrograms, getAttenders, subscribeToCallCenterOptions, subscribeToAllCallLogs, subscribeToRegistrations, getRegistrationMonths } from "../../../lib/db";
 import ImportContacts from "../ImportContacts";
 import { TAB_ITEMS } from "./utils.jsx";
 import DashboardTab from "./components/DashboardTab";
@@ -18,6 +18,17 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
   const [isLoading, setIsLoading] = useState(true);
   const [settingsOptions, setSettingsOptions] = useState({ statusOptions: [], sourceOptions: [], calledForOptions: [] });
 
+  const [callLogs, setCallLogs] = useState([]);
+  const [callLogsLoading, setCallLogsLoading] = useState(true);
+
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [registrations, setRegistrations] = useState([]);
+  const [registrationsLoading, setRegistrationsLoading] = useState(false);
+  const [monthOptions, setMonthOptions] = useState([]);
+
   useEffect(() => {
     loadAll();
     const unsub = subscribeToCallCenterOptions((data) => {
@@ -27,6 +38,47 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
       if (unsub) unsub();
     };
   }, []);
+
+  // Hoisted subscription to all call logs
+  useEffect(() => {
+    setCallLogsLoading(true);
+    const unsubLogs = subscribeToAllCallLogs("ALL", (logs) => {
+      setCallLogs(logs);
+      setCallLogsLoading(false);
+    });
+    return () => {
+      if (unsubLogs) unsubLogs();
+    };
+  }, []);
+
+  // Hoisted month loading logic
+  useEffect(() => {
+    const loadMonths = async () => {
+      try {
+        const months = await getRegistrationMonths();
+        setMonthOptions(months);
+        if (months.length > 0 && !months.includes(selectedMonth)) {
+          setSelectedMonth(months[0]);
+        }
+      } catch (err) {
+        console.error("Failed to load registration months", err);
+      }
+    };
+    loadMonths();
+  }, []);
+
+  // Hoisted subscription to registrations
+  useEffect(() => {
+    if (!selectedMonth) return;
+    setRegistrationsLoading(true);
+    const unsubRegs = subscribeToRegistrations(selectedMonth, (data) => {
+      setRegistrations(data);
+      setRegistrationsLoading(false);
+    });
+    return () => {
+      if (unsubRegs) unsubRegs();
+    };
+  }, [selectedMonth]);
 
   const loadAll = async () => {
     setIsLoading(true);
@@ -95,12 +147,38 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
           </div>
         ) : (
           <>
-            {activeTab === "dashboard" && <DashboardTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} />}
-            {activeTab === "monthly" && <MonthlyReportTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} />}
+            {activeTab === "dashboard" && (
+              callLogsLoading ? (
+                <div className="h-full flex flex-col items-center justify-center gap-4 py-20">
+                  <Loader size={32} className="text-indigo-500 animate-spin" />
+                  <p className="text-slate-400 font-bold text-sm">Loading call database...</p>
+                </div>
+              ) : (
+                <DashboardTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} callLogs={callLogs} />
+              )
+            )}
+            {activeTab === "monthly" && (
+              callLogsLoading ? (
+                <div className="h-full flex flex-col items-center justify-center gap-4 py-20">
+                  <Loader size={32} className="text-indigo-500 animate-spin" />
+                  <p className="text-slate-400 font-bold text-sm">Loading call database...</p>
+                </div>
+              ) : (
+                <MonthlyReportTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} callLogs={callLogs} />
+              )
+            )}
             {activeTab === "programs" && <ProgramsTab programs={programs} attenders={attenders} onReloadPrograms={refreshAll} />}
             {activeTab === "import" && <ImportContacts programs={programs} onImportComplete={refreshAll} />}
             {activeTab === "attenders" && <AttendersTab attenders={attenders} programs={programs} onReloadAttenders={refreshAll} />}
-            {activeTab === "abhivyakti" && <AbhivyaktiTab />}
+            {activeTab === "abhivyakti" && (
+              <AbhivyaktiTab
+                selectedMonth={selectedMonth}
+                setSelectedMonth={setSelectedMonth}
+                registrations={registrations}
+                loading={registrationsLoading}
+                monthOptions={monthOptions}
+              />
+            )}
             {activeTab === "settings" && <SettingsTab />}
           </>
         )}

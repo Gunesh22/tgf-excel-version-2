@@ -890,7 +890,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
 
     tagFilteredLogs.forEach(log => {
       const hist = log.history || [];
-      const status = log.status;
+      const isCalled = log.status || log.callbackDate || log.remark || log.remarks || hist.length > 0;
+      const status = isCalled ? (log.status || "Pending") : "";
 
       const attemptsCount = hist.length || (status ? 1 : 0);
       totalAttempts += attemptsCount;

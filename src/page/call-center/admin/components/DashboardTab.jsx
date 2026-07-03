@@ -96,7 +96,7 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
 }
 
 // ── Main Dashboard ─────────────────────────────────────────────────────────
-export default function DashboardTab({ programs, attenders, settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] } }) {
+export default function DashboardTab({ programs, attenders, settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] }, callLogs = [] }) {
   const todayStr = new Date().toISOString().split("T")[0];
 
   const [selectedProgramIds, setSelectedProgramIds] = useState([]); // empty = ALL
@@ -104,19 +104,10 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
   const [selectedSources, setSelectedSources] = useState([]);
   const [selectedCalledFors, setSelectedCalledFors] = useState([]);
   const [selectedStatuses, setSelectedStatuses] = useState([]);
-  const [callLogs, setCallLogs] = useState([]);
   const [dateFrom, setDateFrom] = useState(todayStr);
   const [dateTo, setDateTo] = useState(todayStr);
   const [conversionSearch, setConversionSearch] = useState("");
   const [convPage, setConvPage] = useState(1);
-  const unsubRef = useRef(null);
-
-  // Subscribe to ALL logs (we filter client-side for multi-select)
-  useEffect(() => {
-    if (unsubRef.current) unsubRef.current();
-    unsubRef.current = subscribeToAllCallLogs("ALL", setCallLogs);
-    return () => { if (unsubRef.current) unsubRef.current(); };
-  }, []);
 
   const programOptions = programs.map(p => ({ value: p.id, label: p.name }));
   const attenderOptions = attenders.map(a => ({ value: a.id, label: a.name }));

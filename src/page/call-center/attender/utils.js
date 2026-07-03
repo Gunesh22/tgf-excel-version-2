@@ -93,7 +93,8 @@ export const CONNECTED_STATUSES = [
   "Already Reg.d",
   "Next time",
   "Shivir done",
-  "Not possible"
+  "Not possible",
+  "Pending"
 ];
 
 export const NOT_CONNECTED_STATUSES = [
@@ -106,7 +107,8 @@ export const NOT_CONNECTED_STATUSES = [
   "Called by mistake",
   "no network",
   "wrong no.",
-  "no answer"
+  "no answer",
+  "Not Attended"
 ];
 
 export const DEFAULT_COLUMNS = [

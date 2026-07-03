@@ -6,35 +6,13 @@ import {
 } from "lucide-react";
 import { subscribeToRegistrations, getRegistrationMonths } from "../../../../lib/db";
 
-export default function AbhivyaktiTab() {
-  const [selectedMonth, setSelectedMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
-  const [registrations, setRegistrations] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [monthOptions, setMonthOptions] = useState([]);
-
-  useEffect(() => {
-    const loadMonths = async () => {
-      const months = await getRegistrationMonths();
-      setMonthOptions(months);
-      if (months.length > 0 && !months.includes(selectedMonth)) {
-        setSelectedMonth(months[0]);
-      }
-    };
-    loadMonths();
-  }, []);
-
-  useEffect(() => {
-    if (!selectedMonth) return;
-    setLoading(true);
-    const unsub = subscribeToRegistrations(selectedMonth, (data) => {
-      setRegistrations(data);
-      setLoading(false);
-    });
-    return () => unsub();
-  }, [selectedMonth]);
+export default function AbhivyaktiTab({
+  selectedMonth,
+  setSelectedMonth,
+  registrations = [],
+  loading = false,
+  monthOptions = []
+}) {
 
   const monthFiltered = React.useMemo(() => {
     return registrations.filter(r => !r._deleted);

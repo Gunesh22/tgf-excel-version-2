@@ -104,8 +104,9 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName }) => {
     const statusCounts = {};
 
     filtered.forEach(log => {
-      const s = log.status;
-      if (s) {
+      const isCalled = log.status || log.callbackDate || log.remark || log.remarks;
+      if (isCalled) {
+        const s = log.status || "Pending";
         statusCounts[s] = (statusCounts[s] || 0) + 1;
         if (CONNECTED_STATUSES.includes(s)) {
           connected++;

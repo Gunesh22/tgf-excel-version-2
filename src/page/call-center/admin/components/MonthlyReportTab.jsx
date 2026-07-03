@@ -143,7 +143,7 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
   );
 }
 
-export default function MonthlyReportTab({ programs, attenders = [], settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] } }) {
+export default function MonthlyReportTab({ programs, attenders = [], settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] }, callLogs = [] }) {
   const [selectedProgramIds, setSelectedProgramIds] = useState([]); // empty = ALL
   const [selectedAttenderIds, setSelectedAttenderIds] = useState([]); // empty = ALL
   const [startDate, setStartDate] = useState(() => {
@@ -163,21 +163,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
   const [selectedSources, setSelectedSources] = useState([]);
   const [selectedCalledFors, setSelectedCalledFors] = useState([]);
   const [selectedStatuses, setSelectedStatuses] = useState([]);
-  const [callLogs, setCallLogs] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [conversionSearch, setConversionSearch] = useState("");
   const [convPage, setConvPage] = useState(1);
-  const unsubRef = React.useRef(null);
-
-  useEffect(() => {
-    if (unsubRef.current) unsubRef.current();
-    setLoading(true);
-    unsubRef.current = subscribeToAllCallLogs("ALL", (logs) => {
-      setCallLogs(logs);
-      setLoading(false);
-    });
-    return () => { if (unsubRef.current) unsubRef.current(); };
-  }, []);
+  const loading = false;
 
   const programOptions = React.useMemo(() => {
     return programs.map(p => ({ value: p.id, label: p.name }));
@@ -307,7 +295,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
               });
               if (att) attempts.push(att);
             });
-          } else if (state.lastCalledAt || state.updatedAt) {
+          } else if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
             const dateVal = state.lastCalledAt || state.updatedAt;
             const att = processAttempt({
               timestamp: dateVal ? (dateVal.toDate ? dateVal.toDate() : new Date(dateVal)) : null,
@@ -339,18 +327,20 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             if (att) attempts.push(att);
           });
         } else {
-          const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
-          const att = processAttempt({
-            timestamp: dateVal ? (dateVal.toDate ? dateVal.toDate() : new Date(dateVal)) : null,
-            attenderId: log.attenderId || "legacy",
-            attenderName: log.attenderName || "Legacy Attender",
-            status: log.status || "Pending",
-            remark: log.remark || "",
-            callType: log.callType || "outgoing",
-            calledFor: log["Called For"] || log.calledFor || "",
-            source: log.Source || log.source || ""
-          });
-          if (att) attempts.push(att);
+          if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
+            const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
+            const att = processAttempt({
+              timestamp: dateVal ? (dateVal.toDate ? dateVal.toDate() : new Date(dateVal)) : null,
+              attenderId: log.attenderId || "legacy",
+              attenderName: log.attenderName || "Legacy Attender",
+              status: log.status || "Pending",
+              remark: log.remark || "",
+              callType: log.callType || "outgoing",
+              calledFor: log["Called For"] || log.calledFor || "",
+              source: log.Source || log.source || ""
+            });
+            if (att) attempts.push(att);
+          }
         }
       }
     });
