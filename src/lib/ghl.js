@@ -10,6 +10,7 @@
  */
 
 import { isKhojiField } from "./khojiHelper";
+import { formatContactName } from "./db";
 
 const GHL_TOKEN = import.meta.env.VITE_GHL_TOKEN;
 const GHL_LOCATION_ID = import.meta.env.VITE_GHL_LOCATION_ID;
@@ -281,7 +282,8 @@ export const mapGHLContactToRow = (contact, customFieldsMap = {}) => {
   const row = {};
 
   // Standard fields mapping (Strictly limited to requested + essential query metadata)
-  row["Name"] = [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim() || contact.contactName || "";
+  const rawName = [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim() || contact.contactName || "";
+  row["Name"] = formatContactName(rawName);
   row["Phone"] = contact.phone || "";
   row["Email"] = contact.email || "";
   row["City"] = contact.city || "";
@@ -522,3 +524,105 @@ export const fetchLocationTags = async (signal = null) => {
 };
 
 export { GHL_LOCATION_ID, GHL_TOKEN };
+
+const getGhlCity = (c) => {
+  if (!c) return "";
+  if (c.city && String(c.city).trim()) {
+    return String(c.city).trim();
+  }
+  const customFields = c.customField || c.customFields || [];
+  if (Array.isArray(customFields)) {
+    // Try "Your City Name" (Abb2Tu6o6YdtJHtogxT7) or "Location" (zmDSyYf6hAOKbjh5qtV3)
+    const cityField = customFields.find(f => f.id === "Abb2Tu6o6YdtJHtogxT7" || f.id === "zmDSyYf6hAOKbjh5qtV3");
+    if (cityField && cityField.value) {
+      return String(cityField.value).trim();
+    }
+  }
+  return "";
+};
+
+export const searchCRM = async (queryStr) => {
+  if (!queryStr || !queryStr.trim()) return [];
+  try {
+    let data = await searchContacts(1, 20, queryStr.trim());
+    let contacts = data.contacts || [];
+
+    // Fallback: GHL V1 query matches prefix exactly. If it's a 10-digit number, also search with "+91" prepended.
+    // If it's a 12-digit number starting with "91", also search with "+" prepended.
+    const cleanQuery = queryStr.trim().replace(/\D/g, "");
+    if (contacts.length === 0) {
+      if (cleanQuery.length === 10) {
+        console.log(`[CRM Fetch Global Fallback] Querying "+91${cleanQuery}"`);
+        data = await searchContacts(1, 20, `+91${cleanQuery}`);
+        contacts = data.contacts || [];
+      } else if (cleanQuery.length === 12 && cleanQuery.startsWith("91")) {
+        console.log(`[CRM Fetch Global Fallback] Querying "+${cleanQuery}"`);
+        data = await searchContacts(1, 20, `+${cleanQuery}`);
+        contacts = data.contacts || [];
+      }
+    }
+
+    return contacts.map(c => ({
+      id: `crm_${c.id}`,
+      GHL_ID: c.id,
+      isFromCRM: true,
+      Name: formatContactName([c.firstName, c.lastName].filter(Boolean).join(" ").trim() || c.contactName || ""),
+      Phone: c.phone || "",
+      Email: c.email || "",
+      City: getGhlCity(c),
+      State: c.state || "",
+      Tags: Array.isArray(c.tags) ? c.tags.join(", ") : "",
+      tags: Array.isArray(c.tags) ? c.tags : []
+    }));
+  } catch (err) {
+    console.error("CRM search failed:", err);
+    return [];
+  }
+};
+
+export const searchCRMByPhone = async (phone) => {
+  if (!phone) return null;
+  try {
+    const cleanPhone = String(phone).replace(/\D/g, "");
+    if (cleanPhone.length < 5) return null;
+    
+    let data = await searchContacts(1, 5, phone);
+    let contacts = data.contacts || [];
+
+    // Fallback: GHL V1 query matches prefix exactly. If it's a 10-digit number, also search with "+91" prepended.
+    // If it's a 12-digit number starting with "91", also search with "+" prepended.
+    if (contacts.length === 0) {
+      if (cleanPhone.length === 10) {
+        console.log(`[CRM Fetch Phone Fallback] Querying "+91${cleanPhone}"`);
+        data = await searchContacts(1, 5, `+91${cleanPhone}`);
+        contacts = data.contacts || [];
+      } else if (cleanPhone.length === 12 && cleanPhone.startsWith("91")) {
+        console.log(`[CRM Fetch Phone Fallback] Querying "+${cleanPhone}"`);
+        data = await searchContacts(1, 5, `+${cleanPhone}`);
+        contacts = data.contacts || [];
+      }
+    }
+
+    if (contacts.length > 0) {
+      // Look for a contact whose phone ends with the last 10 digits of search phone
+      const match = contacts.find(c => {
+        const cPhone = String(c.phone || "").replace(/\D/g, "");
+        return cPhone.endsWith(cleanPhone.slice(-10)) || cleanPhone.endsWith(cPhone.slice(-10));
+      }) || contacts[0];
+
+      return {
+        Name: formatContactName([match.firstName, match.lastName].filter(Boolean).join(" ").trim() || match.contactName || ""),
+        Phone: match.phone || "",
+        Email: match.email || "",
+        City: getGhlCity(match),
+        State: match.state || "",
+        Tags: Array.isArray(match.tags) ? match.tags.join(", ") : "",
+        tags: Array.isArray(match.tags) ? match.tags : [],
+        GHL_ID: match.id || ""
+      };
+    }
+  } catch (err) {
+    console.error("Error searching CRM by phone:", err);
+  }
+  return null;
+};

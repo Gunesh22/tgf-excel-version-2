@@ -9,6 +9,7 @@ import {
 import {
   addIncomingCallLog, updateCallLog, createProgram, checkGlobalDuplicate
 } from "../../../../lib/db";
+import { searchCRMByPhone } from "../../../../lib/ghl";
 import {
   STATUS_OPTIONS,
   OBJECTION_REASONS,
@@ -19,7 +20,8 @@ import {
   getFieldWithFallback,
   isKhojiAffirmative,
   isKhojiNegative,
-  isKhojiField
+  isKhojiField,
+  formatContactName
 } from "../utils";
 
 const SearchableDropdown = ({
@@ -253,6 +255,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   });
   const [saving, setSaving] = useState(false);
   const [globalDup, setGlobalDup] = useState(null);
+  const [isSearchingCRM, setIsSearchingCRM] = useState(false);
   const [dupPopoverOpen, setDupPopoverOpen] = useState(false);
   const handleDismissRef = useRef(null);
   const [addedFields, setAddedFields] = useState([]);
@@ -572,99 +575,131 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
         const [r1, r2] = results;
 
-        if (!r1 && !r2) {
-          setGlobalDup(null);
-          return;
-        }
-
-        // Merge all matches across phone + mobile results
-        const allMatchesMap = new Map();
-        const allTagsSet   = new Set();
-
-        [r1, r2].forEach(res => {
-          if (!res) return;
-          if (Array.isArray(res.matches)) {
-            res.matches.forEach(m => allMatchesMap.set(m.id, m));
-          }
-          if (Array.isArray(res.allTags)) {
-            res.allTags.forEach(t => allTagsSet.add(t));
-          }
-        });
-
-        const combinedMatches = Array.from(allMatchesMap.values());
-        if (combinedMatches.length === 0) {
-          setGlobalDup(null);
-          return;
-        }
-
-        const dup = combinedMatches[0];
-
-        // Only show duplicate banner/warning if the contact is actively assigned to an attender
-        const hasAssignedMatch = combinedMatches.some(m => m.isAssigned === true || (Array.isArray(m.assignedTo) && m.assignedTo.length > 0));
-
-        setGlobalDup({
-          count:       combinedMatches.length,
-          allTags:     Array.from(allTagsSet).sort(),
-          matches:     combinedMatches,
-          first:       dup,
-          programName: dup?.programName,
-          showWarning: hasAssignedMatch
-        });
-
-        // ── Auto-fill all contact fields from the duplicate ──
-        if (dup) {
-          setEdited(prev => {
-            const updated = { ...prev };
-
-            // Standard personal fields — only fill if currently empty
-            ["Name", "Email", "City", "State", "Khoji"].forEach(f => {
-              const dupVal = getFieldWithFallback(dup, f);
-              if (!String(updated[f] || "").trim() && dupVal) {
-                updated[f] = dupVal;
-              }
-            });
-
-            // Tags
-            const dupTagsVal = getFieldWithFallback(dup, "tags") || getFieldWithFallback(dup, "Tags");
-            if (!String(updated.Tags || "").trim() && dupTagsVal) {
-              updated.Tags = dupTagsVal;
+        let combinedMatches = [];
+        const allTagsSet = new Set();
+        if (r1 || r2) {
+          const allMatchesMap = new Map();
+          [r1, r2].forEach(res => {
+            if (!res) return;
+            if (Array.isArray(res.matches)) {
+              res.matches.forEach(m => allMatchesMap.set(m.id, m));
             }
-
-            // Link contact identity
-            if (!updated.contactId) {
-              updated.contactId = dup.contactId || dup.id;
+            if (Array.isArray(res.allTags)) {
+              res.allTags.forEach(t => allTagsSet.add(t));
             }
-            if (!updated.GHL_ID && dup.GHL_ID) {
-              updated.GHL_ID = dup.GHL_ID;
-            }
-
-            // All other custom / dynamic fields — fill if empty
-            const skipKeys = new Set([
-              "id", "contactid", "ghl_id", "normalizedphone", "normalizedmobile",
-              "assignedto", "assignedname", "assignedat", "isassigned", "history",
-              "createdat", "updatedat", "lasteditedby", "lasteditedat", "createdtime",
-              "attenderid", "attendername", "programid", "programname", "remark", "status",
-              "calltype", "querystatus", "objectionreason", "callbackdate", "callbackstatus",
-              "ishotlead", "firstcalledat", "lastcalledat", "_isnew", "_rawdata", "_deleted",
-              "attenderstates", "tags", "source", "called for", "called_for", "calledfor"
-            ]);
-
-            Object.keys(dup).forEach(k => {
-              if (skipKeys.has(k.toLowerCase())) return;
-              const dupVal = dup[k];
-              if (dupVal === undefined || dupVal === null || String(dupVal).trim() === "") return;
-              const existingKey = Object.keys(updated).find(x => x.toLowerCase() === k.toLowerCase());
-              if (existingKey) {
-                if (!String(updated[existingKey] || "").trim()) {
-                  updated[existingKey] = dupVal;
-                }
-              } else {
-                updated[k] = dupVal;
-              }
-            });
-
-            return updated;
           });
+          combinedMatches = Array.from(allMatchesMap.values());
+        }
+
+        if (combinedMatches.length > 0) {
+          const dup = combinedMatches[0];
+          const hasAssignedMatch = combinedMatches.some(m => m.isAssigned === true || (Array.isArray(m.assignedTo) && m.assignedTo.length > 0));
+
+          setGlobalDup({
+            count:       combinedMatches.length,
+            allTags:     Array.from(allTagsSet).sort(),
+            matches:     combinedMatches,
+            first:       dup,
+            programName: dup?.programName,
+            showWarning: hasAssignedMatch
+          });
+
+          // ── Auto-fill all contact fields from the duplicate ──
+          if (dup) {
+            setEdited(prev => {
+              const updated = { ...prev };
+
+              // Standard personal fields — only fill if currently empty
+              ["Name", "Email", "City", "State", "Khoji"].forEach(f => {
+                const dupVal = getFieldWithFallback(dup, f);
+                if (!String(updated[f] || "").trim() && dupVal) {
+                  updated[f] = dupVal;
+                }
+              });
+
+              // Tags
+              const dupTagsVal = getFieldWithFallback(dup, "tags") || getFieldWithFallback(dup, "Tags");
+              if (!String(updated.Tags || "").trim() && dupTagsVal) {
+                updated.Tags = dupTagsVal;
+              }
+
+              // Link contact identity
+              if (!updated.contactId) {
+                updated.contactId = dup.contactId || dup.id;
+              }
+              if (!updated.GHL_ID && dup.GHL_ID) {
+                updated.GHL_ID = dup.GHL_ID;
+              }
+
+              // All other custom / dynamic fields — fill if empty
+              const skipKeys = new Set([
+                "id", "contactid", "ghl_id", "normalizedphone", "normalizedmobile",
+                "assignedto", "assignedname", "assignedat", "isassigned", "history",
+                "createdat", "updatedat", "lasteditedby", "lasteditedat", "createdtime",
+                "attenderid", "attendername", "programid", "programname", "remark", "status",
+                "calltype", "querystatus", "objectionreason", "callbackdate", "callbackstatus",
+                "ishotlead", "firstcalledat", "lastcalledat", "_isnew", "_rawdata", "_deleted",
+                "attenderstates", "tags", "source", "called for", "called_for", "calledfor"
+              ]);
+
+              Object.keys(dup).forEach(k => {
+                if (skipKeys.has(k.toLowerCase())) return;
+                const dupVal = dup[k];
+                if (dupVal === undefined || dupVal === null || String(dupVal).trim() === "") return;
+                const existingKey = Object.keys(updated).find(x => x.toLowerCase() === k.toLowerCase());
+                if (existingKey) {
+                  if (!String(updated[existingKey] || "").trim()) {
+                    updated[existingKey] = dupVal;
+                  }
+                } else {
+                  updated[k] = dupVal;
+                }
+              });
+
+              return updated;
+            });
+          }
+        } else {
+          // No duplicate found in Firebase -> Reset duplicate state and query CRM!
+          setGlobalDup(null);
+
+          const searchVal = phoneVal || mobileVal;
+          const digitsCount = String(searchVal || "").replace(/\D/g, "").length;
+          if (digitsCount >= 10) {
+            setIsSearchingCRM(true);
+            console.log(`[CRM Fetch] Initiated search CRM by phone for value: "${searchVal}" (digits: ${digitsCount})`);
+            try {
+              const crmContact = await searchCRMByPhone(searchVal);
+              if (crmContact) {
+                console.log(`[CRM Fetch] Found contact in CRM for phone "${searchVal}":`, crmContact);
+                setEdited(prev => {
+                  const updated = { ...prev };
+                  if (!String(updated.Name || "").trim() && crmContact.Name) {
+                    updated.Name = crmContact.Name;
+                  }
+                  if (!String(updated.City || "").trim() && crmContact.City) {
+                    updated.City = crmContact.City;
+                  }
+                  if (!String(updated.Tags || "").trim() && crmContact.Tags) {
+                    updated.Tags = crmContact.Tags;
+                  }
+                  if (!String(updated.GHL_ID || "").trim() && crmContact.GHL_ID) {
+                    updated.GHL_ID = crmContact.GHL_ID;
+                  }
+                  return updated;
+                });
+                toast.success("Lead found in CRM! Details auto-filled.");
+              } else {
+                console.log(`[CRM Fetch] No contact found in CRM for phone "${searchVal}"`);
+              }
+            } catch (crmErr) {
+              console.error(`[CRM Fetch] Error searching CRM for phone "${searchVal}":`, crmErr);
+            } finally {
+              setIsSearchingCRM(false);
+            }
+          } else {
+            console.log(`[CRM Fetch] Skipping CRM search because search value "${searchVal}" has only ${digitsCount} digits (minimum 10 required).`);
+          }
         }
       } catch (err) {
         console.error("[EditModal] Duplicate check failed:", err);
@@ -1069,6 +1104,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     try {
       const { id, _callbackDue, ...rest } = targetEdited;
       const updates = { ...rest };
+      if (updates.Name) {
+        updates.Name = formatContactName(updates.Name);
+      }
       // Never send attenderStates or internal bookkeeping back to Firestore as a whole object.
       // updateCallLog manages attenderStates internally via dot-notation (merge-safe).
       // Sending it here would overwrite the entire map, erasing other attenders' data.
@@ -1384,6 +1422,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
               <input
                 value={edited.Name || ""}
                 onChange={e => handleChange("Name", e.target.value)}
+                onBlur={e => handleChange("Name", formatContactName(e.target.value))}
                 readOnly={!getEditable("Name")}
                 className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
                   !getEditable("Name")
@@ -1403,6 +1442,11 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 {isPhoneDuplicate && (
                   <span className="text-[9px] text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5 font-bold flex items-center gap-0.5 animate-pulse">
                     ⚠️ Duplicate Detected
+                  </span>
+                )}
+                {isSearchingCRM && (
+                  <span className="text-[9px] text-purple-700 bg-purple-100 border border-purple-300 rounded px-1.5 py-0.5 font-bold flex items-center gap-0.5">
+                    <Loader size={9} className="animate-spin" /> Searching CRM...
                   </span>
                 )}
               </label>
@@ -1430,6 +1474,11 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 {isMobileDuplicate && (
                   <span className="text-[9px] text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5 font-bold flex items-center gap-0.5 animate-pulse">
                     ⚠️ Duplicate Detected
+                  </span>
+                )}
+                {isSearchingCRM && (
+                  <span className="text-[9px] text-purple-700 bg-purple-100 border border-purple-300 rounded px-1.5 py-0.5 font-bold flex items-center gap-0.5">
+                    <Loader size={9} className="animate-spin" /> Searching CRM...
                   </span>
                 )}
               </label>

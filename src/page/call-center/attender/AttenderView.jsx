@@ -12,8 +12,9 @@ import {
   assignContactsToAttender, normalizePhone, getActiveTags,
   INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME, ensureIncomingProgram,
   OUTGOING_PROGRAM_ID, OUTGOING_PROGRAM_NAME, ensureOutgoingProgram,
-  globalSearchContacts, claimContact, removeAttenderFromContact
+  globalSearchContacts, claimContact, removeAttenderFromContact, claimCRMContact
 } from "../../../lib/db";
+import { searchCRM } from "../../../lib/ghl";
 import {
   STATUS_OPTIONS,
   SOURCE_OPTIONS,
@@ -244,9 +245,30 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     setIsSearchingGlobal(true);
     try {
       const results = await globalSearchContacts(globalSearchQuery);
-      setGlobalSearchResults(results);
       if (results.length === 0) {
-        toast.error("No contacts found matching search query.");
+        const crmLoaderId = toast.loading("No matches in Firebase. Searching CRM...");
+        console.log(`[CRM Fetch Global] No Firebase matches. Initiating search CRM for query: "${globalSearchQuery}"`);
+        try {
+          const crmResults = await searchCRM(globalSearchQuery);
+          toast.dismiss(crmLoaderId);
+          if (crmResults && crmResults.length > 0) {
+            console.log(`[CRM Fetch Global] Found ${crmResults.length} contact(s) in CRM:`, crmResults);
+            setGlobalSearchResults(crmResults);
+            toast.success(`Found ${crmResults.length} contact(s) in CRM!`);
+          } else {
+            console.log(`[CRM Fetch Global] No contacts found in CRM for query: "${globalSearchQuery}"`);
+            setGlobalSearchResults([]);
+            toast.error("No contacts found in Firebase or CRM.");
+          }
+        } catch (crmErr) {
+          toast.dismiss(crmLoaderId);
+          console.error(`[CRM Fetch Global] Error querying CRM contacts:`, crmErr);
+          toast.error("Failed to query CRM contacts.");
+          setGlobalSearchResults([]);
+        }
+      } else {
+        console.log(`[Firebase Search Global] Found ${results.length} contact(s) in Firebase:`, results);
+        setGlobalSearchResults(results);
       }
     } catch (err) {
       console.error(err);
@@ -257,22 +279,40 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   };
 
   const handleClaimContact = async (contact) => {
-    const confirmMsg = contact.isAssigned
-      ? `This contact is currently assigned to ${contact.assignedName || "someone else"}.\nAre you sure you want to claim this lead?`
-      : `Are you sure you want to claim this lead?`;
+    const confirmMsg = contact.isFromCRM
+      ? `Are you sure you want to claim and import this lead from CRM?`
+      : contact.isAssigned
+        ? `This contact is currently assigned to ${contact.assignedName || "someone else"}.\nAre you sure you want to claim this lead?`
+        : `Are you sure you want to claim this lead?`;
     if (!window.confirm(confirmMsg)) return;
 
     try {
-      await claimContact(contact.id, attenderId, attenderName);
-      toast.success("Lead claimed successfully! It will now appear on your call sheet.");
-      setGlobalSearchResults(prev => prev.map(c => c.id === contact.id ? {
-        ...c,
-        isAssigned: true,
-        assignedTo: attenderId,
-        assignedName: attenderName,
-        attenderId,
-        attenderName
-      } : c));
+      if (contact.isFromCRM) {
+        const newId = await claimCRMContact(contact, attenderId, attenderName);
+        toast.success("Lead claimed from CRM successfully! It will now appear on your call sheet.");
+        // Update local search results so it displays as claimed/assigned
+        setGlobalSearchResults(prev => prev.map(c => c.GHL_ID === contact.GHL_ID ? {
+          ...c,
+          id: newId,
+          isFromCRM: false,
+          isAssigned: true,
+          assignedTo: attenderId,
+          assignedName: attenderName,
+          attenderId,
+          attenderName
+        } : c));
+      } else {
+        await claimContact(contact.id, attenderId, attenderName);
+        toast.success("Lead claimed successfully! It will now appear on your call sheet.");
+        setGlobalSearchResults(prev => prev.map(c => c.id === contact.id ? {
+          ...c,
+          isAssigned: true,
+          assignedTo: attenderId,
+          assignedName: attenderName,
+          attenderId,
+          attenderName
+        } : c));
+      }
     } catch (err) {
       console.error(err);
       toast.error(err.message || "Failed to claim contact.");
@@ -1215,24 +1255,29 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
                   const alreadyMine = Array.isArray(contact.assignedTo) ? contact.assignedTo.includes(attenderId) : contact.assignedTo === attenderId;
                   const isAssigned = contact.isAssigned;
                   const tags = contact.tags || [];
+                  const uniqueKey = contact.id || contact.GHL_ID || Math.random().toString();
 
                   return (
-                    <div key={contact.id} className="p-4 border border-gray-100 rounded-xl bg-gray-50/50 hover:bg-white hover:shadow transition flex items-center justify-between gap-4">
+                    <div key={uniqueKey} className="p-4 border border-gray-100 rounded-xl bg-gray-50/50 hover:bg-white hover:shadow transition flex items-center justify-between gap-4">
                       <div className="space-y-1 min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <p className="font-bold text-gray-900 truncate">{contact.Name || "No Name"}</p>
                           <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                            isAssigned
-                              ? alreadyMine
-                                ? "bg-emerald-100 text-emerald-700"
-                                : "bg-amber-100 text-amber-700"
-                              : "bg-blue-100 text-blue-700"
+                            contact.isFromCRM
+                              ? "bg-purple-100 text-purple-700"
+                              : isAssigned
+                                ? alreadyMine
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-amber-100 text-amber-700"
+                                : "bg-blue-100 text-blue-700"
                           }`}>
-                            {isAssigned
-                              ? alreadyMine
-                                ? "My Lead"
-                                : `Assigned to: ${contact.assignedName || "Other"}`
-                              : "Unassigned"
+                            {contact.isFromCRM
+                              ? "CRM Lead"
+                              : isAssigned
+                                ? alreadyMine
+                                  ? "My Lead"
+                                  : `Assigned to: ${contact.assignedName || "Other"}`
+                                : "Unassigned"
                             }
                           </span>
                         </div>
@@ -1257,12 +1302,21 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
                         className={`px-3 py-1.5 rounded-lg font-bold text-xs shadow-sm transition ${
                           alreadyMine
                             ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                            : isAssigned
-                              ? "bg-amber-500 hover:bg-amber-600 text-white"
-                              : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                            : contact.isFromCRM
+                              ? "bg-purple-600 hover:bg-purple-700 text-white"
+                              : isAssigned
+                                ? "bg-amber-500 hover:bg-amber-600 text-white"
+                                : "bg-indigo-600 hover:bg-indigo-700 text-white"
                         }`}
                       >
-                        {alreadyMine ? "Claimed" : isAssigned ? "Claim & Reassign" : "Claim Lead"}
+                        {alreadyMine
+                          ? "Claimed"
+                          : contact.isFromCRM
+                            ? "Claim & Import"
+                            : isAssigned
+                              ? "Claim & Reassign"
+                              : "Claim Lead"
+                        }
                       </button>
                     </div>
                   );

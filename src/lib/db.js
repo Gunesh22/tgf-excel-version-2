@@ -8,6 +8,18 @@ import {
 import { db } from "./firebase";
 import { isKhojiField } from "./khojiHelper";
 
+export const formatContactName = (name) => {
+  if (!name || typeof name !== "string") return "";
+  return name
+    .trim()
+    .split(/\s+/)
+    .map(word => {
+      if (!word) return "";
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+};
+
 // ─────────────────────────────────────────────
 // IGNORED FIELDS DEFINITIONS
 // ─────────────────────────────────────────────
@@ -1157,6 +1169,13 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     console.warn("Failed to fetch previous status", e);
   }
 
+  // Format Name if modified
+  const nameKeys = ["Name", "name", "caller", "caller name", "lead name", "lead", "name of caller"];
+  const updatedNameKey = Object.keys(updates).find(k => nameKeys.includes(k) || k.toLowerCase().includes("name"));
+  if (updatedNameKey && typeof updates[updatedNameKey] === "string" && updatedNameKey.toLowerCase() !== "attendername" && updatedNameKey.toLowerCase() !== "programname") {
+    updates[updatedNameKey] = formatContactName(updates[updatedNameKey]);
+  }
+
   // Update normalizedPhone and normalizedMobile if phone/mobile fields are modified
   const phoneFields = ["Phone", "phone number", "phone", "whatsapp"];
   const mobileFields = ["Mobile", "mobile number", "mobile no", "mobile"];
@@ -1533,9 +1552,13 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
     }
   };
 
+  // Format Name:
+  const rawName = rest.Name || existingData.Name || "";
+  const formattedName = formatContactName(rawName);
+
   // Build the unified log document data
   const baseProfile = {
-    Name: rest.Name || existingData.Name || "",
+    Name: formattedName,
     Email: rest.Email || existingData.Email || "",
     City: rest.City || existingData.City || "",
     State: rest.State || existingData.State || "",
@@ -1820,6 +1843,111 @@ export const claimContact = async (contactId, attenderId, attenderName) => {
       updatedAt: serverTimestamp()
     });
   });
+};
+
+// Claim a contact that only exists in the CRM by creating it in Firebase first
+export const claimCRMContact = async (crmContact, attenderId, attenderName) => {
+  const normPhone = normalizePhone(crmContact.Phone || "");
+  const normMobile = normalizePhone(crmContact.Mobile || "");
+  const finalNormalizedPhones = Array.from(new Set([
+    ...extractIndividualPhones(crmContact.Phone || ""),
+    ...extractIndividualPhones(crmContact.Mobile || "")
+  ]));
+
+  let existingId = null;
+  if (finalNormalizedPhones.length > 0) {
+    try {
+      const q1 = query(collection(db, "contacts"), where("normalizedPhone", "in", finalNormalizedPhones));
+      const q2 = query(collection(db, "contacts"), where("normalizedMobile", "in", finalNormalizedPhones));
+      const q3 = query(collection(db, "contacts"), where("normalizedPhones", "array-contains-any", finalNormalizedPhones));
+      const [snap1, snap2, snap3] = await Promise.all([getDocs(q1), getDocs(q2), getDocs(q3)]);
+      const mergedDocs = [];
+      const seenIds = new Set();
+      [...snap1.docs, ...snap2.docs, ...snap3.docs].forEach(d => {
+        if (!seenIds.has(d.id)) {
+          seenIds.add(d.id);
+          mergedDocs.push(d);
+        }
+      });
+      const matchDoc = mergedDocs.find(docSnap => docSnap.data()._deleted !== true) || mergedDocs[0];
+      if (matchDoc) {
+        existingId = matchDoc.id;
+      }
+    } catch (e) {
+      console.warn("[claimCRMContact] duplicate lookup failed:", e);
+    }
+  }
+
+  if (existingId) {
+    return await claimContact(existingId, attenderId, attenderName);
+  }
+
+  const historyEntry = {
+    timestamp: new Date().toISOString(),
+    attenderId,
+    attenderName,
+    status: "Claimed Lead",
+    remark: `Lead claimed from CRM by ${attenderName}`
+  };
+
+  const newStates = {
+    [attenderId]: {
+      status: "",
+      remark: "",
+      callType: "outgoing",
+      history: [historyEntry],
+      callbackDate: null,
+      objectionReason: "",
+      lastCalledAt: new Date().toISOString(),
+      firstCalledAt: new Date().toISOString(),
+      attenderName: attenderName,
+      updatedAt: new Date().toISOString()
+    }
+  };
+
+  const tagsSet = new Set();
+  if (crmContact.Tags) {
+    parseTags(crmContact.Tags).forEach(x => tagsSet.add(x));
+  }
+  if (Array.isArray(crmContact.tags)) {
+    crmContact.tags.forEach(x => {
+      if (x) tagsSet.add(String(x).trim());
+    });
+  }
+  const finalTags = Array.from(tagsSet).filter(Boolean).sort();
+
+  const docData = {
+    Name: formatContactName(crmContact.Name || ""),
+    Phone: crmContact.Phone || "",
+    Mobile: crmContact.Mobile || "",
+    Email: crmContact.Email || "",
+    City: crmContact.City || "",
+    State: crmContact.State || "",
+    Khoji: crmContact.Khoji || "",
+    Source: crmContact.Source || "GHL CRM",
+    GHL_ID: crmContact.GHL_ID || "",
+    normalizedPhone: normPhone || "",
+    normalizedMobile: normMobile || "",
+    normalizedPhones: finalNormalizedPhones,
+    isAssigned: true,
+    assignedTo: [attenderId],
+    assignedName: attenderName,
+    attenderId: attenderId,
+    attenderName: attenderName,
+    callType: "outgoing",
+    status: "",
+    remark: "",
+    callbackDate: null,
+    isCallbackDue: false,
+    attenderStates: newStates,
+    tags: finalTags,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    isManualEntry: false
+  };
+
+  const docRef = await addDoc(collection(db, "contacts"), docData);
+  return docRef.id;
 };
 
 // ─────────────────────────────────────────────
