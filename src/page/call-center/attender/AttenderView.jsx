@@ -1443,7 +1443,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           ))}
         </div>
       ) : activeView === "performance" ? (
-        <MyPerformanceDashboard logs={tagFilteredLogs} attenderName={attenderName} />
+        <MyPerformanceDashboard logs={tagFilteredLogs} attenderName={attenderName} attenderId={attenderId} />
       ) : (
         <div className="flex-1 flex flex-col overflow-hidden">
           <ContactTable

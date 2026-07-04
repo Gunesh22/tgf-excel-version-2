@@ -269,11 +269,6 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
       const processAttempt = (att) => {
         const status = att.status || "Pending";
-        const isConnected = CONNECTED_STATUSES.includes(status);
-        const isNotConnected = NOT_CONNECTED_STATUSES.includes(status);
-        if (!isConnected && !isNotConnected) {
-          return null;
-        }
         if (selectedStatuses.length > 0 && !selectedStatuses.includes(status)) {
           return null;
         }

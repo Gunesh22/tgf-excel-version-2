@@ -189,11 +189,6 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
 
       const processAttempt = (att, attId, state, isHistory, index) => {
         const status = att.status || "Pending";
-        const isConnected = CONNECTED_STATUSES.includes(status);
-        const isNotConnected = NOT_CONNECTED_STATUSES.includes(status);
-        if (!isConnected && !isNotConnected) {
-          return null;
-        }
 
         const dateVal = att.timestamp || att.updatedAt || state.lastCalledAt || state.updatedAt;
         const attemptDate = getAttemptDate(dateVal) || getAttemptDate(log.updatedAt || log.createdAt);
