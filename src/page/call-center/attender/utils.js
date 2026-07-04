@@ -94,7 +94,9 @@ export const CONNECTED_STATUSES = [
   "Next time",
   "Shivir done",
   "Not possible",
-  "Pending"
+  "Pending",
+  "Not interested",
+  "Not Attended"
 ];
 
 export const NOT_CONNECTED_STATUSES = [
@@ -103,12 +105,10 @@ export const NOT_CONNECTED_STATUSES = [
   "Call Cut",
   "switched off",
   "Invalid No",
-  "Not interested",
   "Called by mistake",
   "no network",
   "wrong no.",
-  "no answer",
-  "Not Attended"
+  "no answer"
 ];
 
 export const DEFAULT_COLUMNS = [

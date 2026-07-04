@@ -186,7 +186,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     callLogs.forEach(log => {
       const key = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
       const val = key ? String(log[key] || "").trim() : "";
-      if (val) values.add(val);
+      if (val) {
+        val.split(",").map(s => s.trim()).filter(Boolean).forEach(v => values.add(v));
+      }
     });
     return Array.from(values).sort().map(s => ({ value: s, label: s }));
   }, [callLogs, settingsOptions]);
@@ -244,7 +246,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       // Called For filter
       const calledForKey = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
       const calledForVal = calledForKey ? String(log[calledForKey] || "").trim() : "";
-      if (selectedCalledFors.length > 0 && !selectedCalledFors.includes(calledForVal)) {
+      const logCalledFors = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
+      if (selectedCalledFors.length > 0 && !logCalledFors.some(cf => selectedCalledFors.includes(cf))) {
         return;
       }
 
@@ -397,6 +400,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       outgoingCalls: 0,
       incomingConversions: 0,
       outgoingConversions: 0,
+      queryCalls: 0,
     };
 
     allAttempts.forEach(c => {
@@ -414,6 +418,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         } else {
           stats.outgoingConversions++;
         }
+      }
+      if (c.status === "Query") {
+        stats.queryCalls++;
       }
       if (type === "incoming") {
         stats.incomingCalls++;
@@ -447,6 +454,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       { metric: "Not Connected Calls", value: metrics.notConnectedCalls },
       { metric: "Incoming Calls", value: metrics.incomingCalls },
       { metric: "Outgoing Calls", value: metrics.outgoingCalls },
+      { metric: "Query Calls", value: metrics.queryCalls },
       { metric: "Direct Registrations / Conversions (Reg.Done)", value: metrics.totalConversions },
       { metric: "Incoming Conversions (Reg.Done)", value: metrics.incomingConversions },
       { metric: "Outgoing Conversions (Reg.Done)", value: metrics.outgoingConversions },
@@ -755,30 +763,38 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
   const calledForBreakdown = React.useMemo(() => {
     const map = {};
     allAttempts.forEach(c => {
-      const prog = String(c.calledFor || "").trim() || "Unknown";
-      if (!map[prog]) {
-        map[prog] = { name: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
-      }
-      const item = map[prog];
-      item.total++;
-      if (CONNECTED_STATUSES.includes(c.status)) item.connected++;
-      else if (NOT_CONNECTED_STATUSES.includes(c.status)) item.notConnected++;
+      const calledFors = String(c.calledFor || "").trim()
+        ? String(c.calledFor).split(",").map(x => x.trim()).filter(Boolean)
+        : ["Unknown"];
       
-      const type = (c.callType || "").toLowerCase();
-      if (type === "incoming") {
-        item.incoming++;
-      } else {
-        item.outgoing++;
-      }
-
-      if (c.status === "Reg.Done") {
-        item.conversions++;
-        if (type === "incoming") {
-          item.incomingConversions++;
-        } else {
-          item.outgoingConversions++;
+      calledFors.forEach(prog => {
+        if (!map[prog]) {
+          map[prog] = { name: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0 };
         }
-      }
+        const item = map[prog];
+        item.total++;
+        if (CONNECTED_STATUSES.includes(c.status)) item.connected++;
+        else if (NOT_CONNECTED_STATUSES.includes(c.status)) item.notConnected++;
+        
+        const type = (c.callType || "").toLowerCase();
+        if (type === "incoming") {
+          item.incoming++;
+        } else {
+          item.outgoing++;
+        }
+
+        if (c.status === "Reg.Done") {
+          item.conversions++;
+          if (type === "incoming") {
+            item.incomingConversions++;
+          } else {
+            item.outgoingConversions++;
+          }
+        }
+        if (c.status === "Query") {
+          item.query++;
+        }
+      });
     });
 
     return Object.values(map).map(a => ({
@@ -788,6 +804,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Not Connected": a.notConnected,
       "Incoming": a.incoming,
       "Outgoing": a.outgoing,
+      "Query Calls": a.query,
       "Reg.Done (Conversions)": a.conversions,
       "Incoming Conversions": a.incomingConversions,
       "Outgoing Conversions": a.outgoingConversions,
@@ -803,6 +820,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Not Connected": 0, 
       "Incoming": 0, 
       "Outgoing": 0, 
+      "Query Calls": 0,
       "Reg.Done (Conversions)": 0, 
       "Incoming Conversions": 0,
       "Outgoing Conversions": 0,
@@ -814,6 +832,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Not Connected"] += row["Not Connected"];
       totals["Incoming"] += row["Incoming"];
       totals["Outgoing"] += row["Outgoing"];
+      totals["Query Calls"] += row["Query Calls"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
       totals["Incoming Conversions"] += row["Incoming Conversions"];
       totals["Outgoing Conversions"] += row["Outgoing Conversions"];
@@ -827,7 +846,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     allAttempts.forEach(c => {
       const src = String(c.source || "").trim() || "Unknown";
       if (!map[src]) {
-        map[src] = { name: src, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
+        map[src] = { name: src, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0 };
       }
       const item = map[src];
       item.total++;
@@ -849,6 +868,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           item.outgoingConversions++;
         }
       }
+      if (c.status === "Query") {
+        item.query++;
+      }
     });
 
     return Object.values(map).map(a => ({
@@ -858,6 +880,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Not Connected": a.notConnected,
       "Incoming": a.incoming,
       "Outgoing": a.outgoing,
+      "Query Calls": a.query,
       "Reg.Done (Conversions)": a.conversions,
       "Incoming Conversions": a.incomingConversions,
       "Outgoing Conversions": a.outgoingConversions,
@@ -873,6 +896,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Not Connected": 0, 
       "Incoming": 0, 
       "Outgoing": 0, 
+      "Query Calls": 0,
       "Reg.Done (Conversions)": 0, 
       "Incoming Conversions": 0,
       "Outgoing Conversions": 0,
@@ -884,6 +908,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Not Connected"] += row["Not Connected"];
       totals["Incoming"] += row["Incoming"];
       totals["Outgoing"] += row["Outgoing"];
+      totals["Query Calls"] += row["Query Calls"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
       totals["Incoming Conversions"] += row["Incoming Conversions"];
       totals["Outgoing Conversions"] += row["Outgoing Conversions"];
@@ -896,31 +921,39 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     const map = {};
     allAttempts.forEach(c => {
       const src = String(c.source || "").trim() || "Unknown";
-      const prog = String(c.calledFor || "").trim() || "Unknown";
-      const key = `${src} &&& ${prog}`;
-      if (!map[key]) {
-        map[key] = { source: src, calledFor: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
-      }
-      const item = map[key];
-      item.total++;
-      if (CONNECTED_STATUSES.includes(c.status)) item.connected++;
-      else if (NOT_CONNECTED_STATUSES.includes(c.status)) item.notConnected++;
-      
-      const type = (c.callType || "").toLowerCase();
-      if (type === "incoming") {
-        item.incoming++;
-      } else {
-        item.outgoing++;
-      }
+      const calledFors = String(c.calledFor || "").trim()
+        ? String(c.calledFor).split(",").map(x => x.trim()).filter(Boolean)
+        : ["Unknown"];
 
-      if (c.status === "Reg.Done") {
-        item.conversions++;
-        if (type === "incoming") {
-          item.incomingConversions++;
-        } else {
-          item.outgoingConversions++;
+      calledFors.forEach(prog => {
+        const key = `${src} &&& ${prog}`;
+        if (!map[key]) {
+          map[key] = { source: src, calledFor: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0 };
         }
-      }
+        const item = map[key];
+        item.total++;
+        if (CONNECTED_STATUSES.includes(c.status)) item.connected++;
+        else if (NOT_CONNECTED_STATUSES.includes(c.status)) item.notConnected++;
+        
+        const type = (c.callType || "").toLowerCase();
+        if (type === "incoming") {
+          item.incoming++;
+        } else {
+          item.outgoing++;
+        }
+
+        if (c.status === "Reg.Done") {
+          item.conversions++;
+          if (type === "incoming") {
+            item.incomingConversions++;
+          } else {
+            item.outgoingConversions++;
+          }
+        }
+        if (c.status === "Query") {
+          item.query++;
+        }
+      });
     });
 
     return Object.values(map).map(a => ({
@@ -931,6 +964,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Not Connected": a.notConnected,
       "Incoming": a.incoming,
       "Outgoing": a.outgoing,
+      "Query Calls": a.query,
       "Reg.Done (Conversions)": a.conversions,
       "Incoming Conversions": a.incomingConversions,
       "Outgoing Conversions": a.outgoingConversions,
@@ -947,6 +981,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Not Connected": 0,
       "Incoming": 0,
       "Outgoing": 0,
+      "Query Calls": 0,
       "Reg.Done (Conversions)": 0,
       "Incoming Conversions": 0,
       "Outgoing Conversions": 0,
@@ -958,6 +993,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Not Connected"] += row["Not Connected"];
       totals["Incoming"] += row["Incoming"];
       totals["Outgoing"] += row["Outgoing"];
+      totals["Query Calls"] += row["Query Calls"];
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
       totals["Incoming Conversions"] += row["Incoming Conversions"];
       totals["Outgoing Conversions"] += row["Outgoing Conversions"];
@@ -1245,7 +1281,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
           <MonthlySection title="Section 4: Called For Program Breakdowns">
             <MonthlyTable
-              headers={["Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
+              headers={["Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Query Calls", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
               rows={calledForBreakdown}
               totals={calledForBreakdownTotals}
             />
@@ -1253,7 +1289,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
           <MonthlySection title="Section 5: Source-wise Breakdowns & Conversions">
             <MonthlyTable
-              headers={["Source", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
+              headers={["Source", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Query Calls", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
               rows={sourceBreakdown}
               totals={sourceBreakdownTotals}
             />
@@ -1261,7 +1297,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
           <MonthlySection title="Section 6: Source vs Called For Breakdowns">
             <MonthlyTable
-              headers={["Source", "Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
+              headers={["Source", "Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Query Calls", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
               rows={sourceVsCalledForBreakdown}
               totals={sourceVsCalledForBreakdownTotals}
             />

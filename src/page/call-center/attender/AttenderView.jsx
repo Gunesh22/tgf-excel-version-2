@@ -581,7 +581,9 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     const set = new Set(CALLED_FOR_OPTIONS);
     tagFilteredLogs.forEach(log => {
       const k = Object.keys(log).find(key => key.toLowerCase().includes("called for") || key.toLowerCase().includes("called_for") || key.toLowerCase().includes("calledfor"));
-      if (k && log[k]) set.add(String(log[k]).trim());
+      if (k && log[k]) {
+        String(log[k]).split(",").map(x => x.trim()).filter(Boolean).forEach(cf => set.add(cf));
+      }
     });
     return Array.from(set).sort();
   }, [tagFilteredLogs, optionsVersion]);
@@ -675,7 +677,10 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       // 4. Called For Filter
       if (filterCalledFor.length > 0) {
         const k = Object.keys(log).find(key => key.toLowerCase().includes("called for") || key.toLowerCase().includes("called_for") || key.toLowerCase().includes("calledfor"));
-        if (!k || !filterCalledFor.includes(String(log[k] || "").trim())) return false;
+        if (!k) return false;
+        const calledForVal = String(log[k] || "").trim();
+        const logCalledFors = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
+        if (!logCalledFors.some(cf => filterCalledFor.includes(cf))) return false;
       }
 
       // 5. City/Location Filter

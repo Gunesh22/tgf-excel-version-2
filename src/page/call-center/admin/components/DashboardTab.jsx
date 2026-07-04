@@ -4,7 +4,7 @@ import * as XLSX from "xlsx";
 import { BarChart3, Download, Search, X, ChevronDown, Check } from "lucide-react";
 import { subscribeToAllCallLogs } from "../../../../lib/db";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from "recharts";
-import { COLORS, cleanExportRow } from "../utils.jsx";
+import { COLORS, cleanExportRow, CONNECTED_STATUSES, NOT_CONNECTED_STATUSES } from "../utils.jsx";
 
 // ── Multi-select dropdown ──────────────────────────────────────────────────
 function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All" }) {
@@ -172,52 +172,137 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       const calledForKey = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
       const calledForVal = calledForKey ? String(log[calledForKey] || "").trim() : "";
 
-      if (log.attenderStates && Object.keys(log.attenderStates).length > 0) {
-        Object.entries(log.attenderStates).forEach(([attId, state]) => {
-          list.push({
-            id: `${log.id}_${attId}`,
-            contactId: log.id,
-            Name: contactName,
-            Phone: contactPhone,
-            programId: log.programId,
-            programName: log.programName || "Unknown Program",
-            tags: log.tags || [],
-            attenderId: attId,
-            attenderName: state.attenderName || "Unknown",
-            status: state.status || "Pending",
-            remark: state.remark || "",
-            callType: state.callType || "outgoing",
-            history: state.history || [],
-            callbackDate: state.callbackDate || null,
-            createdAt: log.createdAt,
-            updatedAt: state.updatedAt ? new Date(state.updatedAt) : (log.updatedAt?.toDate ? log.updatedAt.toDate() : new Date(log.updatedAt || log.createdAt)),
-            lastCalledAt: state.lastCalledAt || null,
-            source: state.Source || state.source || sourceVal,
-            calledFor: state["Called For"] || state.calledFor || calledForVal
-          });
-        });
-      } else {
-        list.push({
-          id: log.id,
+      const getAttemptDate = (val) => {
+        if (!val) return null;
+        if (typeof val.toDate === "function") return val.toDate();
+        return new Date(val);
+      };
+
+      const processAttempt = (att, attId, state, isHistory, index) => {
+        const status = att.status || "Pending";
+        const isConnected = CONNECTED_STATUSES.includes(status);
+        const isNotConnected = NOT_CONNECTED_STATUSES.includes(status);
+        if (!isConnected && !isNotConnected) {
+          return null;
+        }
+
+        const dateVal = att.timestamp || att.updatedAt || state.lastCalledAt || state.updatedAt;
+        const attemptDate = getAttemptDate(dateVal) || getAttemptDate(log.updatedAt || log.createdAt);
+
+        return {
+          ...log,
+          id: `${log.id}_${attId}_${isHistory ? `h_${index}` : "latest"}`,
           contactId: log.id,
           Name: contactName,
           Phone: contactPhone,
           programId: log.programId,
           programName: log.programName || "Unknown Program",
           tags: log.tags || [],
-          attenderId: log.attenderId || "legacy",
-          attenderName: log.attenderName || "Legacy Attender",
-          status: log.status || "Pending",
-          remark: log.remark || "",
-          callType: log.callType || "outgoing",
-          history: log.history || [],
-          callbackDate: log.callbackDate || null,
+          attenderId: attId,
+          attenderName: state.attenderName || att.attenderName || "Unknown",
+          status: status,
+          remark: att.remark || "",
+          callType: att.callType || state.callType || "outgoing",
+          history: state.history || [],
+          callbackDate: state.callbackDate || null,
           createdAt: log.createdAt,
-          updatedAt: log.updatedAt?.toDate ? log.updatedAt.toDate() : new Date(log.updatedAt || log.createdAt),
-          lastCalledAt: log.lastCalledAt || null,
-          source: log.Source || log.source || sourceVal,
-          calledFor: log["Called For"] || log.calledFor || calledForVal
+          updatedAt: attemptDate,
+          lastCalledAt: state.lastCalledAt || null,
+          source: att.source || state.Source || state.source || sourceVal,
+          calledFor: att.calledFor || state["Called For"] || state.calledFor || calledForVal
+        };
+      };
+
+      if (log.attenderStates && Object.keys(log.attenderStates).length > 0) {
+        Object.entries(log.attenderStates).forEach(([attId, state]) => {
+          if (state.history && Array.isArray(state.history) && state.history.length > 0) {
+            state.history.forEach((h, index) => {
+              const att = processAttempt(
+                {
+                  timestamp: h.timestamp,
+                  status: h.status,
+                  remark: h.remark,
+                  callType: h.callType,
+                  source: h.source,
+                  calledFor: h.calledFor,
+                  attenderName: h.attenderName
+                },
+                attId,
+                state,
+                true,
+                index
+              );
+              if (att) list.push(att);
+            });
+          } else if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
+            const att = processAttempt(
+              {
+                timestamp: state.lastCalledAt || state.updatedAt,
+                status: state.status,
+                remark: state.remark,
+                callType: state.callType,
+                source: state.Source || state.source,
+                calledFor: state["Called For"] || state.calledFor
+              },
+              attId,
+              state,
+              false
+            );
+            if (att) list.push(att);
+          }
         });
+      } else {
+        const attId = log.attenderId || "legacy";
+        const dummyState = {
+          attenderName: log.attenderName || "Legacy Attender",
+          status: log.status,
+          remark: log.remark,
+          callType: log.callType,
+          lastCalledAt: log.lastCalledAt,
+          updatedAt: log.updatedAt,
+          history: log.history,
+          callbackDate: log.callbackDate,
+          Source: log.Source || log.source,
+          calledFor: log["Called For"] || log.calledFor
+        };
+
+        if (log.history && Array.isArray(log.history) && log.history.length > 0) {
+          log.history.forEach((h, index) => {
+            const att = processAttempt(
+              {
+                timestamp: h.timestamp,
+                status: h.status,
+                remark: h.remark,
+                callType: h.callType,
+                source: h.source,
+                calledFor: h.calledFor,
+                attenderName: h.attenderName
+              },
+              attId,
+              dummyState,
+              true,
+              index
+            );
+            if (att) list.push(att);
+          });
+        } else {
+          if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
+            const att = processAttempt(
+              {
+                timestamp: log.lastCalledAt || log.updatedAt || log.createdAt,
+                status: log.status,
+                remark: log.remark,
+                callType: log.callType,
+                source: log.Source || log.source,
+                calledFor: log["Called For"] || log.calledFor
+              },
+              attId,
+              dummyState,
+              false
+            );
+            if (att) list.push(att);
+          }
+        }
       }
     });
     return list;
@@ -466,15 +551,49 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       <div className="grid md:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
           <h3 className="text-sm font-bold text-gray-700 mb-4">Outcome Distribution</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <PieChart>
-              <Pie data={outcomeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85}
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
-                {outcomeData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 h-[240px]">
+            <div className="w-full sm:w-1/2 h-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={outcomeData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={80}
+                    innerRadius={50}
+                    paddingAngle={3}
+                  >
+                    {outcomeData.map((_, i) => (
+                      <Cell key={i} fill={COLORS[i % COLORS.length]} className="focus:outline-none" />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ background: "#1e293b", border: "none", borderRadius: "12px", color: "#fff" }}
+                    itemStyle={{ color: "#fff" }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="w-full sm:w-1/2 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] font-semibold text-gray-600 self-center">
+              {(() => {
+                const total = outcomeData.reduce((sum, item) => sum + item.value, 0);
+                return outcomeData.map((item, i) => (
+                  <div key={item.name} className="flex items-center justify-between py-0.5 border-b border-gray-100 last:border-0 min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                      <span className="truncate text-gray-700" title={item.name}>{item.name}</span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0 ml-1">
+                      <span className="text-gray-900 font-bold">{item.value}</span>
+                      <span className="text-gray-400 font-medium text-[9px]">({total ? ((item.value / total) * 100).toFixed(0) : 0}%)</span>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
         </div>
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
           <h3 className="text-sm font-bold text-gray-700 mb-4">Calls by Attender</h3>
