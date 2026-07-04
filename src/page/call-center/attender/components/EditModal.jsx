@@ -1188,11 +1188,13 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       // Maintain a timeline of interactions.
       // Only push a new history entry if:
       //   a) the status actually changed from what was previously saved, OR
-      //   b) the attender typed a new remark this session (non-empty)
+      //   b) the attender typed a new remark this session (non-empty), OR
+      //   c) the call type changed (e.g., from outgoing to incoming)
       const statusChanged = row.status !== updates.status;
       const hasNewRemark = String(updates.remark || "").trim().length > 0;
+      const callTypeChanged = String(row.callType || "outgoing").toLowerCase() !== String(targetEdited.callType || "outgoing").toLowerCase();
       
-      if (statusChanged || hasNewRemark) {
+      if (statusChanged || hasNewRemark || callTypeChanged) {
         const safeName = attenderName || "Unknown";
         const newHist = {
           status: updates.status || "",
@@ -1200,7 +1202,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           attenderName: safeName,
           timestamp: new Date().toISOString(),
           calledFor: targetEdited["Called For"] || targetEdited.calledFor || "",
-          source: targetEdited.Source || targetEdited.source || targetEdited.Sourse || targetEdited.sourse || ""
+          source: targetEdited.Source || targetEdited.source || targetEdited.Sourse || targetEdited.sourse || "",
+          callType: targetEdited.callType || "outgoing"
         };
         updates.history = [...baseHistory, newHist];
       } else {

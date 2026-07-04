@@ -1525,7 +1525,8 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
     status: data.status || "Call Log Added",
     remark: data.remark || "",
     calledFor: data["Called For"] || data.calledFor || "",
-    source: data.Source || data.source || data.Sourse || data.sourse || ""
+    source: data.Source || data.source || data.Sourse || data.sourse || "",
+    callType: data.callType || "incoming"
   };
 
   // Merge history for this attender
@@ -1802,7 +1803,8 @@ export const claimContact = async (contactId, attenderId, attenderName) => {
       attenderId,
       attenderName,
       status: "Claimed Lead",
-      remark: `Lead claimed by ${attenderName} (previously assigned to: ${data.assignedName || "Unassigned"})`
+      remark: `Lead claimed by ${attenderName} (previously assigned to: ${data.assignedName || "Unassigned"})`,
+      callType: "outgoing"
     };
 
     // Calculate new assignedTo array
@@ -1887,7 +1889,8 @@ export const claimCRMContact = async (crmContact, attenderId, attenderName) => {
     attenderId,
     attenderName,
     status: "Claimed Lead",
-    remark: `Lead claimed from CRM by ${attenderName}`
+    remark: `Lead claimed from CRM by ${attenderName}`,
+    callType: "outgoing"
   };
 
   const newStates = {
