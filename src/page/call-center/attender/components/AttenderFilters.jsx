@@ -821,8 +821,8 @@ export function AttenderFilters({
                               }}
                               className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all border active:scale-[0.97] hover:scale-[1.01] ${
                                 filterDateRange === range.value
-                                  ? "bg-white border-teal-500 text-teal-700 shadow-sm"
-                                  : "bg-gray-100/60 border-transparent text-gray-600 hover:bg-gray-100"
+                                  ? "bg-teal-600 border-teal-600 text-white shadow-md shadow-teal-600/10 scale-[1.03]"
+                                  : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
                               }`}
                             >
                               {range.label}

@@ -108,9 +108,31 @@ const SearchableDropdown = ({
     setSearch("");
   };
 
+  const hasValue = useMemo(() => {
+    if (!selected) return false;
+    if (isMulti) {
+      return selected.split(",").map(x => x.trim()).filter(Boolean).length > 0;
+    }
+    return true;
+  }, [selected, isMulti]);
+
   const ringClass = colorClass === "amber" ? "focus:ring-amber-500/10 focus:border-amber-500" :
                     colorClass === "blue" ? "focus:ring-blue-500/10 focus:border-blue-500" :
                     "focus:ring-indigo-500/10 focus:border-indigo-500";
+
+  const buttonStyle = disabled
+    ? "bg-gray-100/60 border-gray-150 text-gray-400 cursor-not-allowed"
+    : hasValue
+      ? colorClass === "amber" ? "bg-amber-50/40 border-amber-300 text-amber-900 font-bold" :
+        colorClass === "blue" ? "bg-blue-50/40 border-blue-300 text-blue-900 font-bold" :
+        "bg-indigo-50/40 border-indigo-300 text-indigo-900 font-bold"
+      : "bg-gray-50 border-gray-150 text-gray-400 hover:bg-gray-100/50 font-medium";
+
+  const iconColor = hasValue
+    ? colorClass === "amber" ? "text-amber-500" :
+      colorClass === "blue" ? "text-blue-500" :
+      "text-indigo-500"
+    : "text-gray-400";
 
   return (
     <div className="relative w-full" ref={dropdownRef}>
@@ -118,14 +140,10 @@ const SearchableDropdown = ({
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen(!isOpen)}
-        className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold text-left focus:outline-none focus:ring-4 ${ringClass} flex justify-between items-center transition ${
-          disabled
-            ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed"
-            : "bg-gray-50 border-gray-100 text-gray-800 hover:bg-gray-100/50"
-        }`}
+        className={`w-full px-4 py-2 border rounded-xl text-sm text-left focus:outline-none focus:ring-4 ${ringClass} flex justify-between items-center transition ${buttonStyle}`}
       >
         <span className="truncate">{getButtonText()}</span>
-        <ChevronDown size={14} className="text-gray-400 shrink-0 ml-2" />
+        <ChevronDown size={14} className={`${iconColor} shrink-0 ml-2`} />
       </button>
 
       {isOpen && !disabled && (
@@ -153,18 +171,24 @@ const SearchableDropdown = ({
               <>
                 {filteredOptions.map(opt => {
                   const active = isSelected(opt);
+                  const itemStyle = active
+                    ? colorClass === "amber" ? "bg-amber-50 text-amber-800 font-bold" :
+                      colorClass === "blue" ? "bg-blue-50 text-blue-800 font-bold" :
+                      "bg-indigo-50 text-indigo-800 font-bold"
+                    : "text-gray-700 hover:bg-gray-50/80";
+                  const activeCheckColor = colorClass === "amber" ? "text-amber-600" :
+                                           colorClass === "blue" ? "text-blue-600" :
+                                           "text-indigo-600";
                   return (
                     <button
                       key={opt}
                       type="button"
                       onClick={() => handleSelect(opt)}
-                      className={`w-full px-4 py-2.5 text-left text-xs font-semibold hover:bg-gray-50 flex items-center justify-between transition ${
-                        active ? "bg-indigo-50/50 text-indigo-700 font-bold" : "text-gray-700"
-                      }`}
+                      className={`w-full px-4 py-2.5 text-left text-xs font-semibold flex items-center justify-between transition ${itemStyle}`}
                     >
                       <span className="truncate">{opt}</span>
                       {active && (
-                        <Check size={14} className="text-indigo-600 shrink-0 ml-2" />
+                        <Check size={14} className={`${activeCheckColor} shrink-0 ml-2`} />
                       )}
                     </button>
                   );

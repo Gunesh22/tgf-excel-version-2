@@ -88,15 +88,21 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
       ? (options.find(o => o.value === selected[0])?.label || "1 selected")
       : `${selected.length} selected`;
 
+  const hasFilterApplied = selected.length > 0 && selected.length < options.length;
+
   return (
     <div className="relative w-full" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen(p => !p)}
-        className="flex items-center justify-between gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full whitespace-nowrap overflow-hidden"
+        className={`flex items-center justify-between gap-2 px-4 py-2.5 border rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full whitespace-nowrap overflow-hidden transition-all ${
+          hasFilterApplied
+            ? "bg-indigo-50/50 border-indigo-300 text-indigo-900 font-extrabold"
+            : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50/50"
+        }`}
       >
-        <span className="truncate flex-1 text-left text-gray-700">{label}</span>
-        <ChevronDown size={14} className="shrink-0 text-gray-400" />
+        <span className="truncate flex-1 text-left">{label}</span>
+        <ChevronDown size={14} className={`shrink-0 transition-colors ${hasFilterApplied ? "text-indigo-600" : "text-gray-400"}`} />
       </button>
       {open && (
         <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl w-full min-w-[200px] overflow-hidden right-0">
@@ -251,6 +257,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         return;
       }
 
+      const feedbackKey = Object.keys(log).find(k => ["prog. feedback", "feedback", "user feedback", "program feedback"].includes(k.toLowerCase()));
+      const feedbackVal = feedbackKey ? String(log[feedbackKey] || "").trim() : "";
+
       const nameKey = Object.keys(log).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase()));
       const contactName = nameKey ? log[nameKey] : "Unknown";
       const phoneKey = Object.keys(log).find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"].includes(k.toLowerCase()));
@@ -277,7 +286,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           programName,
           contactId: log.id,
           source: att.source || sourceVal,
-          calledFor: att.calledFor || calledForVal
+          calledFor: att.calledFor || calledForVal,
+          feedback: feedbackVal
         };
       };
 
@@ -1017,6 +1027,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         (c.attenderName || "").toLowerCase().includes(term) ||
         (c.source || "").toLowerCase().includes(term) ||
         (c.calledFor || "").toLowerCase().includes(term) ||
+        (c.feedback || "").toLowerCase().includes(term) ||
         (c.remark || "").toLowerCase().includes(term)
       );
     });
@@ -1161,21 +1172,49 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                 className="px-4 py-2 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
-            <button
-              onClick={() => {
-                const d = new Date();
-                const yr = d.getFullYear();
-                const mn = d.getMonth();
-                const firstDayStr = `${yr}-${String(mn + 1).padStart(2, "0")}-01`;
-                const lastDay = new Date(yr, mn + 1, 0).getDate();
-                const lastDayStr = `${yr}-${String(mn + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-                setStartDate(firstDayStr);
-                setEndDate(lastDayStr);
-              }}
-              className="px-4 py-2 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-2xl text-xs font-black hover:bg-indigo-100 transition"
-            >
-              📅 This Month
-            </button>
+            {(() => {
+              const todayObj = new Date();
+              const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, "0")}-${String(todayObj.getDate()).padStart(2, "0")}`;
+              const isTodaySelected = startDate === todayStr && endDate === todayStr;
+
+              const yr = todayObj.getFullYear();
+              const mn = todayObj.getMonth();
+              const firstDayStr = `${yr}-${String(mn + 1).padStart(2, "0")}-01`;
+              const lastDay = new Date(yr, mn + 1, 0).getDate();
+              const lastDayStr = `${yr}-${String(mn + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+              const isThisMonthSelected = startDate === firstDayStr && endDate === lastDayStr;
+
+              return (
+                <>
+                  <button
+                    onClick={() => {
+                      setStartDate(todayStr);
+                      setEndDate(todayStr);
+                    }}
+                    className={`px-4 py-2 rounded-2xl text-xs font-black border transition-all duration-200 ${
+                      isTodaySelected
+                        ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-600/20 scale-[1.03]"
+                        : "bg-emerald-50 text-emerald-600 border-emerald-100 hover:bg-emerald-100/80 hover:scale-[1.01]"
+                    }`}
+                  >
+                    📅 Today
+                  </button>
+                  <button
+                    onClick={() => {
+                      setStartDate(firstDayStr);
+                      setEndDate(lastDayStr);
+                    }}
+                    className={`px-4 py-2 rounded-2xl text-xs font-black border transition-all duration-200 ${
+                      isThisMonthSelected
+                        ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-600/20 scale-[1.03]"
+                        : "bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-100/80 hover:scale-[1.01]"
+                    }`}
+                  >
+                    📅 This Month
+                  </button>
+                </>
+              );
+            })()}
           </div>
 
           <div className="flex items-center gap-3">
@@ -1424,7 +1463,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                 <table className="w-full text-sm bg-white">
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
-                      {["Name & Contact", "Attender", "Tag / Program", "Source / Called For", "Date & Time", "Remarks"].map(h => (
+                      {["Name & Contact", "Attender", "Tag / Program", "Source / Called For", "Date & Time", "User Feedback", "Remarks"].map(h => (
                         <th key={h} className="px-6 py-3.5 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider">{h}</th>
                       ))}
                     </tr>
@@ -1472,6 +1511,12 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                           <td className="px-6 py-4 text-xs text-gray-500 whitespace-nowrap">
                             {dateStr}
                           </td>
+                          {/* User Feedback */}
+                          <td className="px-6 py-4">
+                            <p className="text-xs text-gray-600 max-w-[200px] truncate" title={c.feedback}>
+                              {c.feedback || <span className="text-gray-300 italic">No feedback</span>}
+                            </p>
+                          </td>
                           {/* Remarks */}
                           <td className="px-6 py-4">
                             <p className="text-xs text-gray-600 max-w-[200px] truncate" title={c.remark}>
@@ -1483,7 +1528,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                     })}
                     {paginatedConversions.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="py-12 text-center text-gray-400 font-medium bg-white">
+                        <td colSpan={7} className="py-12 text-center text-gray-400 font-medium bg-white">
                           No conversions match the current filters and search query in this period.
                         </td>
                       </tr>
