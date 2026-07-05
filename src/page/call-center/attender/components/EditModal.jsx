@@ -1117,6 +1117,35 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       ? { ...edited, ...overrideFields }
       : edited;
 
+    // Fix for Flaw 3: Clicking "Save" with No Changes (Ghost Calls)
+    const isNew = !!row._isNew;
+    if (!isNew) {
+      const cleanForCompare = (val) => {
+        if (val === undefined || val === null) return "";
+        if (val instanceof Date) return val.toISOString().split("T")[0];
+        if (typeof val === "object" && val.seconds !== undefined) {
+          return new Date(val.seconds * 1000).toISOString().split("T")[0];
+        }
+        return String(val).trim();
+      };
+      
+      const hasChanges = Object.keys(targetEdited).some(key => {
+        if (["id", "_callbackDue", "_isNew", "attenderStates", "assignedTo", "assignedName", "assignedAt", "isAssigned", "lastEditedBy", "lastEditedAt", "normalizedPhone", "normalizedMobile", "history", "lastCalledAt", "firstCalledAt"].includes(key)) {
+          return false;
+        }
+        const val1 = cleanForCompare(row[key]);
+        const val2 = cleanForCompare(targetEdited[key]);
+        return val1 !== val2;
+      });
+
+      if (!hasChanges) {
+        console.log("No changes detected. Closing modal without saving.");
+        toast.success("No changes detected.");
+        if (onClose) onClose();
+        return;
+      }
+    }
+
     // Compulsory Status Validation
     if (!targetEdited.status || String(targetEdited.status).trim() === "") {
       toast.error("Please select a call status before saving.", { duration: 4000, position: 'top-center' });
@@ -1241,22 +1270,59 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       //   a) the status actually changed from what was previously saved, OR
       //   b) the attender typed a new remark this session (non-empty), OR
       //   c) the call type changed (e.g., from outgoing to incoming)
+      // (Fix for Flaw 1: Metadata edits that do not alter status, remark, or callType will not add a history entry)
       const statusChanged = row.status !== updates.status;
       const hasNewRemark = String(updates.remark || "").trim().length > 0;
       const callTypeChanged = String(row.callType || "outgoing").toLowerCase() !== String(targetEdited.callType || "outgoing").toLowerCase();
       
       if (statusChanged || hasNewRemark || callTypeChanged) {
         const safeName = attenderName || "Unknown";
+        const nowStr = new Date().toISOString();
         const newHist = {
           status: updates.status || "",
           remark: updates.remark || "",
           attenderName: safeName,
-          timestamp: new Date().toISOString(),
+          timestamp: nowStr,
           calledFor: targetEdited["Called For"] || targetEdited.calledFor || "",
           source: targetEdited.Source || targetEdited.source || targetEdited.Sourse || targetEdited.sourse || "",
           callType: targetEdited.callType || "outgoing"
         };
-        updates.history = [...baseHistory, newHist];
+
+        // Fix for Flaw 2: 1-minute session collapsing (merge edits by same attender if within 1 min)
+        let collapsed = false;
+        if (baseHistory.length > 0) {
+          const lastEntryIndex = baseHistory.length - 1;
+          const lastEntry = baseHistory[lastEntryIndex];
+          
+          const isSameAttender = String(lastEntry.attenderName || "").toLowerCase().trim() === safeName.toLowerCase().trim();
+          
+          if (isSameAttender && lastEntry.timestamp) {
+            const lastTime = new Date(lastEntry.timestamp).getTime();
+            const currTime = new Date(nowStr).getTime();
+            const diffMinutes = (currTime - lastTime) / (1000 * 60);
+            
+            if (diffMinutes < 1) {
+              const mergedEntry = {
+                ...lastEntry,
+                status: newHist.status,
+                remark: newHist.remark || lastEntry.remark,
+                calledFor: newHist.calledFor,
+                source: newHist.source,
+                callType: newHist.callType,
+                timestamp: nowStr
+              };
+              
+              const updatedHistory = [...baseHistory];
+              updatedHistory[lastEntryIndex] = mergedEntry;
+              updates.history = updatedHistory;
+              collapsed = true;
+            }
+          }
+        }
+
+        if (!collapsed) {
+          updates.history = [...baseHistory, newHist];
+        }
       } else {
         // Persist the corrected/updated baseHistory even if no new call attempt log was added
         updates.history = baseHistory;
