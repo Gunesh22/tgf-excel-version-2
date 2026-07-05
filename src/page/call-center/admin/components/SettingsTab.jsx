@@ -28,37 +28,26 @@ export default function SettingsTab() {
     }
   };
 
-  const handleAdd = async (type, val) => {
-    const key = type === "status" ? "statusOptions" : type === "source" ? "sourceOptions" : "calledForOptions";
-    const current = options[key] || [];
-    if (current.includes(val)) return;
-
-    const updated = [...current, val];
-    try {
-      await updateCallCenterOptions({ [key]: updated });
-      setOptions(prev => ({ ...prev, [key]: updated }));
-      toast.success(`Added option: ${val}`);
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to save changes: " + err.message);
-    }
-  };
-
-  const handleDelete = async (type, val) => {
+  const handleOptionChange = async (type, action, val) => {
     const key = type === "status" ? "statusOptions" : type === "source" ? "sourceOptions" : "calledForOptions";
     const current = options[key] || [];
     
-    // Prevent deleting core required status options to avoid database issues
-    if (type === "status" && ["Reg.Done", "NA"].includes(val)) {
-      toast.error(`Cannot delete required status: ${val}`);
-      return;
+    let updated;
+    if (action === "delete") {
+      if (type === "status" && ["Reg.Done", "NA"].includes(val)) {
+        toast.error(`Cannot delete required status: ${val}`);
+        return;
+      }
+      updated = current.filter(x => x !== val);
+    } else {
+      if (current.includes(val)) return;
+      updated = [...current, val];
     }
 
-    const updated = current.filter(x => x !== val);
     try {
       await updateCallCenterOptions({ [key]: updated });
       setOptions(prev => ({ ...prev, [key]: updated }));
-      toast.success(`Deleted option: ${val}`);
+      toast.success(`${action === "delete" ? "Deleted" : "Added"} option: ${val}`);
     } catch (err) {
       console.error(err);
       toast.error("Failed to save changes: " + err.message);
@@ -123,22 +112,22 @@ export default function SettingsTab() {
           title="Status Options"
           icon={ShieldCheck}
           options={options?.statusOptions || []}
-          onAdd={(val) => handleAdd("status", val)}
-          onDelete={(val) => handleDelete("status", val)}
+          onAdd={(val) => handleOptionChange("status", "add", val)}
+          onDelete={(val) => handleOptionChange("status", "delete", val)}
         />
         <OptionsManagerCard
           title="Source Options"
           icon={Tag}
           options={options?.sourceOptions || []}
-          onAdd={(val) => handleAdd("source", val)}
-          onDelete={(val) => handleDelete("source", val)}
+          onAdd={(val) => handleOptionChange("source", "add", val)}
+          onDelete={(val) => handleOptionChange("source", "delete", val)}
         />
         <OptionsManagerCard
           title="Called For Options"
           icon={HelpCircle}
           options={options?.calledForOptions || []}
-          onAdd={(val) => handleAdd("calledFor", val)}
-          onDelete={(val) => handleDelete("calledFor", val)}
+          onAdd={(val) => handleOptionChange("calledFor", "add", val)}
+          onDelete={(val) => handleOptionChange("calledFor", "delete", val)}
         />
       </div>
 
