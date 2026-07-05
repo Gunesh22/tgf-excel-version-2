@@ -1107,6 +1107,19 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       ? { ...edited, ...overrideFields }
       : edited;
 
+    // Compulsory Status Validation
+    if (!targetEdited.status || String(targetEdited.status).trim() === "") {
+      toast.error("Please select a call status before saving.", { duration: 4000, position: 'top-center' });
+      return;
+    }
+
+    // Compulsory Called For Validation
+    const calledForVal = String(targetEdited[calledForField] || "").trim();
+    if (!calledForVal) {
+      toast.error("Please select a 'Called For' program/option before saving.", { duration: 4000, position: 'top-center' });
+      return;
+    }
+
     // Objection Tracker Validation
     if ((targetEdited.status === "Not interested" || targetEdited.status === "Not possible") && !targetEdited.objectionReason) {
       toast.error(`Please select a reason for "${targetEdited.status}" before saving.`, { duration: 4000, position: 'top-center' });
@@ -1847,7 +1860,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             {/* Searchable Dropdown: Called For */}
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Phone size={13} className="text-blue-500" /> Called For
+                <Phone size={13} className="text-blue-500" /> Called For <span className="text-red-500 font-bold ml-0.5">*</span>
               </label>
               <SearchableDropdown
                 options={CALLED_FOR_OPTIONS}
@@ -1918,7 +1931,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           <div className="space-y-6">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <CheckCircle2 size={13} className="text-indigo-500" /> General Result Status
+                <CheckCircle2 size={13} className="text-indigo-500" /> General Result Status <span className="text-red-500 font-bold ml-0.5">*</span>
               </label>
               <SearchableDropdown
                 options={STATUS_OPTIONS}
