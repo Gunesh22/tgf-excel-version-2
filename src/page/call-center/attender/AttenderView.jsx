@@ -666,7 +666,21 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       if (filterStatus === "Hot Leads" && !log.isHotLead) return false;
       if (filterStatus === "Callback" && !log.callbackDate) return false;
       if (filterStatus === "Follow up" && !(log.callbackDate || log.status === "reminder" || log.status === "Next time")) return false;
-      if (filterStatus !== "All" && filterStatus !== "Hot Leads" && filterStatus !== "Callback" && filterStatus !== "Follow up" && log.status !== filterStatus) return false;
+      if (filterStatus === "Today Activity") {
+        if (!log.lastCalledAt) return false;
+        const logDate = new Date(log.lastCalledAt);
+        const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+        const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
+        if (logDate < startOfToday || logDate > endOfToday) return false;
+      }
+      if (
+        filterStatus !== "All" && 
+        filterStatus !== "Hot Leads" && 
+        filterStatus !== "Callback" && 
+        filterStatus !== "Follow up" && 
+        filterStatus !== "Today Activity" && 
+        log.status !== filterStatus
+      ) return false;
 
       // 3. Source Filter
       if (filterSource.length > 0) {
