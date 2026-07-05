@@ -5,6 +5,7 @@ import { getAttenders, subscribeToCallCenterOptions } from "../../lib/db";
 import { updateDynamicOptions } from "./attender/utils";
 import AttenderView from "./attender/AttenderView";
 import AdminPanel from "./admin/AdminPanel";
+import CelebrationFeed from "./components/CelebrationFeed";
 
 export default function CallCenterApp() {
   const [mode, setMode] = useState(null); // null | "attender" | "admin"
@@ -58,6 +59,7 @@ export default function CallCenterApp() {
     return (
       <>
         <Toaster position="top-right" />
+        <CelebrationFeed />
         <AttenderView
           attenderId={selectedAttenderId}
           attenderName={selectedAttenderName}
@@ -72,6 +74,7 @@ export default function CallCenterApp() {
     return (
       <>
         <Toaster position="top-right" />
+        <CelebrationFeed />
         <AdminPanel onExit={() => setMode(null)} onAttendersChange={load} />
       </>
     );
@@ -80,6 +83,7 @@ export default function CallCenterApp() {
   // Landing / role selector
   return (
     <>
+      <CelebrationFeed />
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative overflow-hidden">
         {/* Background glows */}
       <div className="absolute top-[-200px] left-[-200px] w-[600px] h-[600px] bg-blue-600/10 rounded-full blur-[140px]" />

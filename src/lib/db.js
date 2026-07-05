@@ -2972,3 +2972,18 @@ export const subscribeToInteractions = (programId, callback) => {
   }, err => console.error("subscribeToInteractions error:", err));
 };
 
+export const subscribeToRecentRegistrations = (callback) => {
+  const q = query(
+    collection(db, "registrations"),
+    orderBy("registeredAt", "desc"),
+    limit(5)
+  );
+  return onSnapshot(q, (snap) => {
+    const list = snap.docs.map(d => ({
+      id: d.id,
+      ...d.data()
+    }));
+    callback(list);
+  }, err => console.error("subscribeToRecentRegistrations error:", err));
+};
+

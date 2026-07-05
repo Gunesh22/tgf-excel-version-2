@@ -4,7 +4,7 @@ import {
 } from "lucide-react";
 import { isKhojiField } from "../../../lib/khojiHelper";
 
-function parseTimestamp(t) {
+export function parseTimestamp(t) {
   if (!t) return null;
   if (t instanceof Date) return t;
   if (typeof t.toDate === "function") return t.toDate();
