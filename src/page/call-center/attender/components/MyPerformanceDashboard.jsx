@@ -282,7 +282,7 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
   const filteredAttempts = useMemo(() => filterAttemptsByDate(allAttempts, dateRange, customStart, customEnd), [allAttempts, dateRange, customStart, customEnd]);
 
   const stats = useMemo(() => {
-    let connected = 0, notConnected = 0, registrations = 0, interested = 0, infoGiven = 0;
+    let connected = 0, notConnected = 0, registrations = 0, interested = 0, infoGiven = 0, nextTime = 0, notInterested = 0;
     const statusCounts = {};
 
     filteredAttempts.forEach(att => {
@@ -295,9 +295,12 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
           notConnected++;
         } else {
           connected++;
+          const sLower = s.toLowerCase().trim();
           if (s === "Reg.Done") registrations++;
-          else if (s === "Interested") interested++;
-          else if (s === "Info given") infoGiven++;
+          else if (sLower === "interested" || sLower === "intersted") interested++;
+          else if (sLower === "info given") infoGiven++;
+          else if (sLower === "next time") nextTime++;
+          else if (sLower === "not interested" || sLower === "not intrested") notInterested++;
         }
       }
     });
@@ -311,7 +314,9 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
     const uncalled = uncalledLeads.length;
 
     const connectionRate = called > 0 ? Math.round((connected / called) * 100) : 0;
-    const conversionRate = total > 0 ? Math.round((registrations / total) * 100) : 0;
+    
+    const conversionDenominator = registrations + infoGiven + interested + nextTime + notInterested;
+    const conversionRate = conversionDenominator > 0 ? Math.round((registrations / conversionDenominator) * 100) : 0;
 
     const statusChartData = Object.entries(statusCounts)
       .map(([name, value]) => ({ name, value }))

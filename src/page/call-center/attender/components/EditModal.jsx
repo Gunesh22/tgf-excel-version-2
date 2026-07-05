@@ -687,42 +687,46 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           // No duplicate found in Firebase -> Reset duplicate state and query CRM!
           setGlobalDup(null);
 
-          const searchVal = phoneVal || mobileVal;
-          const digitsCount = String(searchVal || "").replace(/\D/g, "").length;
-          if (digitsCount >= 10) {
-            setIsSearchingCRM(true);
-            console.log(`[CRM Fetch] Initiated search CRM by phone for value: "${searchVal}" (digits: ${digitsCount})`);
-            try {
-              const crmContact = await searchCRMByPhone(searchVal);
-              if (crmContact) {
-                console.log(`[CRM Fetch] Found contact in CRM for phone "${searchVal}":`, crmContact);
-                setEdited(prev => {
-                  const updated = { ...prev };
-                  if (!String(updated.Name || "").trim() && crmContact.Name) {
-                    updated.Name = crmContact.Name;
-                  }
-                  if (!String(updated.City || "").trim() && crmContact.City) {
-                    updated.City = crmContact.City;
-                  }
-                  if (!String(updated.Tags || "").trim() && crmContact.Tags) {
-                    updated.Tags = crmContact.Tags;
-                  }
-                  if (!String(updated.GHL_ID || "").trim() && crmContact.GHL_ID) {
-                    updated.GHL_ID = crmContact.GHL_ID;
-                  }
-                  return updated;
-                });
-                toast.success("Lead found in CRM! Details auto-filled.");
-              } else {
-                console.log(`[CRM Fetch] No contact found in CRM for phone "${searchVal}"`);
+          // Only query CRM if this is a brand new contact (row._isNew) and not yet fetched (no GHL_ID/ghl_id)
+          const alreadyFetched = !!(edited.GHL_ID || row.GHL_ID || edited.ghl_id || row.ghl_id);
+          if (row._isNew && !alreadyFetched) {
+            const searchVal = phoneVal || mobileVal;
+            const digitsCount = String(searchVal || "").replace(/\D/g, "").length;
+            if (digitsCount >= 10) {
+              setIsSearchingCRM(true);
+              console.log(`[CRM Fetch] Initiated search CRM by phone for value: "${searchVal}" (digits: ${digitsCount})`);
+              try {
+                const crmContact = await searchCRMByPhone(searchVal);
+                if (crmContact) {
+                  console.log(`[CRM Fetch] Found contact in CRM for phone "${searchVal}":`, crmContact);
+                  setEdited(prev => {
+                    const updated = { ...prev };
+                    if (!String(updated.Name || "").trim() && crmContact.Name) {
+                      updated.Name = crmContact.Name;
+                    }
+                    if (!String(updated.City || "").trim() && crmContact.City) {
+                      updated.City = crmContact.City;
+                    }
+                    if (!String(updated.Tags || "").trim() && crmContact.Tags) {
+                      updated.Tags = crmContact.Tags;
+                    }
+                    if (!String(updated.GHL_ID || "").trim() && crmContact.GHL_ID) {
+                      updated.GHL_ID = crmContact.GHL_ID;
+                    }
+                    return updated;
+                  });
+                  toast.success("Lead found in CRM! Details auto-filled.");
+                } else {
+                  console.log(`[CRM Fetch] No contact found in CRM for phone "${searchVal}"`);
+                }
+              } catch (crmErr) {
+                console.error(`[CRM Fetch] Error searching CRM for phone "${searchVal}":`, crmErr);
+              } finally {
+                setIsSearchingCRM(false);
               }
-            } catch (crmErr) {
-              console.error(`[CRM Fetch] Error searching CRM for phone "${searchVal}":`, crmErr);
-            } finally {
-              setIsSearchingCRM(false);
+            } else {
+              console.log(`[CRM Fetch] Skipping CRM search because search value "${searchVal}" has only ${digitsCount} digits (minimum 10 required).`);
             }
-          } else {
-            console.log(`[CRM Fetch] Skipping CRM search because search value "${searchVal}" has only ${digitsCount} digits (minimum 10 required).`);
           }
         }
       } catch (err) {

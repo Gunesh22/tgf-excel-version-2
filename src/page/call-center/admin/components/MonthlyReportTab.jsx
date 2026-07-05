@@ -149,6 +149,23 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
   );
 }
 
+const getConversionDenominator = (status) => {
+  if (!status) return 0;
+  const s = status.toLowerCase().trim();
+  if (
+    status === "Reg.Done" ||
+    s === "info given" ||
+    s === "interested" ||
+    s === "intersted" ||
+    s === "next time" ||
+    s === "not interested" ||
+    s === "not intrested"
+  ) {
+    return 1;
+  }
+  return 0;
+};
+
 export default function MonthlyReportTab({ programs, attenders = [], settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] }, callLogs = [] }) {
   const [selectedProgramIds, setSelectedProgramIds] = useState([]); // empty = ALL
   const [selectedAttenderIds, setSelectedAttenderIds] = useState([]); // empty = ALL
@@ -695,7 +712,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     const map = {};
     allAttempts.forEach(c => {
       if (!map[c.attenderId]) {
-        map[c.attenderId] = { name: c.attenderName, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0 };
+        map[c.attenderId] = { name: c.attenderName, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, denominator: 0 };
       }
       const item = map[c.attenderId];
       item.total++;
@@ -717,6 +734,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           item.outgoingConversions++;
         }
       }
+      
+      item.denominator += getConversionDenominator(c.status);
     });
 
     return Object.values(map).map(a => ({
@@ -729,7 +748,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Reg.Done (Conversions)": a.conversions,
       "Incoming Conversions": a.incomingConversions,
       "Outgoing Conversions": a.outgoingConversions,
-      "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
+      "denominator": a.denominator,
+      "Conversion Rate (%)": a.denominator ? `${((a.conversions / a.denominator) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => {
       if (b["Reg.Done (Conversions)"] !== a["Reg.Done (Conversions)"]) {
         return b["Reg.Done (Conversions)"] - a["Reg.Done (Conversions)"];
@@ -751,6 +771,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Outgoing Conversions": 0,
       "Conversion Rate (%)": "0.0%" 
     };
+    let totalDenominator = 0;
     attenderPerformance.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Connected"] += row["Connected"];
@@ -760,8 +781,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
       totals["Incoming Conversions"] += row["Incoming Conversions"];
       totals["Outgoing Conversions"] += row["Outgoing Conversions"];
+      totalDenominator += row["denominator"] || 0;
     });
-    totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
+    totals["Conversion Rate (%)"] = totalDenominator ? `${((totals["Reg.Done (Conversions)"] / totalDenominator) * 100).toFixed(1)}%` : "0.0%";
     return totals;
   }, [attenderPerformance]);
 
@@ -774,7 +796,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       
       calledFors.forEach(prog => {
         if (!map[prog]) {
-          map[prog] = { name: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0 };
+          map[prog] = { name: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0, denominator: 0 };
         }
         const item = map[prog];
         item.total++;
@@ -799,6 +821,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         if (c.status === "Query") {
           item.query++;
         }
+        
+        item.denominator += getConversionDenominator(c.status);
       });
     });
 
@@ -813,7 +837,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Reg.Done (Conversions)": a.conversions,
       "Incoming Conversions": a.incomingConversions,
       "Outgoing Conversions": a.outgoingConversions,
-      "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
+      "denominator": a.denominator,
+      "Conversion Rate (%)": a.denominator ? `${((a.conversions / a.denominator) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
   }, [allAttempts]);
 
@@ -831,6 +856,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Outgoing Conversions": 0,
       "Conversion Rate (%)": "0.0%" 
     };
+    let totalDenominator = 0;
     calledForBreakdown.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Connected"] += row["Connected"];
@@ -841,8 +867,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
       totals["Incoming Conversions"] += row["Incoming Conversions"];
       totals["Outgoing Conversions"] += row["Outgoing Conversions"];
+      totalDenominator += row["denominator"] || 0;
     });
-    totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
+    totals["Conversion Rate (%)"] = totalDenominator ? `${((totals["Reg.Done (Conversions)"] / totalDenominator) * 100).toFixed(1)}%` : "0.0%";
     return totals;
   }, [calledForBreakdown]);
 
@@ -851,7 +878,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     allAttempts.forEach(c => {
       const src = String(c.source || "").trim() || "Unknown";
       if (!map[src]) {
-        map[src] = { name: src, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0 };
+        map[src] = { name: src, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0, denominator: 0 };
       }
       const item = map[src];
       item.total++;
@@ -876,6 +903,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       if (c.status === "Query") {
         item.query++;
       }
+      
+      item.denominator += getConversionDenominator(c.status);
     });
 
     return Object.values(map).map(a => ({
@@ -889,7 +918,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Reg.Done (Conversions)": a.conversions,
       "Incoming Conversions": a.incomingConversions,
       "Outgoing Conversions": a.outgoingConversions,
-      "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
+      "denominator": a.denominator,
+      "Conversion Rate (%)": a.denominator ? `${((a.conversions / a.denominator) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
   }, [allAttempts]);
 
@@ -907,6 +937,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Outgoing Conversions": 0,
       "Conversion Rate (%)": "0.0%" 
     };
+    let totalDenominator = 0;
     sourceBreakdown.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Connected"] += row["Connected"];
@@ -917,8 +948,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
       totals["Incoming Conversions"] += row["Incoming Conversions"];
       totals["Outgoing Conversions"] += row["Outgoing Conversions"];
+      totalDenominator += row["denominator"] || 0;
     });
-    totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
+    totals["Conversion Rate (%)"] = totalDenominator ? `${((totals["Reg.Done (Conversions)"] / totalDenominator) * 100).toFixed(1)}%` : "0.0%";
     return totals;
   }, [sourceBreakdown]);
 
@@ -933,7 +965,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       calledFors.forEach(prog => {
         const key = `${src} &&& ${prog}`;
         if (!map[key]) {
-          map[key] = { source: src, calledFor: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0 };
+          map[key] = { source: src, calledFor: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0, denominator: 0 };
         }
         const item = map[key];
         item.total++;
@@ -958,6 +990,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         if (c.status === "Query") {
           item.query++;
         }
+        
+        item.denominator += getConversionDenominator(c.status);
       });
     });
 
@@ -973,7 +1007,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Reg.Done (Conversions)": a.conversions,
       "Incoming Conversions": a.incomingConversions,
       "Outgoing Conversions": a.outgoingConversions,
-      "Conversion Rate (%)": a.total ? `${((a.conversions / a.total) * 100).toFixed(1)}%` : "0.0%"
+      "denominator": a.denominator,
+      "Conversion Rate (%)": a.denominator ? `${((a.conversions / a.denominator) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
   }, [allAttempts]);
 
@@ -992,6 +1027,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Outgoing Conversions": 0,
       "Conversion Rate (%)": "0.0%"
     };
+    let totalDenominator = 0;
     sourceVsCalledForBreakdown.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Connected"] += row["Connected"];
@@ -1002,8 +1038,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
       totals["Incoming Conversions"] += row["Incoming Conversions"];
       totals["Outgoing Conversions"] += row["Outgoing Conversions"];
+      totalDenominator += row["denominator"] || 0;
     });
-    totals["Conversion Rate (%)"] = totals["Total Calls"] ? `${((totals["Reg.Done (Conversions)"] / totals["Total Calls"]) * 100).toFixed(1)}%` : "0.0%";
+    totals["Conversion Rate (%)"] = totalDenominator ? `${((totals["Reg.Done (Conversions)"] / totalDenominator) * 100).toFixed(1)}%` : "0.0%";
     return totals;
   }, [sourceVsCalledForBreakdown]);
 
@@ -1046,6 +1083,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     }
     const wb = XLSX.utils.book_new();
 
+    const cleanRows = (list) => list.map(({ denominator, Denominator, ...rest }) => rest);
+
     // 1. Summary
     const wsSummary = XLSX.utils.json_to_sheet(section1);
     XLSX.utils.book_append_sheet(wb, wsSummary, "Summary KPI");
@@ -1067,19 +1106,19 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     XLSX.utils.book_append_sheet(wb, wsTime, "Time of Day Trends");
 
     // 6. Attenders
-    const wsAttenders = XLSX.utils.json_to_sheet([...attenderPerformance, attenderPerformanceTotals]);
+    const wsAttenders = XLSX.utils.json_to_sheet(cleanRows([...attenderPerformance, attenderPerformanceTotals]));
     XLSX.utils.book_append_sheet(wb, wsAttenders, "Attender Performance");
 
     // 7. Called For Breakdown
-    const wsCalledFor = XLSX.utils.json_to_sheet([...calledForBreakdown, calledForBreakdownTotals]);
+    const wsCalledFor = XLSX.utils.json_to_sheet(cleanRows([...calledForBreakdown, calledForBreakdownTotals]));
     XLSX.utils.book_append_sheet(wb, wsCalledFor, "Called For Breakdowns");
 
     // 8. Source-wise Breakdown
-    const wsSource = XLSX.utils.json_to_sheet([...sourceBreakdown, sourceBreakdownTotals]);
+    const wsSource = XLSX.utils.json_to_sheet(cleanRows([...sourceBreakdown, sourceBreakdownTotals]));
     XLSX.utils.book_append_sheet(wb, wsSource, "Source Breakdowns");
 
     // 9. Source vs Called For Breakdown
-    const wsSourceVsCalledFor = XLSX.utils.json_to_sheet([...sourceVsCalledForBreakdown, sourceVsCalledForBreakdownTotals]);
+    const wsSourceVsCalledFor = XLSX.utils.json_to_sheet(cleanRows([...sourceVsCalledForBreakdown, sourceVsCalledForBreakdownTotals]));
     XLSX.utils.book_append_sheet(wb, wsSourceVsCalledFor, "Source vs Called For");
 
     // Write file
