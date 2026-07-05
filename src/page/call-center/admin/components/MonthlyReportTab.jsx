@@ -284,6 +284,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       const contactTags = Array.isArray(log.tags) ? log.tags : [];
       const programName = log.programName || "Unknown";
 
+      const khojiKey = Object.keys(log).find(k => ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(k.toLowerCase()));
+      const khojiVal = log.Khoji || (khojiKey ? String(log[khojiKey] || "").trim() : "");
+
       const processAttempt = (att) => {
         const status = att.status || "Pending";
         if (selectedStatuses.length > 0 && !selectedStatuses.includes(status)) {
@@ -299,7 +302,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           contactId: log.id,
           source: att.source || sourceVal,
           calledFor: att.calledFor || calledForVal,
-          feedback: feedbackVal
+          feedback: feedbackVal,
+          Khoji: khojiVal
         };
       };
 
@@ -973,97 +977,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       calledFors.forEach(prog => {
         const key = `${src} &&& ${prog}`;
         if (!map[key]) {
-          map[key] = { source: src, calledFor: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0, denominator: 0 };
-        }
-        const item = map[key];
-        item.total++;
-        if (CONNECTED_STATUSES.includes(c.status)) item.connected++;
-        else if (NOT_CONNECTED_STATUSES.includes(c.status)) item.notConnected++;
-        
-        const type = (c.callType || "").toLowerCase();
-        const isIncoming = type.startsWith("incoming");
-        if (isIncoming) {
-          item.incoming++;
-        } else {
-          item.outgoing++;
-        }
-
-        if (c.status === "Reg.Done") {
-          item.conversions++;
-          if (isIncoming) {
-            item.incomingConversions++;
-          } else {
-            item.outgoingConversions++;
-          }
-        }
-        if (c.status === "Query") {
-          item.query++;
-        }
-        
-        item.denominator += getConversionDenominator(c.status);
-      });
-    });
-
-    return Object.values(map).map(a => ({
-      "Source": a.source,
-      "Called For": a.calledFor,
-      "Total Calls": a.total,
-      "Connected": a.connected,
-      "Not Connected": a.notConnected,
-      "Incoming": a.incoming,
-      "Outgoing": a.outgoing,
-      "Query Calls": a.query,
-      "Reg.Done (Conversions)": a.conversions,
-      "Incoming Conversions": a.incomingConversions,
-      "Outgoing Conversions": a.outgoingConversions,
-      "denominator": a.denominator,
-      "Conversion Rate (%)": a.denominator ? `${((a.conversions / a.denominator) * 100).toFixed(1)}%` : "0.0%"
-    })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
-  }, [allAttempts]);
-
-  const sourceVsCalledForBreakdownTotals = React.useMemo(() => {
-    const totals = {
-      "Source": "Total",
-      "Called For": "-",
-      "Total Calls": 0,
-      "Connected": 0,
-      "Not Connected": 0,
-      "Incoming": 0,
-      "Outgoing": 0,
-      "Query Calls": 0,
-      "Reg.Done (Conversions)": 0,
-      "Incoming Conversions": 0,
-      "Outgoing Conversions": 0,
-      "Conversion Rate (%)": "0.0%"
-    };
-    let totalDenominator = 0;
-    sourceVsCalledForBreakdown.forEach(row => {
-      totals["Total Calls"] += row["Total Calls"];
-      totals["Connected"] += row["Connected"];
-      totals["Not Connected"] += row["Not Connected"];
-      totals["Incoming"] += row["Incoming"];
-      totals["Outgoing"] += row["Outgoing"];
-      totals["Query Calls"] += row["Query Calls"];
-      totals["Reg.Done (Conversions)"] += row["Reg.Done (Conversions)"];
-      totals["Incoming Conversions"] += row["Incoming Conversions"];
-      totals["Outgoing Conversions"] += row["Outgoing Conversions"];
-      totalDenominator += row["denominator"] || 0;
-    });
-    totals["Conversion Rate (%)"] = totalDenominator ? `${((totals["Reg.Done (Conversions)"] / totalDenominator) * 100).toFixed(1)}%` : "0.0%";
-    return totals;
-  }, [sourceVsCalledForBreakdown]);
-
-  const calledForInOutBreakdown = React.useMemo(() => {
-    const map = {};
-    allAttempts.forEach(c => {
-      const calledFors = String(c.calledFor || "").trim()
-        ? String(c.calledFor).split(",").map(x => x.trim()).filter(Boolean)
-        : ["Unknown"];
-      
-      calledFors.forEach(prog => {
-        if (!map[prog]) {
-          map[prog] = { 
-            name: prog, 
+          map[key] = { 
+            source: src, 
+            calledFor: prog, 
             total: 0, 
             incoming: 0, 
             outgoing: 0, 
@@ -1074,7 +990,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             outgoingDenominator: 0 
           };
         }
-        const item = map[prog];
+        const item = map[key];
         item.total++;
         
         const type = (c.callType || "").toLowerCase();
@@ -1105,7 +1021,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     });
 
     return Object.values(map).map(a => ({
-      "Called For": a.name,
+      "Source": a.source,
+      "Called For": a.calledFor,
       "Total Calls": a.total,
       "Incoming Calls": a.incoming,
       "Outgoing Calls": a.outgoing,
@@ -1119,9 +1036,10 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
   }, [allAttempts]);
 
-  const calledForInOutBreakdownTotals = React.useMemo(() => {
+  const sourceVsCalledForBreakdownTotals = React.useMemo(() => {
     const totals = { 
-      "Called For": "Total", 
+      "Source": "Total", 
+      "Called For": "-", 
       "Total Calls": 0, 
       "Incoming Calls": 0, 
       "Outgoing Calls": 0, 
@@ -1133,7 +1051,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     };
     let totalIncomingDenominator = 0;
     let totalOutgoingDenominator = 0;
-    calledForInOutBreakdown.forEach(row => {
+    sourceVsCalledForBreakdown.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Incoming Calls"] += row["Incoming Calls"];
       totals["Outgoing Calls"] += row["Outgoing Calls"];
@@ -1146,56 +1064,88 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     totals["Incoming Conv. Rate (%)"] = totalIncomingDenominator ? `${((totals["Incoming Conversions"] / totalIncomingDenominator) * 100).toFixed(1)}%` : "0.0%";
     totals["Outgoing Conv. Rate (%)"] = totalOutgoingDenominator ? `${((totals["Outgoing Conversions"] / totalOutgoingDenominator) * 100).toFixed(1)}%` : "0.0%";
     return totals;
-  }, [calledForInOutBreakdown]);
+  }, [sourceVsCalledForBreakdown]);
 
-  const sourceInOutBreakdown = React.useMemo(() => {
+  // Helper to determine if Khoji
+  const isKhoji = (val) => {
+    if (!val) return false;
+    const v = String(val).toLowerCase().trim();
+    return (
+      v === "yes" ||
+      v === "y" ||
+      v === "true" ||
+      v === "khoji" ||
+      v.startsWith("yes") ||
+      v.startsWith("y ") ||
+      v.startsWith("y/") ||
+      v.includes("हां") ||
+      v.includes("हाँ") ||
+      v.includes("dew d") ||
+      v.includes("done") ||
+      v.includes("completed") ||
+      (v.includes("khoji") && !v.includes("not") && !v.includes("new"))
+    );
+  };
+
+  const khojiSourceVsCalledForBreakdown = React.useMemo(() => {
     const map = {};
     allAttempts.forEach(c => {
+      if (!isKhoji(c.Khoji)) return; // Only Khoji
+
       const src = String(c.source || "").trim() || "Unknown";
-      if (!map[src]) {
-        map[src] = { 
-          name: src, 
-          total: 0, 
-          incoming: 0, 
-          outgoing: 0, 
-          conversions: 0, 
-          incomingConversions: 0, 
-          outgoingConversions: 0, 
-          incomingDenominator: 0, 
-          outgoingDenominator: 0 
-        };
-      }
-      const item = map[src];
-      item.total++;
-      
-      const type = (c.callType || "").toLowerCase();
-      const isIncoming = type.startsWith("incoming");
-      
-      if (isIncoming) {
-        item.incoming++;
-      } else {
-        item.outgoing++;
-      }
+      const calledFors = String(c.calledFor || "").trim()
+        ? String(c.calledFor).split(",").map(x => x.trim()).filter(Boolean)
+        : ["Unknown"];
 
-      const denom = getConversionDenominator(c.status);
-      if (isIncoming) {
-        item.incomingDenominator += denom;
-      } else {
-        item.outgoingDenominator += denom;
-      }
-
-      if (c.status === "Reg.Done") {
-        item.conversions++;
-        if (isIncoming) {
-          item.incomingConversions++;
-        } else {
-          item.outgoingConversions++;
+      calledFors.forEach(prog => {
+        const key = `${src} &&& ${prog}`;
+        if (!map[key]) {
+          map[key] = { 
+            source: src, 
+            calledFor: prog, 
+            total: 0, 
+            incoming: 0, 
+            outgoing: 0, 
+            conversions: 0, 
+            incomingConversions: 0, 
+            outgoingConversions: 0, 
+            incomingDenominator: 0, 
+            outgoingDenominator: 0 
+          };
         }
-      }
+        const item = map[key];
+        item.total++;
+        
+        const type = (c.callType || "").toLowerCase();
+        const isIncoming = type.startsWith("incoming");
+        
+        if (isIncoming) {
+          item.incoming++;
+        } else {
+          item.outgoing++;
+        }
+
+        const denom = getConversionDenominator(c.status);
+        if (isIncoming) {
+          item.incomingDenominator += denom;
+        } else {
+          item.outgoingDenominator += denom;
+        }
+
+        if (c.status === "Reg.Done") {
+          item.conversions++;
+          if (isIncoming) {
+            item.incomingConversions++;
+          } else {
+            item.outgoingConversions++;
+          }
+        }
+      });
     });
 
     return Object.values(map).map(a => ({
-      "Source": a.name,
+      "Source": a.source,
+      "Called For": a.calledFor,
       "Total Calls": a.total,
       "Incoming Calls": a.incoming,
       "Outgoing Calls": a.outgoing,
@@ -1209,9 +1159,10 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
   }, [allAttempts]);
 
-  const sourceInOutBreakdownTotals = React.useMemo(() => {
+  const khojiSourceVsCalledForBreakdownTotals = React.useMemo(() => {
     const totals = { 
       "Source": "Total", 
+      "Called For": "-", 
       "Total Calls": 0, 
       "Incoming Calls": 0, 
       "Outgoing Calls": 0, 
@@ -1223,7 +1174,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     };
     let totalIncomingDenominator = 0;
     let totalOutgoingDenominator = 0;
-    sourceInOutBreakdown.forEach(row => {
+    khojiSourceVsCalledForBreakdown.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Incoming Calls"] += row["Incoming Calls"];
       totals["Outgoing Calls"] += row["Outgoing Calls"];
@@ -1236,7 +1187,109 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     totals["Incoming Conv. Rate (%)"] = totalIncomingDenominator ? `${((totals["Incoming Conversions"] / totalIncomingDenominator) * 100).toFixed(1)}%` : "0.0%";
     totals["Outgoing Conv. Rate (%)"] = totalOutgoingDenominator ? `${((totals["Outgoing Conversions"] / totalOutgoingDenominator) * 100).toFixed(1)}%` : "0.0%";
     return totals;
-  }, [sourceInOutBreakdown]);
+  }, [khojiSourceVsCalledForBreakdown]);
+
+  const guestKhojiSourceVsCalledForBreakdown = React.useMemo(() => {
+    const map = {};
+    allAttempts.forEach(c => {
+      if (isKhoji(c.Khoji)) return; // Only Non-Khoji (Guest Khoji)
+
+      const src = String(c.source || "").trim() || "Unknown";
+      const calledFors = String(c.calledFor || "").trim()
+        ? String(c.calledFor).split(",").map(x => x.trim()).filter(Boolean)
+        : ["Unknown"];
+
+      calledFors.forEach(prog => {
+        const key = `${src} &&& ${prog}`;
+        if (!map[key]) {
+          map[key] = { 
+            source: src, 
+            calledFor: prog, 
+            total: 0, 
+            incoming: 0, 
+            outgoing: 0, 
+            conversions: 0, 
+            incomingConversions: 0, 
+            outgoingConversions: 0, 
+            incomingDenominator: 0, 
+            outgoingDenominator: 0 
+          };
+        }
+        const item = map[key];
+        item.total++;
+        
+        const type = (c.callType || "").toLowerCase();
+        const isIncoming = type.startsWith("incoming");
+        
+        if (isIncoming) {
+          item.incoming++;
+        } else {
+          item.outgoing++;
+        }
+
+        const denom = getConversionDenominator(c.status);
+        if (isIncoming) {
+          item.incomingDenominator += denom;
+        } else {
+          item.outgoingDenominator += denom;
+        }
+
+        if (c.status === "Reg.Done") {
+          item.conversions++;
+          if (isIncoming) {
+            item.incomingConversions++;
+          } else {
+            item.outgoingConversions++;
+          }
+        }
+      });
+    });
+
+    return Object.values(map).map(a => ({
+      "Source": a.source,
+      "Called For": a.calledFor,
+      "Total Calls": a.total,
+      "Incoming Calls": a.incoming,
+      "Outgoing Calls": a.outgoing,
+      "Total Conversions": a.conversions,
+      "Incoming Conversions": a.incomingConversions,
+      "Outgoing Conversions": a.outgoingConversions,
+      "Incoming Denominator": a.incomingDenominator,
+      "Outgoing Denominator": a.outgoingDenominator,
+      "Incoming Conv. Rate (%)": a.incomingDenominator ? `${((a.incomingConversions / a.incomingDenominator) * 100).toFixed(1)}%` : "0.0%",
+      "Outgoing Conv. Rate (%)": a.outgoingDenominator ? `${((a.outgoingConversions / a.outgoingDenominator) * 100).toFixed(1)}%` : "0.0%"
+    })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
+  }, [allAttempts]);
+
+  const guestKhojiSourceVsCalledForBreakdownTotals = React.useMemo(() => {
+    const totals = { 
+      "Source": "Total", 
+      "Called For": "-", 
+      "Total Calls": 0, 
+      "Incoming Calls": 0, 
+      "Outgoing Calls": 0, 
+      "Total Conversions": 0, 
+      "Incoming Conversions": 0,
+      "Outgoing Conversions": 0,
+      "Incoming Conv. Rate (%)": "0.0%", 
+      "Outgoing Conv. Rate (%)": "0.0%" 
+    };
+    let totalIncomingDenominator = 0;
+    let totalOutgoingDenominator = 0;
+    guestKhojiSourceVsCalledForBreakdown.forEach(row => {
+      totals["Total Calls"] += row["Total Calls"];
+      totals["Incoming Calls"] += row["Incoming Calls"];
+      totals["Outgoing Calls"] += row["Outgoing Calls"];
+      totals["Total Conversions"] += row["Total Conversions"];
+      totals["Incoming Conversions"] += row["Incoming Conversions"];
+      totals["Outgoing Conversions"] += row["Outgoing Conversions"];
+      totalIncomingDenominator += row["Incoming Denominator"] || 0;
+      totalOutgoingDenominator += row["Outgoing Denominator"] || 0;
+    });
+    totals["Incoming Conv. Rate (%)"] = totalIncomingDenominator ? `${((totals["Incoming Conversions"] / totalIncomingDenominator) * 100).toFixed(1)}%` : "0.0%";
+    totals["Outgoing Conv. Rate (%)"] = totalOutgoingDenominator ? `${((totals["Outgoing Conversions"] / totalOutgoingDenominator) * 100).toFixed(1)}%` : "0.0%";
+    return totals;
+  }, [guestKhojiSourceVsCalledForBreakdown]);
 
   const conversionsList = React.useMemo(() => {
     return allAttempts.filter(c => c.status === "Reg.Done");
@@ -1326,13 +1379,13 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     const wsSourceVsCalledFor = XLSX.utils.json_to_sheet(cleanRows([...sourceVsCalledForBreakdown, sourceVsCalledForBreakdownTotals]));
     XLSX.utils.book_append_sheet(wb, wsSourceVsCalledFor, "Source vs Called For");
 
-    // 10. Called For In-Out Breakdown
-    const wsCalledForInOut = XLSX.utils.json_to_sheet(cleanRows([...calledForInOutBreakdown, calledForInOutBreakdownTotals]));
-    XLSX.utils.book_append_sheet(wb, wsCalledForInOut, "Called For In-Out Breakdown");
+    // 10. Source vs Called For (Khoji)
+    const wsKhojiSourceVsCalledFor = XLSX.utils.json_to_sheet(cleanRows([...khojiSourceVsCalledForBreakdown, khojiSourceVsCalledForBreakdownTotals]));
+    XLSX.utils.book_append_sheet(wb, wsKhojiSourceVsCalledFor, "Source vs Called For (Khoji)");
 
-    // 11. Source In-Out Breakdown
-    const wsSourceInOut = XLSX.utils.json_to_sheet(cleanRows([...sourceInOutBreakdown, sourceInOutBreakdownTotals]));
-    XLSX.utils.book_append_sheet(wb, wsSourceInOut, "Source In-Out Breakdown");
+    // 11. Source vs Called For (Guest Khoji)
+    const wsGuestKhojiSourceVsCalledFor = XLSX.utils.json_to_sheet(cleanRows([...guestKhojiSourceVsCalledForBreakdown, guestKhojiSourceVsCalledForBreakdownTotals]));
+    XLSX.utils.book_append_sheet(wb, wsGuestKhojiSourceVsCalledFor, "Src vs CF (Guest Khoji)");
 
     // Write file
     const startStr = startDate ? startDate.replace(/-/g, "") : "start";
@@ -1581,27 +1634,27 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             />
           </MonthlySection>
 
-          <MonthlySection title="Section 6: Source vs Called For Breakdowns">
+          <MonthlySection title="Section 6: Source vs Called For Incoming & Outgoing Breakdown">
             <MonthlyTable
-              headers={["Source", "Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Query Calls", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
+              headers={["Source", "Called For", "Total Calls", "Incoming Calls", "Outgoing Calls", "Total Conversions", "Incoming Conversions", "Outgoing Conversions", "Incoming Conv. Rate (%)", "Outgoing Conv. Rate (%)"]}
               rows={sourceVsCalledForBreakdown}
               totals={sourceVsCalledForBreakdownTotals}
             />
           </MonthlySection>
 
-          <MonthlySection title="Section 7: Called For Program Incoming & Outgoing Breakdown">
+          <MonthlySection title="Section 7: Source vs Called For (Khoji) Incoming & Outgoing Breakdown">
             <MonthlyTable
-              headers={["Called For", "Total Calls", "Incoming Calls", "Outgoing Calls", "Total Conversions", "Incoming Conversions", "Outgoing Conversions", "Incoming Conv. Rate (%)", "Outgoing Conv. Rate (%)"]}
-              rows={calledForInOutBreakdown}
-              totals={calledForInOutBreakdownTotals}
+              headers={["Source", "Called For", "Total Calls", "Incoming Calls", "Outgoing Calls", "Total Conversions", "Incoming Conversions", "Outgoing Conversions", "Incoming Conv. Rate (%)", "Outgoing Conv. Rate (%)"]}
+              rows={khojiSourceVsCalledForBreakdown}
+              totals={khojiSourceVsCalledForBreakdownTotals}
             />
           </MonthlySection>
 
-          <MonthlySection title="Section 8: Source-wise Incoming & Outgoing Breakdown">
+          <MonthlySection title="Section 8: Source vs Called For (Guest Khoji) Incoming & Outgoing Breakdown">
             <MonthlyTable
-              headers={["Source", "Total Calls", "Incoming Calls", "Outgoing Calls", "Total Conversions", "Incoming Conversions", "Outgoing Conversions", "Incoming Conv. Rate (%)", "Outgoing Conv. Rate (%)"]}
-              rows={sourceInOutBreakdown}
-              totals={sourceInOutBreakdownTotals}
+              headers={["Source", "Called For", "Total Calls", "Incoming Calls", "Outgoing Calls", "Total Conversions", "Incoming Conversions", "Outgoing Conversions", "Incoming Conv. Rate (%)", "Outgoing Conv. Rate (%)"]}
+              rows={guestKhojiSourceVsCalledForBreakdown}
+              totals={guestKhojiSourceVsCalledForBreakdownTotals}
             />
           </MonthlySection>
 
