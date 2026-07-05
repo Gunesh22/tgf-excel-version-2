@@ -1231,18 +1231,29 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     ...sharedUpdates,
     updatedAt: serverTimestamp()
   };
-
   // If we have an attenderId, put the attenderSpecificUpdates into the attenderStates map
   if (attenderId) {
     // If registeredYearMonth is being set to Reg.Done or removed, we update it here
     if (attenderSpecificUpdates.status === "Reg.Done") {
-      const now = new Date();
-      const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const utc = new Date().getTime() + (new Date().getTimezoneOffset() * 60000);
+      const istDate = new Date(utc + (3600000 * 5.5));
+      const yearMonth = `${istDate.getFullYear()}-${String(istDate.getMonth() + 1).padStart(2, "0")}`;
       attenderSpecificUpdates.registeredYearMonth = yearMonth;
       finalUpdatePayload.registeredYearMonth = yearMonth;
     } else if (previousStatus === "Reg.Done" && attenderSpecificUpdates.status && attenderSpecificUpdates.status !== "Reg.Done") {
-      attenderSpecificUpdates.registeredYearMonth = deleteField();
-      finalUpdatePayload.registeredYearMonth = deleteField();
+      // Solution 2: Only remove top-level registeredYearMonth if no other attender has registered this lead
+      let hasOtherRegistration = false;
+      if (logData.attenderStates) {
+        Object.keys(logData.attenderStates).forEach(aId => {
+          if (aId !== attenderId && logData.attenderStates[aId]?.status === "Reg.Done") {
+            hasOtherRegistration = true;
+          }
+        });
+      }
+      if (!hasOtherRegistration) {
+        attenderSpecificUpdates.registeredYearMonth = deleteField();
+        finalUpdatePayload.registeredYearMonth = deleteField();
+      }
     }
 
     // Set attenderName and update time for last-edited tracking within attenderStates
@@ -1255,7 +1266,26 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     });
 
     // Also update top-level compatibility fields if they are updated by this user
-    if (attenderSpecificUpdates.status !== undefined) finalUpdatePayload.status = attenderSpecificUpdates.status;
+    if (attenderSpecificUpdates.status !== undefined) {
+      let finalStatus = attenderSpecificUpdates.status;
+
+      // Solution 2: Prevent downgrade if another attender has registered this lead
+      if (finalStatus !== "Reg.Done") {
+        let hasOtherRegistration = false;
+        if (logData.attenderStates) {
+          Object.keys(logData.attenderStates).forEach(aId => {
+            if (aId !== attenderId && logData.attenderStates[aId]?.status === "Reg.Done") {
+              hasOtherRegistration = true;
+            }
+          });
+        }
+        if (hasOtherRegistration) {
+          finalStatus = "Reg.Done";
+        }
+      }
+      finalUpdatePayload.status = finalStatus;
+    }
+
     if (attenderSpecificUpdates.remark !== undefined) finalUpdatePayload.remark = attenderSpecificUpdates.remark;
     if (attenderSpecificUpdates.callbackDate !== undefined) finalUpdatePayload.callbackDate = attenderSpecificUpdates.callbackDate;
     if (attenderSpecificUpdates.callType !== undefined) finalUpdatePayload.callType = attenderSpecificUpdates.callType;
@@ -1343,10 +1373,21 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
 
   if (currentStatus === "Reg.Done") {
     try {
+      // Solution 1: Clean up orphaned old registrations if program changed
+      if (previousStatus === "Reg.Done" && previousCalledFor && String(previousCalledFor).trim().toLowerCase() !== String(currentCalledFor).trim().toLowerCase()) {
+        const cleanedPrevCalledFor = String(previousCalledFor).trim().replace(/[^a-zA-Z0-9]/g, "_");
+        const prevRegistrationId = `${logId}_${cleanedPrevCalledFor}`;
+        await deleteDoc(doc(db, "registrations", prevRegistrationId));
+        console.log("🗑️ Deleted old registration due to program change:", prevRegistrationId);
+      }
+
       const freshSnap = await getDoc(contactRef);
       const freshData = freshSnap.exists() ? freshSnap.data() : {};
-      const now = new Date();
-      const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      
+      // Solution 3: Indian Standard Time (IST UTC+5:30) Month Generation
+      const utc = new Date().getTime() + (new Date().getTimezoneOffset() * 60000);
+      const istDate = new Date(utc + (3600000 * 5.5));
+      const yearMonth = `${istDate.getFullYear()}-${String(istDate.getMonth() + 1).padStart(2, "0")}`;
 
       const payload = {
         ...freshData,
@@ -1374,17 +1415,13 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     }
   } else if (previousStatus === "Reg.Done" && currentStatus && currentStatus !== "Reg.Done") {
     try {
-      // Only delete if they are correcting a mistake for the SAME Called For program.
-      // If the Called For program has changed, it's a new pitch, not a correction, so keep the old registration!
-      if (String(previousCalledFor).trim().toLowerCase() === String(currentCalledFor).trim().toLowerCase()) {
-        const cleanedCalledFor = String(currentCalledFor).trim().replace(/[^a-zA-Z0-9]/g, "_");
-        const registrationId = `${logId}_${cleanedCalledFor}`;
-        await deleteDoc(doc(db, "registrations", registrationId));
-        await updateDoc(contactRef, { registeredYearMonth: deleteField() });
-        console.log("🗑️ Reverted registration deleted for log:", registrationId);
-      } else {
-        console.log("ℹ️ Skipping registration delete since program changed:", previousCalledFor, "->", currentCalledFor);
-      }
+      // Revert: always delete the registration document under the previous called for program
+      const targetCalledFor = previousCalledFor || currentCalledFor;
+      const cleanedCalledFor = String(targetCalledFor).trim().replace(/[^a-zA-Z0-9]/g, "_");
+      const registrationId = `${logId}_${cleanedCalledFor}`;
+      await deleteDoc(doc(db, "registrations", registrationId));
+      await updateDoc(contactRef, { registeredYearMonth: deleteField() });
+      console.log("🗑️ Reverted registration deleted for log:", registrationId);
     } catch (e) {
       console.error("Registration deletion failed on revert:", e);
     }
