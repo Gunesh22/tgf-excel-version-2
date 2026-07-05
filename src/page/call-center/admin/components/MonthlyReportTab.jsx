@@ -5,7 +5,7 @@ import {
   Download, ChevronRight, ChevronDown, Calendar, TrendingUp, UserCheck, Smile, Info, Search, X, Check
 } from "lucide-react";
 import { subscribeToAllCallLogs } from "../../../../lib/db";
-import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES } from "../utils.jsx";
+import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp } from "../utils.jsx";
 
 function MonthlySection({ title, children, defaultOpen = true }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -313,9 +313,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           if (state.history && Array.isArray(state.history) && state.history.length > 0) {
             state.history.forEach(h => {
               const att = processAttempt({
-                timestamp: h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null,
+                timestamp: parseTimestamp(h.timestamp),
                 attenderId: attId,
-                attenderName: state.attenderName || h.attenderName || "Unknown",
+                attenderName: h.attenderName || state.attenderName || "Unknown",
                 status: h.status || "Pending",
                 remark: h.remark || "",
                 callType: h.callType || state.callType || "outgoing",
@@ -327,7 +327,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           } else if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
             const dateVal = state.lastCalledAt || state.updatedAt;
             const att = processAttempt({
-              timestamp: dateVal ? (dateVal.toDate ? dateVal.toDate() : new Date(dateVal)) : null,
+              timestamp: parseTimestamp(dateVal),
               attenderId: attId,
               attenderName: state.attenderName || "Unknown",
               status: state.status || "Pending",
@@ -344,9 +344,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         if (log.history && Array.isArray(log.history) && log.history.length > 0) {
           log.history.forEach(h => {
             const att = processAttempt({
-              timestamp: h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null,
-              attenderId: log.attenderId || "legacy",
-              attenderName: log.attenderName || h.attenderName || "Unknown",
+              timestamp: parseTimestamp(h.timestamp),
+              attenderId: h.attenderId || log.attenderId || "legacy",
+              attenderName: h.attenderName || log.attenderName || "Unknown",
               status: h.status || "Pending",
               remark: h.remark || "",
               callType: h.callType || log.callType || "outgoing",
@@ -359,7 +359,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
             const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
             const att = processAttempt({
-              timestamp: dateVal ? (dateVal.toDate ? dateVal.toDate() : new Date(dateVal)) : null,
+              timestamp: parseTimestamp(dateVal),
               attenderId: log.attenderId || "legacy",
               attenderName: log.attenderName || "Legacy Attender",
               status: log.status || "Pending",

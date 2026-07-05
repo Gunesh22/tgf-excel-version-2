@@ -164,13 +164,17 @@ function getAttenderAttempts(logs, attenderName, attenderId) {
 
       if (log.history && Array.isArray(log.history) && log.history.length > 0) {
         log.history.forEach((h, index) => {
+          const histAttName = h.attenderName || log.attenderName || "";
+          const histAttId = h.attenderId || log.attenderId || "";
+          if (!isOurAttender(histAttName, histAttId)) return;
+
           const att = processAttemptObj(
             {
               timestamp: h.timestamp,
               status: h.status,
               remark: h.remark,
               callType: h.callType,
-              attenderName: h.attenderName
+              attenderName: histAttName
             },
             true,
             index

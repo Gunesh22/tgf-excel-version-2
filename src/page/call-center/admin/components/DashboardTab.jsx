@@ -4,7 +4,7 @@ import * as XLSX from "xlsx";
 import { BarChart3, Download, Search, X, ChevronDown, Check } from "lucide-react";
 import { subscribeToAllCallLogs } from "../../../../lib/db";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from "recharts";
-import { COLORS, cleanExportRow, CONNECTED_STATUSES, NOT_CONNECTED_STATUSES } from "../utils.jsx";
+import { COLORS, cleanExportRow, CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp } from "../utils.jsx";
 
 // ── Multi-select dropdown ──────────────────────────────────────────────────
 function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All" }) {
@@ -182,9 +182,7 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       const feedbackVal = feedbackKey ? String(log[feedbackKey] || "").trim() : "";
 
       const getAttemptDate = (val) => {
-        if (!val) return null;
-        if (typeof val.toDate === "function") return val.toDate();
-        return new Date(val);
+        return parseTimestamp(val);
       };
 
       const processAttempt = (att, attId, state, isHistory, index) => {
@@ -203,7 +201,7 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
           programName: log.programName || "Unknown Program",
           tags: log.tags || [],
           attenderId: attId,
-          attenderName: state.attenderName || att.attenderName || "Unknown",
+          attenderName: att.attenderName || state.attenderName || "Unknown",
           status: status,
           remark: att.remark || "",
           callType: att.callType || state.callType || "outgoing",
@@ -281,9 +279,10 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
                 callType: h.callType,
                 source: h.source,
                 calledFor: h.calledFor,
-                attenderName: h.attenderName
+                attenderName: h.attenderName,
+                attenderId: h.attenderId
               },
-              attId,
+              h.attenderId || attId,
               dummyState,
               true,
               index
