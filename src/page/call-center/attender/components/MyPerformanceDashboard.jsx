@@ -269,7 +269,8 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
     const today = new Date(); today.setHours(0, 0, 0, 0);
     return logs.filter(l => {
       if (!l.callbackDate) return false;
-      const d = l.callbackDate.toDate ? l.callbackDate.toDate() : new Date(l.callbackDate);
+      const d = parseTimestamp(l.callbackDate);
+      if (!d || isNaN(d.getTime())) return false;
       d.setHours(0, 0, 0, 0);
       return d <= today && l.callbackStatus !== "done";
     }).length;

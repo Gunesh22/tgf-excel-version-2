@@ -152,10 +152,12 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
         let changed = false;
         const updated = prev.map(log => {
           if (log.callbackDate) {
-            const cbDate = log.callbackDate.toDate ? log.callbackDate.toDate() : new Date(log.callbackDate);
-            cbDate.setHours(0, 0, 0, 0);
-            const shouldBeDue = cbDate <= today;
-            if (log._callbackDue !== shouldBeDue) { changed = true; return { ...log, _callbackDue: shouldBeDue }; }
+            const cbDate = parseTimestamp(log.callbackDate);
+            if (cbDate && !isNaN(cbDate.getTime())) {
+              cbDate.setHours(0, 0, 0, 0);
+              const shouldBeDue = cbDate <= today;
+              if (log._callbackDue !== shouldBeDue) { changed = true; return { ...log, _callbackDue: shouldBeDue }; }
+            }
           }
           return log;
         });
@@ -358,8 +360,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
 
     let callbackDateStr = "";
     if (log.callbackDate) {
-      const d = log.callbackDate.toDate ? log.callbackDate.toDate() : new Date(log.callbackDate);
-      if (d && !isNaN(d)) {
+      const d = parseTimestamp(log.callbackDate);
+      if (d && !isNaN(d.getTime())) {
         callbackDateStr = d.toLocaleDateString("en-IN");
       }
     }
@@ -1009,8 +1011,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       });
       // Fallback for logs with no history but updated today
       if (hist.length === 0 && log.status && log.updatedAt) {
-        const d = log.updatedAt.toDate ? log.updatedAt.toDate() : new Date(log.updatedAt);
-        if (d.toLocaleDateString("en-IN") === todayStr) todayCallCount++;
+        const d = parseTimestamp(log.updatedAt);
+        if (d && d.toLocaleDateString("en-IN") === todayStr) todayCallCount++;
       }
     });
 
@@ -1018,7 +1020,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const callbacksDue = tagFilteredLogs.filter(l => {
       if (!l.callbackDate) return false;
-      const d = l.callbackDate.toDate ? l.callbackDate.toDate() : new Date(l.callbackDate);
+      const d = parseTimestamp(l.callbackDate);
+      if (!d || isNaN(d.getTime())) return false;
       d.setHours(0, 0, 0, 0);
       return d <= today && l.callbackStatus !== "done";
     }).length;

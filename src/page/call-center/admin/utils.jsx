@@ -80,8 +80,8 @@ export const cleanExportRow = (log) => {
 
   let callbackDateStr = "";
   if (log.callbackDate) {
-    const d = log.callbackDate.toDate ? log.callbackDate.toDate() : new Date(log.callbackDate);
-    if (d && !isNaN(d)) {
+    const d = parseTimestamp(log.callbackDate);
+    if (d && !isNaN(d.getTime())) {
       callbackDateStr = d.toLocaleDateString("en-IN");
     }
   }

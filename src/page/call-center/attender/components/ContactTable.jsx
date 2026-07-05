@@ -69,6 +69,16 @@ function CollapsedTags({ tags }) {
   );
 }
 
+function parseTimestamp(t) {
+  if (!t) return null;
+  if (t instanceof Date) return t;
+  if (typeof t.toDate === "function") return t.toDate();
+  if (typeof t === "object" && t.seconds !== undefined) {
+    return new Date(t.seconds * 1000 + Math.round((t.nanoseconds || 0) / 1000000));
+  }
+  return new Date(t);
+}
+
 export function ContactTable({
   scrollRef,
   onMouseDown,
@@ -105,8 +115,8 @@ export function ContactTable({
 
   const getCallbackStr = (log) => {
     if (!log.callbackDate) return "";
-    if (log.callbackDate?.toDate) return log.callbackDate.toDate().toLocaleDateString("en-IN");
-    return String(log.callbackDate).split("T")[0];
+    const d = parseTimestamp(log.callbackDate);
+    return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "";
   };
 
   const visibleCount = 1 + dynamicCols.filter(col => !hiddenColumns.includes(col)).length

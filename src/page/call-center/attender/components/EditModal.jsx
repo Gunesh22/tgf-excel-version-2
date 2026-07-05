@@ -24,6 +24,16 @@ import {
   formatContactName
 } from "../utils";
 
+function parseTimestamp(t) {
+  if (!t) return null;
+  if (t instanceof Date) return t;
+  if (typeof t.toDate === "function") return t.toDate();
+  if (typeof t === "object" && t.seconds !== undefined) {
+    return new Date(t.seconds * 1000 + Math.round((t.nanoseconds || 0) / 1000000));
+  }
+  return new Date(t);
+}
+
 const SearchableDropdown = ({
   options,
   selected,
@@ -1299,9 +1309,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
   const getCallbackDateStr = () => {
     if (!edited.callbackDate) return "";
-    if (typeof edited.callbackDate === "string") return edited.callbackDate;
-    if (edited.callbackDate?.toDate) return edited.callbackDate.toDate().toISOString().split("T")[0];
-    return "";
+    const d = parseTimestamp(edited.callbackDate);
+    return d && !isNaN(d.getTime()) ? d.toISOString().split("T")[0] : "";
   };
 
   const getPromptOptions = () => {
