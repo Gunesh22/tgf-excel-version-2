@@ -1071,6 +1071,10 @@ export const assignContactsToAttender = async (tag, programName, attenderId, att
   });
 
   totalAssigned = txResult || 0;
+  if (totalAssigned > 0) {
+    const assignedIds = targetContacts.slice(0, totalAssigned).map(c => c.id);
+    await updateCacheContacts(assignedIds);
+  }
   return totalAssigned;
 };
 
@@ -1385,6 +1389,8 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
       console.error("Registration deletion failed on revert:", e);
     }
   }
+  // Sync to callCenterCache
+  await updateCacheContacts([logId]);
 };
 
 // ─────────────────────────────────────────────
@@ -1432,6 +1438,7 @@ export const removeAttenderFromContact = async (contactId, attenderId) => {
     attenderName: attenderNameVal,
     [`attenderStates.${attenderId}._hidden`]: true,
   });
+  await updateCacheContacts([contactId]);
 };
 
 // ────────────────────────────────────────────
@@ -1685,6 +1692,7 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   // Register tag in active tags collection
   await registerActiveTag(finalProgramName);
 
+  await updateCacheContacts([docRef.id]);
   return docRef.id;
 };
 
@@ -1845,6 +1853,7 @@ export const claimContact = async (contactId, attenderId, attenderName) => {
       updatedAt: serverTimestamp()
     });
   });
+  await updateCacheContacts([contactId]);
 };
 
 // Claim a contact that only exists in the CRM by creating it in Firebase first
@@ -1950,6 +1959,7 @@ export const claimCRMContact = async (crmContact, attenderId, attenderName) => {
   };
 
   const docRef = await addDoc(collection(db, "contacts"), docData);
+  await updateCacheContacts([docRef.id]);
   return docRef.id;
 };
 
@@ -2034,6 +2044,9 @@ export const reassignContactsToPool = async (tag, attenderId, count, mode = "Pen
   });
 
   await batch.commit();
+  if (toProcess.length > 0) {
+    await updateCacheContacts(toProcess.map(c => c.id));
+  }
   return toProcess.length;
 };
 
@@ -2127,40 +2140,469 @@ export const reassignContactsBetweenAttenders = async (tag, fromAttenderId, toAt
     });
   });
   await batch.commit();
+  if (toProcess.length > 0) {
+    await updateCacheContacts(toProcess.map(c => c.id));
+  }
   return toProcess.length;
 };
 
 // ─────────────────────────────────────────────
 // ADMIN DASHBOARD
 // ─────────────────────────────────────────────
-export const subscribeToAllCallLogs = (tag, callback) => {
-  let q;
-  if (tag && tag !== "ALL") {
-    q = query(
-      collection(db, "contacts"),
-      where("tags", "array-contains", tag)
-    );
-  } else {
-    q = query(
-      collection(db, "contacts"),
-      where("isAssigned", "==", true)
-    );
-  }
 
-  return onSnapshot(q, snap => {
-    let logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (tag && tag !== "ALL") {
-      // Filter client-side for assigned contacts
-      logs = logs.filter(c => c.isAssigned === true);
+const safeTimestampNumber = (ts) => {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === "function") return ts.toMillis();
+  if (typeof ts === "object" && ts.seconds !== undefined) return ts.seconds * 1000;
+  const time = new Date(ts).getTime();
+  return isNaN(time) ? Date.now() : time;
+};
+
+const getMonthStr = (ts) => {
+  if (!ts) return null;
+  let d;
+  if (typeof ts.toDate === "function") {
+    d = ts.toDate();
+  } else if (typeof ts === "object" && ts.seconds !== undefined) {
+    d = new Date(ts.seconds * 1000);
+  } else {
+    d = new Date(ts);
+  }
+  if (isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const pruneContactForCacheForMonth = (c, monthStr) => {
+  const pruned = {
+    id: c.id,
+    Name: c.Name || c.name || "",
+    Phone: c.Phone || c.phone || "",
+    tags: c.tags || [],
+    programId: c.programId || "",
+    programName: c.programName || "",
+    Source: c.Source || c.source || "",
+    "Called For": c["Called For"] || c.calledFor || "",
+    source: c.source || c.Source || "",
+    calledFor: c.calledFor || c["Called For"] || "",
+    Khoji: c.Khoji || "",
+    isAssigned: c.isAssigned === true,
+    _deleted: c._deleted === true,
+    
+    // Top-level compatibility fields
+    status: c.status || "",
+    remark: c.remark || "",
+    callType: c.callType || "outgoing",
+    callbackDate: c.callbackDate || null,
+    isCallbackDue: c.isCallbackDue === true,
+    attenderId: c.attenderId || "",
+    attenderName: c.attenderName || "",
+    lastCalledAt: c.lastCalledAt || null,
+    history: [],
+    
+    createdAt: safeTimestampNumber(c.createdAt),
+    updatedAt: safeTimestampNumber(c.updatedAt)
+  };
+
+  // Only keep history attempts that belong to this month
+  const targetHistory = [];
+  if (c.history) {
+    c.history.forEach(h => {
+      const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+      if (hTs && getMonthStr(hTs) === monthStr) {
+        targetHistory.push(h);
+      }
+    });
+  }
+  pruned.history = targetHistory;
+  
+  if (c.attenderStates) {
+    pruned.attenderStates = {};
+    Object.entries(c.attenderStates).forEach(([attId, state]) => {
+      const prunedHistory = (state.history || []).map(h => ({
+        timestamp: h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate().toISOString() : (h.timestamp.toMillis ? new Date(h.timestamp.toMillis()).toISOString() : String(h.timestamp))) : null,
+        attenderId: h.attenderId || attId || "",
+        attenderName: h.attenderName || state.attenderName || "",
+        status: h.status || "",
+        remark: h.remark || "",
+        callType: h.callType || state.callType || "outgoing",
+        calledFor: h.calledFor || "",
+        source: h.source || ""
+      })).filter(h => {
+        const hTs = h.timestamp ? new Date(h.timestamp) : null;
+        return hTs && getMonthStr(hTs) === monthStr;
+      });
+      
+      pruned.attenderStates[attId] = {
+        attenderName: state.attenderName || "",
+        status: state.status || "",
+        remark: state.remark || "",
+        callType: state.callType || "outgoing",
+        history: prunedHistory,
+        callbackDate: state.callbackDate || null,
+        objectionReason: state.objectionReason || "",
+        lastCalledAt: state.lastCalledAt || null,
+        firstCalledAt: state.firstCalledAt || null,
+        updatedAt: state.updatedAt || ""
+      };
+    });
+  }
+  return pruned;
+};
+
+export const rebuildCallCenterCache = async () => {
+  const q = query(collection(db, "contacts"), where("isAssigned", "==", true));
+  const snap = await getDocs(q);
+  const currentMonth = getMonthStr(new Date());
+  
+  const monthlyData = {};
+  
+  snap.docs.forEach(d => {
+    const data = d.data();
+    if (data._deleted) return;
+    
+    const contactMonths = new Set();
+    const createdMonth = getMonthStr(data.createdAt) || currentMonth;
+    contactMonths.add(createdMonth);
+    
+    if (data.attenderStates) {
+      Object.values(data.attenderStates).forEach(state => {
+        (state.history || []).forEach(h => {
+          const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+          const hMonth = getMonthStr(hTs);
+          if (hMonth) contactMonths.add(hMonth);
+        });
+      });
     }
-    // Filter out deleted
-    logs = logs.filter(c => !c._deleted);
-    // Sort client-side to avoid composite index requirement
+    
+    (data.history || []).forEach(h => {
+      const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+      const hMonth = getMonthStr(hTs);
+      if (hMonth) contactMonths.add(hMonth);
+    });
+    
+    contactMonths.forEach(month => {
+      if (!monthlyData[month]) {
+        monthlyData[month] = {};
+      }
+      monthlyData[month][d.id] = pruneContactForCacheForMonth({ id: d.id, ...data }, month);
+    });
+  });
+  
+  // Clean up any old cache documents first to prevent orphan monthly documents
+  const cacheColl = collection(db, "callCenterCache");
+  const cacheSnap = await getDocs(cacheColl);
+  
+  const batch = writeBatch(db);
+  cacheSnap.docs.forEach(d => {
+    batch.delete(d.ref);
+  });
+  
+  Object.entries(monthlyData).forEach(([month, contactsMap]) => {
+    batch.set(doc(db, "callCenterCache", month), { contacts: contactsMap });
+  });
+  await batch.commit();
+};
+
+export const updateCacheContacts = async (contactIds) => {
+  if (!contactIds || contactIds.length === 0) return;
+  
+  try {
+    await runTransaction(db, async (transaction) => {
+      const contactSnaps = [];
+      const liveContacts = [];
+      
+      for (const id of contactIds) {
+        const contactRef = doc(db, "contacts", id);
+        const contactSnap = await transaction.get(contactRef);
+        contactSnaps.push({ id, snap: contactSnap });
+        if (contactSnap.exists()) {
+          liveContacts.push({ id, data: contactSnap.data() });
+        }
+      }
+      
+      const monthsToLoad = new Set();
+      const currentMonth = getMonthStr(new Date());
+      monthsToLoad.add(currentMonth);
+      
+      liveContacts.forEach(({ data }) => {
+        const createdMonth = getMonthStr(data.createdAt);
+        if (createdMonth) monthsToLoad.add(createdMonth);
+        
+        if (data.attenderStates) {
+          Object.values(data.attenderStates).forEach(state => {
+            (state.history || []).forEach(h => {
+              const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+              const hMonth = getMonthStr(hTs);
+              if (hMonth) monthsToLoad.add(hMonth);
+            });
+          });
+        }
+        
+        (data.history || []).forEach(h => {
+          const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+          const hMonth = getMonthStr(hTs);
+          if (hMonth) monthsToLoad.add(hMonth);
+        });
+      });
+      
+      const cacheSnapsMap = {};
+      const cacheRefMap = {};
+      for (const month of monthsToLoad) {
+        const ref = doc(db, "callCenterCache", month);
+        const snap = await transaction.get(ref);
+        cacheRefMap[month] = ref;
+        cacheSnapsMap[month] = snap;
+      }
+      
+      const monthlyContactsData = {};
+      for (const month of monthsToLoad) {
+        const snap = cacheSnapsMap[month];
+        monthlyContactsData[month] = snap.exists() ? (snap.data().contacts || {}) : {};
+      }
+      
+      contactSnaps.forEach(({ id, snap }) => {
+        const contactExists = snap.exists();
+        const raw = contactExists ? snap.data() : null;
+        const isLive = contactExists && raw.isAssigned && !raw._deleted;
+        
+        const contactMonths = new Set();
+        if (isLive) {
+          const createdMonth = getMonthStr(raw.createdAt) || currentMonth;
+          contactMonths.add(createdMonth);
+          
+          if (raw.attenderStates) {
+            Object.values(raw.attenderStates).forEach(state => {
+              (state.history || []).forEach(h => {
+                const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+                const hMonth = getMonthStr(hTs);
+                if (hMonth) contactMonths.add(hMonth);
+              });
+            });
+          }
+          
+          (raw.history || []).forEach(h => {
+            const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+            const hMonth = getMonthStr(hTs);
+            if (hMonth) contactMonths.add(hMonth);
+          });
+        }
+        
+        for (const month of monthsToLoad) {
+          const contactsMap = monthlyContactsData[month];
+          if (isLive && contactMonths.has(month)) {
+            contactsMap[id] = pruneContactForCacheForMonth({ id, ...raw }, month);
+          } else {
+            delete contactsMap[id];
+          }
+        }
+      });
+      
+      for (const month of monthsToLoad) {
+        transaction.set(cacheRefMap[month], { contacts: monthlyContactsData[month] });
+      }
+    });
+  } catch (err) {
+    console.error("updateCacheContacts error:", err);
+  }
+};
+
+export const verifyCallCenterCache = async () => {
+  try {
+    const q = query(collection(db, "contacts"), where("isAssigned", "==", true));
+    const liveSnap = await getDocs(q);
+    const currentMonth = getMonthStr(new Date());
+    
+    const liveMonthlyData = {};
+    liveSnap.docs.forEach(d => {
+      const data = d.data();
+      if (data._deleted) return;
+      
+      const contactMonths = new Set();
+      const createdMonth = getMonthStr(data.createdAt) || currentMonth;
+      contactMonths.add(createdMonth);
+      
+      if (data.attenderStates) {
+        Object.values(data.attenderStates).forEach(state => {
+          (state.history || []).forEach(h => {
+            const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+            const hMonth = getMonthStr(hTs);
+            if (hMonth) contactMonths.add(hMonth);
+          });
+        });
+      }
+      
+      (data.history || []).forEach(h => {
+        const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+        const hMonth = getMonthStr(hTs);
+        if (hMonth) contactMonths.add(hMonth);
+      });
+      
+      contactMonths.forEach(month => {
+        if (!liveMonthlyData[month]) {
+          liveMonthlyData[month] = {};
+        }
+        liveMonthlyData[month][d.id] = pruneContactForCacheForMonth({ id: d.id, ...data }, month);
+      });
+    });
+    
+    const cacheColl = collection(db, "callCenterCache");
+    const cacheSnap = await getDocs(cacheColl);
+    const cacheMonthlyData = {};
+    cacheSnap.docs.filter(d => d.id !== "contacts").forEach(d => {
+      cacheMonthlyData[d.id] = d.data().contacts || {};
+    });
+    
+    const liveMonths = Object.keys(liveMonthlyData);
+    const cacheMonths = Object.keys(cacheMonthlyData);
+    
+    let mismatches = [];
+    
+    cacheMonths.forEach(m => {
+      if (!liveMonthlyData[m]) {
+        if (Object.keys(cacheMonthlyData[m]).length > 0) {
+          mismatches.push(`Cache month ${m} has contacts, but it is not active in live database.`);
+        }
+      }
+    });
+    
+    liveMonths.forEach(month => {
+      const liveContactsMap = liveMonthlyData[month];
+      const cacheContactsMap = cacheMonthlyData[month] || {};
+      
+      const liveKeys = Object.keys(liveContactsMap);
+      const cacheKeys = Object.keys(cacheContactsMap);
+      
+      if (liveKeys.length !== cacheKeys.length) {
+        mismatches.push(`Month ${month} count mismatch: Live has ${liveKeys.length} contacts, Cache has ${cacheKeys.length}`);
+      }
+      
+      liveKeys.forEach(id => {
+        const liveC = liveContactsMap[id];
+        const cacheC = cacheContactsMap[id];
+        if (!cacheC) {
+          mismatches.push(`Month ${month}: Contact ID ${id} is missing from cache.`);
+          return;
+        }
+        
+        if (liveC.status !== cacheC.status) {
+          mismatches.push(`Month ${month}, Contact ${id} status mismatch: Live "${liveC.status}" vs Cached "${cacheC.status}"`);
+        }
+        if (liveC.source !== cacheC.source) {
+          mismatches.push(`Month ${month}, Contact ${id} source mismatch: Live "${liveC.source}" vs Cached "${cacheC.source}"`);
+        }
+        if (liveC.calledFor !== cacheC.calledFor) {
+          mismatches.push(`Month ${month}, Contact ${id} calledFor mismatch: Live "${liveC.calledFor}" vs Cached "${cacheC.calledFor}"`);
+        }
+        
+        const liveHistoryLen = (liveC.history || []).length;
+        const cachedHistoryLen = (cacheC.history || []).length;
+        if (liveHistoryLen !== cachedHistoryLen) {
+          mismatches.push(`Month ${month}, Contact ${id} history count mismatch: Live ${liveHistoryLen} vs Cached ${cachedHistoryLen}`);
+        }
+      });
+    });
+    
+    if (mismatches.length > 0) {
+      return {
+        status: "mismatch",
+        message: `Found ${mismatches.length} discrepancies between database and cache across months.`,
+        mismatches: mismatches.slice(0, 10)
+      };
+    }
+    
+    return {
+      status: "healthy",
+      message: `All monthly cache documents are 100% healthy! All contacts and history items match perfectly.`,
+      liveCount: liveSnap.docs.length
+    };
+  } catch (err) {
+    console.error("verifyCallCenterCache error:", err);
+    return { status: "error", message: "Failed to verify cache: " + err.message };
+  }
+};
+
+export const subscribeToAllCallLogs = (tag, callback) => {
+  const cacheColl = collection(db, "callCenterCache");
+  
+  return onSnapshot(cacheColl, async (snap) => {
+    if (snap.empty) {
+      console.log("No cache documents exist, rebuilding...");
+      try {
+        await rebuildCallCenterCache();
+      } catch (err) {
+        console.error("Rebuild cache failed:", err);
+      }
+      return;
+    }
+    
+    const sortedDocs = [...snap.docs].filter(d => d.id !== "contacts").sort((a, b) => a.id.localeCompare(b.id));
+    
+    const contactsMap = {};
+    sortedDocs.forEach(docSnap => {
+      const docContacts = docSnap.data().contacts || {};
+      Object.entries(docContacts).forEach(([id, c]) => {
+        if (!contactsMap[id]) {
+          contactsMap[id] = {
+            ...c,
+            history: [...(c.history || [])]
+          };
+        } else {
+          const existing = contactsMap[id];
+          
+          existing.status = c.status;
+          existing.remark = c.remark;
+          existing.callType = c.callType;
+          existing.callbackDate = c.callbackDate;
+          existing.isCallbackDue = c.isCallbackDue;
+          existing.attenderId = c.attenderId;
+          existing.attenderName = c.attenderName;
+          existing.lastCalledAt = c.lastCalledAt;
+          existing.updatedAt = c.updatedAt;
+          
+          existing.history = [...(existing.history || []), ...(c.history || [])];
+          
+          if (c.attenderStates) {
+            if (!existing.attenderStates) existing.attenderStates = {};
+            Object.entries(c.attenderStates).forEach(([attId, state]) => {
+              if (!existing.attenderStates[attId]) {
+                existing.attenderStates[attId] = {
+                  ...state,
+                  history: [...(state.history || [])]
+                };
+              } else {
+                const existingState = existing.attenderStates[attId];
+                existingState.status = state.status;
+                existingState.remark = state.remark;
+                existingState.callType = state.callType;
+                existingState.callbackDate = state.callbackDate;
+                existingState.lastCalledAt = state.lastCalledAt;
+                existingState.firstCalledAt = state.firstCalledAt;
+                existingState.updatedAt = state.updatedAt;
+                existingState.history = [
+                  ...(existingState.history || []),
+                  ...(state.history || [])
+                ];
+              }
+            });
+          }
+        }
+      });
+    });
+    
+    let logs = Object.values(contactsMap);
+    
+    if (tag && tag !== "ALL") {
+      logs = logs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
+    }
+    
+    logs = logs.filter(c => c.isAssigned === true && !c._deleted);
+    
     logs.sort((a, b) => {
-      const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-      const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+      const ta = a.createdAt || 0;
+      const tb = b.createdAt || 0;
       return ta - tb;
     });
+    
     callback(logs);
   }, err => console.error("subscribeToAllCallLogs error:", err));
 };
