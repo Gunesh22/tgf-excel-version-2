@@ -166,6 +166,17 @@ const getConversionDenominator = (status) => {
   return 0;
 };
 
+const shouldGoToEnd = (sourceName) => {
+  const src = String(sourceName || "").toLowerCase().trim();
+  return (
+    src === "khoji" ||
+    src === "book" ||
+    src === "books" ||
+    src === "spritual healing" ||
+    src === "spiritual healing"
+  );
+};
+
 export default function MonthlyReportTab({ programs, attenders = [], settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] }, callLogs = [] }) {
   const [selectedProgramIds, setSelectedProgramIds] = useState([]); // empty = ALL
   const [selectedAttenderIds, setSelectedAttenderIds] = useState([]); // empty = ALL
@@ -932,7 +943,13 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "Outgoing Conversions": a.outgoingConversions,
       "denominator": a.denominator,
       "Conversion Rate (%)": a.denominator ? `${((a.conversions / a.denominator) * 100).toFixed(1)}%` : "0.0%"
-    })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
+    })).sort((a, b) => {
+      const aEnd = shouldGoToEnd(a["Source"]);
+      const bEnd = shouldGoToEnd(b["Source"]);
+      if (aEnd && !bEnd) return 1;
+      if (!aEnd && bEnd) return -1;
+      return b["Total Calls"] - a["Total Calls"];
+    });
   }, [allAttempts]);
 
   const sourceBreakdownTotals = React.useMemo(() => {
@@ -1020,20 +1037,48 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       });
     });
 
-    return Object.values(map).map(a => ({
-      "Source": a.source,
-      "Called For": a.calledFor,
-      "Total Calls": a.total,
-      "Incoming Calls": a.incoming,
-      "Outgoing Calls": a.outgoing,
-      "Total Conversions": a.conversions,
-      "Incoming Conversions": a.incomingConversions,
-      "Outgoing Conversions": a.outgoingConversions,
-      "Incoming Denominator": a.incomingDenominator,
-      "Outgoing Denominator": a.outgoingDenominator,
-      "Incoming Conv. Rate (%)": a.incomingDenominator ? `${((a.incomingConversions / a.incomingDenominator) * 100).toFixed(1)}%` : "0.0%",
-      "Outgoing Conv. Rate (%)": a.outgoingDenominator ? `${((a.outgoingConversions / a.outgoingDenominator) * 100).toFixed(1)}%` : "0.0%"
-    })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
+    const sourceTotals = {};
+    const rows = Object.values(map).map(a => {
+      const row = {
+        "Source": a.source,
+        "Called For": a.calledFor,
+        "Total Calls": a.total,
+        "Incoming Calls": a.incoming,
+        "Outgoing Calls": a.outgoing,
+        "Total Conversions": a.conversions,
+        "Incoming Conversions": a.incomingConversions,
+        "Outgoing Conversions": a.outgoingConversions,
+        "Incoming Denominator": a.incomingDenominator,
+        "Outgoing Denominator": a.outgoingDenominator,
+        "Incoming Conv. Rate (%)": a.incomingDenominator ? `${((a.incomingConversions / a.incomingDenominator) * 100).toFixed(1)}%` : "0.0%",
+        "Outgoing Conv. Rate (%)": a.outgoingDenominator ? `${((a.outgoingConversions / a.outgoingDenominator) * 100).toFixed(1)}%` : "0.0%"
+      };
+      const src = row["Source"];
+      sourceTotals[src] = (sourceTotals[src] || 0) + row["Total Calls"];
+      return row;
+    });
+
+    return rows.sort((a, b) => {
+      const aSrc = a["Source"];
+      const bSrc = b["Source"];
+      
+      const aEnd = shouldGoToEnd(aSrc);
+      const bEnd = shouldGoToEnd(bSrc);
+      
+      if (aEnd && !bEnd) return 1;
+      if (!aEnd && bEnd) return -1;
+      
+      if (aSrc !== bSrc) {
+        const aVol = sourceTotals[aSrc] || 0;
+        const bVol = sourceTotals[bSrc] || 0;
+        if (bVol !== aVol) {
+          return bVol - aVol;
+        }
+        return aSrc.localeCompare(bSrc);
+      }
+      
+      return b["Total Calls"] - a["Total Calls"];
+    });
   }, [allAttempts]);
 
   const sourceVsCalledForBreakdownTotals = React.useMemo(() => {
