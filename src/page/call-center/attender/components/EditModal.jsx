@@ -845,17 +845,15 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     // 1. Current contact's history entries
     const currentHist = Array.isArray(edited.history) ? edited.history : (Array.isArray(row.history) ? row.history : []);
     currentHist.forEach((h, idx) => {
-      if (h.remark && String(h.remark).trim()) {
-        list.push({
-          status: h.status || "",
-          remark: h.remark || "",
-          attenderName: h.attenderName || "Unknown",
-          timestamp: h.timestamp || new Date().toISOString(),
-          isCurrentDoc: true,
-          originalIndex: idx,
-          sourceProgram: row.programName || "This Sheet"
-        });
-      }
+      list.push({
+        status: h.status || "",
+        remark: h.remark || "",
+        attenderName: h.attenderName || "Unknown",
+        timestamp: h.timestamp || new Date().toISOString(),
+        isCurrentDoc: true,
+        originalIndex: idx,
+        sourceProgram: row.programName || "This Sheet"
+      });
     });
 
     // 1b. Also include the standalone remark saved before history tracking existed
@@ -885,16 +883,14 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           // Add history entries
           if (Array.isArray(state.history)) {
             state.history.forEach(h => {
-              if (h.remark && String(h.remark).trim()) {
-                list.push({
-                  status: h.status || "",
-                  remark: h.remark || "",
-                  attenderName: h.attenderName || state.attenderName || "Unknown",
-                  timestamp: h.timestamp || new Date().toISOString(),
-                  isCurrentDoc: otherAttenderId === attenderId,
-                  sourceProgram: progName
-                });
-              }
+              list.push({
+                status: h.status || "",
+                remark: h.remark || "",
+                attenderName: h.attenderName || state.attenderName || "Unknown",
+                timestamp: h.timestamp || new Date().toISOString(),
+                isCurrentDoc: otherAttenderId === attenderId,
+                sourceProgram: progName
+              });
             });
           }
           // Standalone remark for this other attender
@@ -929,16 +925,14 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
               const attProgName = state.programName || progName;
               if (Array.isArray(state.history)) {
                 state.history.forEach(h => {
-                  if (h.remark && String(h.remark).trim()) {
-                    list.push({
-                      status: h.status || "",
-                      remark: h.remark || "",
-                      attenderName: h.attenderName || state.attenderName || "Unknown",
-                      timestamp: h.timestamp || new Date().toISOString(),
-                      isCurrentDoc: false,
-                      sourceProgram: attProgName
-                    });
-                  }
+                  list.push({
+                    status: h.status || "",
+                    remark: h.remark || "",
+                    attenderName: h.attenderName || state.attenderName || "Unknown",
+                    timestamp: h.timestamp || new Date().toISOString(),
+                    isCurrentDoc: false,
+                    sourceProgram: attProgName
+                  });
                 });
               }
               if (state.remark && String(state.remark).trim()) {
@@ -962,16 +956,14 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         // B) Extract top-level history/remarks of the duplicate match
         if (Array.isArray(m.history)) {
           m.history.forEach(h => {
-            if (h.remark && String(h.remark).trim()) {
-              list.push({
-                status: h.status || "",
-                remark: h.remark || "",
-                attenderName: h.attenderName || "Unknown",
-                timestamp: h.timestamp || new Date().toISOString(),
-                isCurrentDoc: false,
-                sourceProgram: progName
-              });
-            }
+            list.push({
+              status: h.status || "",
+              remark: h.remark || "",
+              attenderName: h.attenderName || "Unknown",
+              timestamp: h.timestamp || new Date().toISOString(),
+              isCurrentDoc: false,
+              sourceProgram: progName
+            });
           });
         }
         // Also include standalone remark from duplicate if no history
@@ -992,18 +984,33 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       });
     }
 
+    const getMs = (val) => {
+      if (!val) return 0;
+      if (val instanceof Date) return val.getTime();
+      if (typeof val === "string") return new Date(val).getTime() || 0;
+      if (val.toDate && typeof val.toDate === "function") return val.toDate().getTime() || 0;
+      if (typeof val === "object" && val.seconds !== undefined) return val.seconds * 1000;
+      try {
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? 0 : d.getTime();
+      } catch (e) {
+        return 0;
+      }
+    };
+
     // Sort chronologically ascending
     list.sort((a, b) => {
-      const timeA = new Date(a.timestamp || 0).getTime();
-      const timeB = new Date(b.timestamp || 0).getTime();
+      const timeA = getMs(a.timestamp);
+      const timeB = getMs(b.timestamp);
       return timeA - timeB;
     });
 
-    // Deduplicate by remark + attenderName (timestamp can vary slightly)
+    // Deduplicate by timestamp + remark + status + attenderName
     const seen = new Set();
     const uniqueList = [];
     list.forEach(item => {
-      const key = `${item.remark}_${item.status}_${item.attenderName}`;
+      const timeStr = String(getMs(item.timestamp));
+      const key = `${timeStr}_${item.remark}_${item.status}_${item.attenderName}`;
       if (!seen.has(key)) {
         seen.add(key);
         uniqueList.push(item);
@@ -1120,6 +1127,42 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
     // Fix for Flaw 3: Clicking "Save" with No Changes (Ghost Calls)
     const isNew = !!row._isNew;
+
+    // We compute the call-attempt changes first
+    const getTimestampOrNull = (val) => {
+      if (!val) return null;
+      if (val instanceof Date) return val.getTime();
+      if (typeof val === "string") return new Date(val).getTime();
+      if (val.toDate && typeof val.toDate === "function") return val.toDate().getTime();
+      if (typeof val === "object" && val.seconds !== undefined) return val.seconds * 1000;
+      try {
+        return new Date(val).getTime();
+      } catch (e) {
+        return null;
+      }
+    };
+
+    const oldStatus = String(row.status || "").trim();
+    const newStatus = String(targetEdited.status || "").trim();
+    const statusChanged = oldStatus !== newStatus;
+
+    const newRemarkEntered = String(targetEdited.remark || "").trim() !== "";
+    const remarkChanged = newRemarkEntered;
+
+    const oldCallType = String(row.callType || "outgoing").toLowerCase();
+    const newCallType = String(targetEdited.callType || "outgoing").toLowerCase();
+    const callTypeChanged = oldCallType !== newCallType;
+
+    const oldCallbackTime = getTimestampOrNull(row.callbackDate);
+    const newCallbackTime = getTimestampOrNull(targetEdited.callbackDate);
+    const callbackDateChanged = oldCallbackTime !== newCallbackTime;
+
+    const oldObjection = String(row.objectionReason || "").trim();
+    const newObjection = String(targetEdited.objectionReason || "").trim();
+    const objectionReasonChanged = oldObjection !== newObjection;
+
+    const isCallAttemptUpdated = statusChanged || remarkChanged || callTypeChanged || callbackDateChanged || objectionReasonChanged;
+
     if (!isNew) {
       const cleanForCompare = (val) => {
         if (val === undefined || val === null) return "";
@@ -1134,9 +1177,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         if (["id", "_callbackDue", "_isNew", "attenderStates", "assignedTo", "assignedName", "assignedAt", "isAssigned", "lastEditedBy", "lastEditedAt", "normalizedPhone", "normalizedMobile", "history", "lastCalledAt", "firstCalledAt"].includes(key)) {
           return false;
         }
-        // If we are on the profile tab, ignore changes in call status/remark fields to avoid saving on no profile changes
-        if (activeTab === "profile" && ["status", "remark", "callType", "callbackDate", "objectionReason", "queryStatus"].includes(key)) {
-          return false;
+        if (key === "remark") {
+          return String(targetEdited.remark || "").trim() !== "";
         }
         const val1 = cleanForCompare(row[key]);
         const val2 = cleanForCompare(targetEdited[key]);
@@ -1151,7 +1193,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       }
     }
 
-    if (activeTab === "call") {
+    if (isNew || isCallAttemptUpdated) {
       // Compulsory Status Validation
       if (!targetEdited.status || String(targetEdited.status).trim() === "") {
         toast.error("Please select a call status before saving.", { duration: 4000, position: 'top-center' });
@@ -1207,7 +1249,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       delete updates.normalizedPhone;
       delete updates.normalizedMobile;
 
-      if (activeTab === "profile") {
+      if (!isNew && !isCallAttemptUpdated) {
         // Strip all call-specific fields to prevent ghost calls or history additions
         delete updates.status;
         delete updates.remark;
@@ -1253,9 +1295,6 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         }
 
         // Maintain a timeline of interactions.
-        // Only push a new history entry if:
-        //   a) the status actually changed from what was previously saved, OR
-        //   b) the attender typed a new remark this session (non-empty)
         let baseHistory = Array.isArray(targetEdited.history) ? targetEdited.history : (Array.isArray(row.history) ? row.history : []);
 
         // Conditionally update past history entries if correcting a mistake (not protected by a Reg.Done)
@@ -1286,49 +1325,6 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           });
         }
 
-        // Maintain a timeline of interactions.
-        // Only push a new history entry if:
-        //   a) the status actually changed from what was previously saved, OR
-        //   b) the attender typed a new/modified remark, OR
-        //   c) the call type changed (e.g., from outgoing to incoming), OR
-        //   d) the callback date changed, OR
-        //   e) the objection reason changed.
-        // (Fix: Metadata-only edits that do not alter these call-specific fields will not add a history entry)
-        const oldStatus = String(row.status || "").trim();
-        const newStatus = String(updates.status || "").trim();
-        const statusChanged = oldStatus !== newStatus;
-
-        const oldRemark = String(row.remark || "").trim();
-        const newRemark = String(updates.remark || "").trim();
-        const remarkChanged = oldRemark !== newRemark;
-
-        const oldCallType = String(row.callType || "outgoing").toLowerCase();
-        const newCallType = String(targetEdited.callType || "outgoing").toLowerCase();
-        const callTypeChanged = oldCallType !== newCallType;
-
-        const getTimestampOrNull = (val) => {
-          if (!val) return null;
-          if (val instanceof Date) return val.getTime();
-          if (typeof val === "string") return new Date(val).getTime();
-          if (val.toDate && typeof val.toDate === "function") return val.toDate().getTime();
-          if (typeof val === "object" && val.seconds !== undefined) return val.seconds * 1000;
-          try {
-            return new Date(val).getTime();
-          } catch (e) {
-            return null;
-          }
-        };
-
-        const oldCallbackTime = getTimestampOrNull(row.callbackDate);
-        const newCallbackTime = getTimestampOrNull(updates.callbackDate);
-        const callbackDateChanged = oldCallbackTime !== newCallbackTime;
-
-        const oldObjection = String(row.objectionReason || "").trim();
-        const newObjection = String(updates.objectionReason || "").trim();
-        const objectionReasonChanged = oldObjection !== newObjection;
-
-        const isCallAttemptUpdated = statusChanged || remarkChanged || callTypeChanged || callbackDateChanged || objectionReasonChanged;
-        
         // Scenario 2: Incoming call & Registration on an Outgoing Campaign
         const isIncomingConvertOnOutgoingProgram = 
           updates.status === "Reg.Done" &&
@@ -1416,6 +1412,11 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         } else {
           // Persist the corrected/updated baseHistory even if no new call attempt log was added
           updates.history = baseHistory;
+        }
+
+        // Ensure updates.remark is wiped/deleted if no new remark was entered and we're not saving a new call attempt
+        if (!newRemarkEntered && !isCallAttemptUpdated) {
+          delete updates.remark;
         }
       }
 
@@ -1850,7 +1851,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
                   {/* Past history entries */}
                   {mergedHistory && mergedHistory.length > 0 && (
-                    <div className="space-y-2 pr-1 border border-gray-100 rounded-2xl p-3 bg-gray-50/50 max-h-[250px] overflow-y-auto">
+                    <div className="space-y-2 border border-gray-100 rounded-2xl p-3 bg-gray-50/50">
                       {[...mergedHistory].reverse().map((h, revIdx) => {
                         const origIdx = h.originalIndex;
                         return (
@@ -2404,9 +2405,13 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
 
         <div className="p-6 border-t border-gray-100 bg-gray-50 flex items-center justify-between shadow-inner">
-          <button onClick={handleDelete} className="flex items-center gap-2 text-xs font-bold text-red-400 hover:text-red-600 transition">
-            <Trash2 size={14} /> Remove Entry
-          </button>
+          {(!row._isNew && row.id) ? (
+            <button onClick={handleDelete} className="flex items-center gap-2 text-xs font-bold text-red-400 hover:text-red-600 transition">
+              <Trash2 size={14} /> Remove Entry
+            </button>
+          ) : (
+            <div />
+          )}
           <div className="flex items-center gap-4 text-xs font-bold text-gray-400 tracking-tighter uppercase">
             {saving ? "Saving..." : "All exits auto-save"}
           </div>

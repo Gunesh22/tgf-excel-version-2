@@ -24,6 +24,7 @@ import {
   getFieldWithFallback,
   getKhojiValue,
   isKhojiAffirmative,
+  isKhojiNegative,
   isIgnoredField
 } from "./utils";
 import { EditModal } from "./components/EditModal";
