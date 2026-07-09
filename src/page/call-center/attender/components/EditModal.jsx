@@ -2230,7 +2230,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 </div>
               </div>
 
-              {/* Program Mapping */}
+              {/* Program Mapping (Hidden but not removed) */}
+              {/*
               <div className="space-y-2 max-w-md">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                   <Tag size={13} className="text-indigo-500" /> Program / Tag Mapping
@@ -2274,6 +2275,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                   </div>
                 ))}
               </div>
+              */}
 
               {/* Custom Fields section */}
               {basicFields.length > 0 && (
