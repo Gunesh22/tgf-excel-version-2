@@ -1393,7 +1393,7 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
         ...freshData,
         registeredYearMonth: yearMonth,
         registeredAt: serverTimestamp(),
-        conversionSource: freshData.Source || freshData.Sourse || "Direct",
+        conversionSource: freshData.Source || freshData.source || freshData.Sourse || freshData.sourse || "Direct",
         convertedBy: attenderName || freshData.assignedName || freshData.attenderName || "Unknown",
         programName: freshData.programName || updates.programName || "Unknown"
       };

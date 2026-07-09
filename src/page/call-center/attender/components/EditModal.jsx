@@ -295,9 +295,10 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   const [addedFields, setAddedFields] = useState([]);
   const [localPrograms, setLocalPrograms] = useState(programs);
   const [showCalledForPrompt, setShowCalledForPrompt] = useState(false);
-  const [promptSelection, setPromptSelection] = useState([]);
+  const [promptSelection, setPromptSelection] = useState("");
   const [pendingSave, setPendingSave] = useState(false);
   const [showUndoStatusPrompt, setShowUndoStatusPrompt] = useState(false);
+  const [activeTab, setActiveTab] = useState(() => (row._isNew ? "profile" : "call"));
 
   useEffect(() => {
     setLocalPrograms(programs);
@@ -1133,6 +1134,10 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         if (["id", "_callbackDue", "_isNew", "attenderStates", "assignedTo", "assignedName", "assignedAt", "isAssigned", "lastEditedBy", "lastEditedAt", "normalizedPhone", "normalizedMobile", "history", "lastCalledAt", "firstCalledAt"].includes(key)) {
           return false;
         }
+        // If we are on the profile tab, ignore changes in call status/remark fields to avoid saving on no profile changes
+        if (activeTab === "profile" && ["status", "remark", "callType", "callbackDate", "objectionReason", "queryStatus"].includes(key)) {
+          return false;
+        }
         const val1 = cleanForCompare(row[key]);
         const val2 = cleanForCompare(targetEdited[key]);
         return val1 !== val2;
@@ -1146,34 +1151,36 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       }
     }
 
-    // Compulsory Status Validation
-    if (!targetEdited.status || String(targetEdited.status).trim() === "") {
-      toast.error("Please select a call status before saving.", { duration: 4000, position: 'top-center' });
-      return;
-    }
-
-    // Compulsory Called For Validation
-    const calledForVal = String(targetEdited[calledForField] || "").trim();
-    if (!calledForVal) {
-      toast.error("Please select a 'Called For' program/option before saving.", { duration: 4000, position: 'top-center' });
-      return;
-    }
-
-    // Objection Tracker Validation
-    if ((targetEdited.status === "Not interested" || targetEdited.status === "Not possible") && !targetEdited.objectionReason) {
-      toast.error(`Please select a reason for "${targetEdited.status}" before saving.`, { duration: 4000, position: 'top-center' });
-      return;
-    }
-
-    // REGISTRATION DONE VALIDATION
-    if (targetEdited.status === "Reg.Done" && CALLED_FOR_OPTIONS.length > 1) {
-      const calledForVal = targetEdited[calledForField] || "";
-      const selectedArr = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
-      if (selectedArr.length !== 1) {
-        setPromptSelection("");
-        setPendingSave(true);
-        setShowCalledForPrompt(true);
+    if (activeTab === "call") {
+      // Compulsory Status Validation
+      if (!targetEdited.status || String(targetEdited.status).trim() === "") {
+        toast.error("Please select a call status before saving.", { duration: 4000, position: 'top-center' });
         return;
+      }
+
+      // Compulsory Called For Validation
+      const calledForVal = String(targetEdited[calledForField] || "").trim();
+      if (!calledForVal) {
+        toast.error("Please select a 'Called For' program/option before saving.", { duration: 4000, position: 'top-center' });
+        return;
+      }
+
+      // Objection Tracker Validation
+      if ((targetEdited.status === "Not interested" || targetEdited.status === "Not possible") && !targetEdited.objectionReason) {
+        toast.error(`Please select a reason for "${targetEdited.status}" before saving.`, { duration: 4000, position: 'top-center' });
+        return;
+      }
+
+      // REGISTRATION DONE VALIDATION
+      if (targetEdited.status === "Reg.Done" && CALLED_FOR_OPTIONS.length > 1) {
+        const calledForVal = targetEdited[calledForField] || "";
+        const selectedArr = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
+        if (selectedArr.length !== 1) {
+          setPromptSelection("");
+          setPendingSave(true);
+          setShowCalledForPrompt(true);
+          return;
+        }
       }
     }
 
@@ -1199,133 +1206,182 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       delete updates.lastEditedAt;
       delete updates.normalizedPhone;
       delete updates.normalizedMobile;
-      if (updates.callbackDate) {
-        if (typeof updates.callbackDate === "string") {
-          updates.callbackDate = new Date(updates.callbackDate);
-        }
+
+      if (activeTab === "profile") {
+        // Strip all call-specific fields to prevent ghost calls or history additions
+        delete updates.status;
+        delete updates.remark;
+        delete updates.callType;
+        delete updates.callbackDate;
+        delete updates.callbackStatus;
+        delete updates.objectionReason;
+        delete updates.queryStatus;
+        delete updates.lastCalledAt;
+        delete updates.firstCalledAt;
+        delete updates.history;
       } else {
-        updates.callbackDate = null;
-      }
-
-      // Clean undefined values out of updates because Firebase will CRASH if any field is undefined.
-      Object.keys(updates).forEach(key => {
-        if (updates[key] === undefined) {
-          delete updates[key];
+        if (updates.callbackDate) {
+          if (typeof updates.callbackDate === "string") {
+            updates.callbackDate = new Date(updates.callbackDate);
+          }
+        } else {
+          updates.callbackDate = null;
         }
-      });
 
-      // Ensure any newly added fields are marked as mapped so they show up in the table/attender view
-      if (addedFields.length > 0) {
-        const currentMapped = Array.isArray(updates._mappedFields) ? [...updates._mappedFields] : [];
-        addedFields.forEach(f => {
-          if (!currentMapped.includes(f)) {
-            currentMapped.push(f);
+        // Clean undefined values out of updates because Firebase will CRASH if any field is undefined.
+        Object.keys(updates).forEach(key => {
+          if (updates[key] === undefined) {
+            delete updates[key];
           }
         });
-        updates._mappedFields = currentMapped;
-      }
 
-      // Track call timestamp — always record when attender touched this contact
-      updates.lastCalledAt = new Date().toISOString();
-      if (!row.firstCalledAt && !targetEdited.firstCalledAt) {
-        updates.firstCalledAt = new Date().toISOString();
-      }
-
-      // Maintain a timeline of interactions.
-      // Only push a new history entry if:
-      //   a) the status actually changed from what was previously saved, OR
-      //   b) the attender typed a new remark this session (non-empty)
-      let baseHistory = Array.isArray(targetEdited.history) ? targetEdited.history : (Array.isArray(row.history) ? row.history : []);
-
-      // Conditionally update past history entries if correcting a mistake (not protected by a Reg.Done)
-      const oldCalledFor = String(row[calledForField] || row.calledFor || "").trim();
-      const newCalledFor = String(targetEdited[calledForField] || targetEdited.calledFor || "").trim();
-      const oldSource = String(row[sourceField] || row.source || "").trim();
-      const newSource = String(targetEdited[sourceField] || targetEdited.source || "").trim();
-      const cleanStr = (s) => s ? String(s).toLowerCase().replace(/[\s_-]/g, "") : "";
-
-      if (baseHistory.length > 0) {
-        const isCalledForProtected = baseHistory.some(h => 
-          cleanStr(h.calledFor) === cleanStr(oldCalledFor) && h.status === "Reg.Done"
-        );
-        
-        baseHistory = baseHistory.map(h => {
-          const updatedEntry = { ...h };
-          if (oldCalledFor && newCalledFor && cleanStr(h.calledFor) === cleanStr(oldCalledFor)) {
-            if (!isCalledForProtected) {
-              updatedEntry.calledFor = newCalledFor;
+        // Ensure any newly added fields are marked as mapped so they show up in the table/attender view
+        if (addedFields.length > 0) {
+          const currentMapped = Array.isArray(updates._mappedFields) ? [...updates._mappedFields] : [];
+          addedFields.forEach(f => {
+            if (!currentMapped.includes(f)) {
+              currentMapped.push(f);
             }
-          }
-          if (oldSource && newSource && cleanStr(h.source) === cleanStr(oldSource)) {
-            if (!isCalledForProtected) {
-              updatedEntry.source = newSource;
-            }
-          }
-          return updatedEntry;
-        });
-      }
+          });
+          updates._mappedFields = currentMapped;
+        }
 
-      // Maintain a timeline of interactions.
-      // Only push a new history entry if:
-      //   a) the status actually changed from what was previously saved, OR
-      //   b) the attender typed a new remark this session (non-empty), OR
-      //   c) the call type changed (e.g., from outgoing to incoming)
-      // (Fix for Flaw 1: Metadata edits that do not alter status, remark, or callType will not add a history entry)
-      const statusChanged = row.status !== updates.status;
-      const hasNewRemark = String(updates.remark || "").trim().length > 0;
-      const callTypeChanged = String(row.callType || "outgoing").toLowerCase() !== String(targetEdited.callType || "outgoing").toLowerCase();
-      
-      if (statusChanged || hasNewRemark || callTypeChanged) {
-        const safeName = attenderName || "Unknown";
-        const nowStr = new Date().toISOString();
-        const newHist = {
-          status: updates.status || "",
-          remark: updates.remark || "",
-          attenderName: safeName,
-          timestamp: nowStr,
-          calledFor: targetEdited["Called For"] || targetEdited.calledFor || "",
-          source: targetEdited.Source || targetEdited.source || targetEdited.Sourse || targetEdited.sourse || "",
-          callType: targetEdited.callType || "outgoing"
-        };
+        // Track call timestamp — always record when attender touched this contact
+        updates.lastCalledAt = new Date().toISOString();
+        if (!row.firstCalledAt && !targetEdited.firstCalledAt) {
+          updates.firstCalledAt = new Date().toISOString();
+        }
 
-        // Fix for Flaw 2: 1-minute session collapsing (merge edits by same attender if within 1 min)
-        let collapsed = false;
+        // Maintain a timeline of interactions.
+        // Only push a new history entry if:
+        //   a) the status actually changed from what was previously saved, OR
+        //   b) the attender typed a new remark this session (non-empty)
+        let baseHistory = Array.isArray(targetEdited.history) ? targetEdited.history : (Array.isArray(row.history) ? row.history : []);
+
+        // Conditionally update past history entries if correcting a mistake (not protected by a Reg.Done)
+        const oldCalledFor = String(row[calledForField] || row.calledFor || "").trim();
+        const newCalledFor = String(targetEdited[calledForField] || targetEdited.calledFor || "").trim();
+        const oldSource = String(row[sourceField] || row.source || "").trim();
+        const newSource = String(targetEdited[sourceField] || targetEdited.source || "").trim();
+        const cleanStr = (s) => s ? String(s).toLowerCase().replace(/[\s_-]/g, "") : "";
+
         if (baseHistory.length > 0) {
-          const lastEntryIndex = baseHistory.length - 1;
-          const lastEntry = baseHistory[lastEntryIndex];
+          const isCalledForProtected = baseHistory.some(h => 
+            cleanStr(h.calledFor) === cleanStr(oldCalledFor) && h.status === "Reg.Done"
+          );
           
-          const isSameAttender = String(lastEntry.attenderName || "").toLowerCase().trim() === safeName.toLowerCase().trim();
-          
-          if (isSameAttender && lastEntry.timestamp) {
-            const lastTime = new Date(lastEntry.timestamp).getTime();
-            const currTime = new Date(nowStr).getTime();
-            const diffMinutes = (currTime - lastTime) / (1000 * 60);
-            
-            if (diffMinutes < 1) {
-              const mergedEntry = {
-                ...lastEntry,
-                status: newHist.status,
-                remark: newHist.remark || lastEntry.remark,
-                calledFor: newHist.calledFor,
-                source: newHist.source,
-                callType: newHist.callType,
-                timestamp: nowStr
-              };
-              
-              const updatedHistory = [...baseHistory];
-              updatedHistory[lastEntryIndex] = mergedEntry;
-              updates.history = updatedHistory;
-              collapsed = true;
+          baseHistory = baseHistory.map(h => {
+            const updatedEntry = { ...h };
+            if (oldCalledFor && newCalledFor && cleanStr(h.calledFor) === cleanStr(oldCalledFor)) {
+              if (!isCalledForProtected) {
+                updatedEntry.calledFor = newCalledFor;
+              }
             }
-          }
+            if (oldSource && newSource && cleanStr(h.source) === cleanStr(oldSource)) {
+              if (!isCalledForProtected) {
+                updatedEntry.source = newSource;
+              }
+            }
+            return updatedEntry;
+          });
         }
 
-        if (!collapsed) {
-          updates.history = [...baseHistory, newHist];
+        // Maintain a timeline of interactions.
+        // Only push a new history entry if:
+        //   a) the status actually changed from what was previously saved, OR
+        //   b) the attender typed a new remark this session (non-empty), OR
+        //   c) the call type changed (e.g., from outgoing to incoming)
+        // (Fix for Flaw 1: Metadata edits that do not alter status, remark, or callType will not add a history entry)
+        const statusChanged = row.status !== updates.status;
+        const hasNewRemark = String(updates.remark || "").trim().length > 0;
+        const callTypeChanged = String(row.callType || "outgoing").toLowerCase() !== String(targetEdited.callType || "outgoing").toLowerCase();
+        
+        // Scenario 2: Incoming call & Registration on an Outgoing Campaign
+        const isIncomingConvertOnOutgoingProgram = 
+          updates.status === "Reg.Done" &&
+          String(targetEdited.callType || "outgoing").toLowerCase().startsWith("incoming") &&
+          (targetEdited.programId || row.programId) !== "incoming-calls";
+
+        if (isIncomingConvertOnOutgoingProgram) {
+          const safeName = attenderName || "Unknown";
+          const nowStr = new Date().toISOString();
+
+          // 1. The Incoming Call Log (Query)
+          const queryHist = {
+            status: "Query",
+            remark: updates.remark || "Payment query / incoming confirmation",
+            attenderName: safeName,
+            timestamp: nowStr,
+            calledFor: targetEdited[calledForField] || targetEdited["Called For"] || targetEdited.calledFor || "",
+            source: targetEdited[sourceField] || targetEdited.Source || targetEdited.source || targetEdited.Sourse || targetEdited.sourse || "",
+            callType: targetEdited.callType || "incoming"
+          };
+
+          // 2. The Outgoing Conversion Log (Registration)
+          const regHist = {
+            status: "Reg.Done",
+            remark: "Registered",
+            attenderName: safeName,
+            timestamp: new Date(new Date(nowStr).getTime() + 1000).toISOString(),
+            calledFor: targetEdited[calledForField] || targetEdited["Called For"] || targetEdited.calledFor || "",
+            source: targetEdited[sourceField] || targetEdited.Source || targetEdited.source || targetEdited.Sourse || targetEdited.sourse || "",
+            callType: "outgoing"
+          };
+
+          updates.history = [...baseHistory, queryHist, regHist];
+          updates.callType = "outgoing"; // Force outgoing conversion at root level
+        } else if (statusChanged || hasNewRemark || callTypeChanged) {
+          const safeName = attenderName || "Unknown";
+          const nowStr = new Date().toISOString();
+          const newHist = {
+            status: updates.status || "",
+            remark: updates.remark || "",
+            attenderName: safeName,
+            timestamp: nowStr,
+            calledFor: targetEdited[calledForField] || targetEdited["Called For"] || targetEdited.calledFor || "",
+            source: targetEdited[sourceField] || targetEdited.Source || targetEdited.source || targetEdited.Sourse || targetEdited.sourse || "",
+            callType: targetEdited.callType || "outgoing"
+          };
+
+          // Fix for Flaw 2: 1-minute session collapsing (merge edits by same attender if within 1 min)
+          let collapsed = false;
+          if (baseHistory.length > 0) {
+            const lastEntryIndex = baseHistory.length - 1;
+            const lastEntry = baseHistory[lastEntryIndex];
+            
+            const isSameAttender = String(lastEntry.attenderName || "").toLowerCase().trim() === safeName.toLowerCase().trim();
+            
+            if (isSameAttender && lastEntry.timestamp) {
+              const lastTime = new Date(lastEntry.timestamp).getTime();
+              const currTime = new Date(nowStr).getTime();
+              const diffMinutes = (currTime - lastTime) / (1000 * 60);
+              
+              if (diffMinutes < 1) {
+                const mergedEntry = {
+                  ...lastEntry,
+                  status: newHist.status,
+                  remark: newHist.remark || lastEntry.remark,
+                  calledFor: newHist.calledFor,
+                  source: newHist.source,
+                  callType: newHist.callType,
+                  timestamp: nowStr
+                };
+                
+                const updatedHistory = [...baseHistory];
+                updatedHistory[lastEntryIndex] = mergedEntry;
+                updates.history = updatedHistory;
+                collapsed = true;
+              }
+            }
+          }
+
+          if (!collapsed) {
+            updates.history = [...baseHistory, newHist];
+          }
+        } else {
+          // Persist the corrected/updated baseHistory even if no new call attempt log was added
+          updates.history = baseHistory;
         }
-      } else {
-        // Persist the corrected/updated baseHistory even if no new call attempt log was added
-        updates.history = baseHistory;
       }
 
       updates.lastEditedBy = attenderName || "Unknown";
@@ -1393,6 +1449,28 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     if (modalScrollRef.current) modalScrollRef.current.scrollTop = 0;
   }, [row?.id]);
 
+  const isIncomingCall = String(edited.callType || "outgoing").toLowerCase().startsWith("incoming");
+  
+  const callTheme = isIncomingCall 
+    ? {
+        primary: "emerald",
+        tabClass: "border-emerald-500 text-emerald-700 font-extrabold scale-105",
+        tabLine: "bg-emerald-500",
+        iconClass: "text-emerald-500",
+        panelClass: "bg-emerald-50/20 border-emerald-100/50 shadow-emerald-500/5",
+        callTypeBtnSelected: "bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20 scale-105 font-bold",
+        callTypeBtnUnselected: "bg-white text-emerald-600 border-emerald-100 hover:bg-emerald-50/50"
+      }
+    : {
+        primary: "indigo",
+        tabClass: "border-indigo-500 text-indigo-700 font-extrabold scale-105",
+        tabLine: "bg-indigo-500",
+        iconClass: "text-indigo-500",
+        panelClass: "bg-indigo-50/20 border-indigo-100/50 shadow-indigo-500/5",
+        callTypeBtnSelected: "bg-slate-800 text-white border-slate-800 shadow-md scale-105 font-bold",
+        callTypeBtnUnselected: "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-200"
+      };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" onClick={handleDismiss}>
       <div
@@ -1400,7 +1478,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         onClick={e => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className={`px-6 py-4 flex items-center justify-between ${edited._callbackDue ? "bg-red-600" : "bg-indigo-600 shadow-lg shadow-indigo-600/20"}`}>
+        <div className={`px-6 py-4 flex items-center justify-between ${edited._callbackDue ? "bg-red-600 shadow-lg shadow-red-600/20" : isIncomingCall ? "bg-emerald-600 shadow-lg shadow-emerald-600/20" : "bg-indigo-600 shadow-lg shadow-indigo-600/20"}`}>
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-white">
               {edited.callType === "incoming" ? <PhoneIncoming size={20} /> : <PhoneOutgoing size={20} />}
@@ -1531,800 +1609,762 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             </div>
           )}
 
-          {/* Primary Contact Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            {/* Name */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                <User size={11} className="text-emerald-500" /> Name
-              </label>
-              <input
-                value={edited.Name || ""}
-                onChange={e => handleChange("Name", e.target.value)}
-                onBlur={e => handleChange("Name", formatContactName(e.target.value))}
-                readOnly={!getEditable("Name")}
-                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                  !getEditable("Name")
-                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                }`}
-                placeholder="Enter Name..."
-              />
-            </div>
-
-            {/* Phone */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center justify-between gap-1 mb-1">
-                <span className="flex items-center gap-1">
-                  <Phone size={11} className="text-blue-500" /> Phone
-                </span>
-                {isPhoneDuplicate && (
-                  <span className="text-[9px] text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5 font-bold flex items-center gap-0.5 animate-pulse">
-                    ⚠️ Duplicate Detected
-                  </span>
-                )}
-                {isSearchingCRM && (
-                  <span className="text-[9px] text-purple-700 bg-purple-100 border border-purple-300 rounded px-1.5 py-0.5 font-bold flex items-center gap-0.5">
-                    <Loader size={9} className="animate-spin" /> Searching CRM...
-                  </span>
-                )}
-              </label>
-              <input
-                value={edited.Phone || ""}
-                onChange={e => handleChange("Phone", e.target.value)}
-                readOnly={!getEditable("Phone")}
-                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                  !getEditable("Phone")
-                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                    : isPhoneDuplicate
-                    ? "bg-amber-50 border-amber-400 text-amber-900 placeholder:text-amber-300 focus:ring-amber-500/20 focus:border-amber-500 focus:bg-white"
-                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                }`}
-                placeholder="Enter Phone..."
-              />
-            </div>
-
-            {/* Mobile */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center justify-between gap-1 mb-1">
-                <span className="flex items-center gap-1">
-                  <Phone size={11} className="text-blue-500" /> Mobile
-                </span>
-                {isMobileDuplicate && (
-                  <span className="text-[9px] text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5 font-bold flex items-center gap-0.5 animate-pulse">
-                    ⚠️ Duplicate Detected
-                  </span>
-                )}
-                {isSearchingCRM && (
-                  <span className="text-[9px] text-purple-700 bg-purple-100 border border-purple-300 rounded px-1.5 py-0.5 font-bold flex items-center gap-0.5">
-                    <Loader size={9} className="animate-spin" /> Searching CRM...
-                  </span>
-                )}
-              </label>
-              <input
-                value={edited.Mobile || ""}
-                onChange={e => handleChange("Mobile", e.target.value)}
-                readOnly={!getEditable("Mobile")}
-                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                  !getEditable("Mobile")
-                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                    : isMobileDuplicate
-                    ? "bg-amber-50 border-amber-400 text-amber-900 placeholder:text-amber-300 focus:ring-amber-500/20 focus:border-amber-500 focus:bg-white"
-                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                }`}
-                placeholder="Enter Mobile..."
-              />
-            </div>
-
-            {/* Email */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                <Hash size={11} className="text-purple-500" /> Email
-              </label>
-              <input
-                value={edited.Email || ""}
-                onChange={e => handleChange("Email", e.target.value)}
-                readOnly={!getEditable("Email")}
-                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                  !getEditable("Email")
-                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                }`}
-                placeholder="Enter Email..."
-              />
-            </div>
-
-            {/* City */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                <MapPin size={11} className="text-red-500" /> City
-              </label>
-              <input
-                value={edited.City || ""}
-                onChange={e => handleChange("City", e.target.value)}
-                readOnly={!getEditable("City")}
-                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                  !getEditable("City")
-                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                }`}
-                placeholder="Enter City..."
-              />
-            </div>
-
-            {/* State */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                <MapPin size={11} className="text-red-500" /> State
-              </label>
-              <input
-                value={edited.State || ""}
-                onChange={e => handleChange("State", e.target.value)}
-                readOnly={!getEditable("State")}
-                className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                  !getEditable("State")
-                    ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                    : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                }`}
-                placeholder="Enter State..."
-              />
-            </div>
-
-            {/* Khoji */}
-            <div className="space-y-1 col-span-1 md:col-span-2">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                <User size={11} className="text-emerald-500" /> Khoji
-              </label>
-              <div className="flex gap-2 py-1 items-center min-h-[38px]">
-                {(() => {
-                  const isYes = isKhojiAffirmative(edited.Khoji);
-                  const isNo = isKhojiNegative(edited.Khoji);
-                  const isDew = String(edited.Khoji || "").toLowerCase().includes("dew d") || String(edited.Khoji || "").toLowerCase().includes("dewdrop");
-                  const editable = getEditable("Khoji");
-                  return (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => handleChange("Khoji", "Yes")}
-                        disabled={!editable}
-                        className={`px-6 py-2 rounded-xl text-xs font-bold border transition ${
-                          isYes
-                            ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
-                            : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                        } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
-                      >
-                        Yes
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleChange("Khoji", "No")}
-                        disabled={!editable}
-                        className={`px-6 py-2 rounded-xl text-xs font-bold border transition ${
-                          isNo
-                            ? "bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/20"
-                            : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                        } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
-                      >
-                        No
-                      </button>
-                      <label className="flex items-center gap-2 cursor-pointer ml-4 select-none">
-                        <input
-                          type="checkbox"
-                          checked={isDew}
-                          disabled={!editable}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              handleChange("Khoji", "Dew drop khoji");
-                            } else {
-                              handleChange("Khoji", "Yes");
-                            }
-                          }}
-                          className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                        />
-                        <span className="text-xs font-semibold text-gray-700">Dew drop khoji</span>
-                      </label>
-                    </>
-                  );
-                })()}
-              </div>
-            </div>
-
-            {/* Tags */}
-            <div className="space-y-1 col-span-1 md:col-span-4">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                <Tag size={11} className="text-indigo-500" /> Tags
-              </label>
-              <div className="flex flex-wrap gap-1.5 p-2 bg-gray-50 border border-gray-150 rounded-xl min-h-[38px] items-center">
-                {(() => {
-                  const tagsVal = edited.Tags || "";
-                  const tagsArr = tagsVal.split(",").map(t => t.trim()).filter(Boolean);
-                  if (tagsArr.length === 0) {
-                    return <span className="text-xs text-gray-400 px-2 font-medium">No tags mapped</span>;
-                  }
-                  return tagsArr.map((tag, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 shadow-sm"
-                    >
-                      {tag}
-                    </span>
-                  ));
-                })()}
-              </div>
-            </div>
-          </div>
-
-          {/* Call Type and Options */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              Call Type
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {CALL_TYPE_OPTIONS.map(opt => (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() => handleCallTypeChange(opt)}
-                  className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${
-                    edited.callType === opt
-                      ? "bg-slate-800 text-white border-slate-800 shadow-md scale-105"
-                      : "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-200"
-                  }`}
-                >
-                  {opt === "outgoing f" ? "Outgoing (F)" : opt === "incoming f" ? "Incoming (F)" : opt.charAt(0).toUpperCase() + opt.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Custom Fields section */}
-          {basicFields.length > 0 && (
-            <div className="space-y-4">
-              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                <Plus size={13} className="text-indigo-500" /> Custom Fields
-              </h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {basicFields.map(field => {
-                  const editable = getEditable(field);
-                  return (
-                    <div
-                      key={field}
-                      className={`space-y-1 ${
-                        field === "Tags"
-                          ? "col-span-2 md:col-span-4"
-                          : [
-                              "What do you want to get out of this call",
-                              "How Did You Hear About Us?",
-                              "What is stopping you from hitting results...",
-                              "Tentative Date of the Mini Shivir you attended",
-                              "Which Mini Shivir did you attend?",
-                              "Your Health issues",
-                              "What is your Tejstan/Center name"
-                            ].includes(field)
-                          ? "col-span-2 md:col-span-4"
-                          : [
-                              "Profession", "Source of Information", "When You want to attend the event:", 
-                              "Shivir/event category", "Guest Designation", "Platform Name:"
-                            ].includes(field) || field.length > 15
-                          ? "col-span-2 md:col-span-2"
-                          : "col-span-1 md:col-span-1"
-                      }`}
-                    >
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-                        {iconFor(field)} {field}
-                      </label>
-                      {field.toLowerCase().includes("asmani") || field.toLowerCase().includes("aasmani") || field.toLowerCase().includes("आसमानी") || field.toLowerCase().includes("shivir done") || (field.toLowerCase().includes("khoji") && !field.toLowerCase().includes("id")) ? (
-                        <div className="flex gap-2 py-1 items-center min-h-[38px]">
-                          {(() => {
-                             const isYes = isKhojiAffirmative(edited[field]);
-                             const isNo = isKhojiNegative(edited[field]);
-                             const isDew = String(edited[field] || "").toLowerCase().includes("dew d") || String(edited[field] || "").toLowerCase().includes("dewdrop");
-                             const showDewDrop = field.toLowerCase().includes("khoji");
-                             return (
-                               <>
-                                 <button
-                                   type="button"
-                                   onClick={() => handleChange(field, "Yes")}
-                                   disabled={!editable}
-                                   className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
-                                     isYes
-                                       ? "bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20"
-                                       : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                                   } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
-                                 >
-                                   Yes
-                                 </button>
-                                 <button
-                                   type="button"
-                                   onClick={() => handleChange(field, "No")}
-                                   disabled={!editable}
-                                   className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
-                                     isNo
-                                       ? "bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/20"
-                                       : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                                   } ${!editable ? "opacity-60 cursor-not-allowed" : ""}`}
-                                 >
-                                   No
-                                 </button>
-                                 {showDewDrop && (
-                                   <label className="flex items-center gap-2 cursor-pointer ml-4 select-none">
-                                     <input
-                                       type="checkbox"
-                                       checked={isDew}
-                                       disabled={!editable}
-                                       onChange={(e) => {
-                                         if (e.target.checked) {
-                                           handleChange(field, "Dew drop khoji");
-                                         } else {
-                                           handleChange(field, "Yes");
-                                         }
-                                       }}
-                                       className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                                     />
-                                     <span className="text-xs font-semibold text-gray-700">Dew drop khoji</span>
-                                   </label>
-                                 )}
-                               </>
-                             );
-                          })()}
-                        </div>
-                      ) : (
-                        <input
-                          value={edited[field] || ""}
-                          onChange={e => handleChange(field, e.target.value)}
-                          readOnly={!editable}
-                          className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                            !editable
-                              ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                              : "bg-gray-50 border-gray-100 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white"
-                          }`}
-                          placeholder={`Enter ${field}...`}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Add Custom Field button */}
-          <div className="flex justify-end">
+          {/* Tab Switcher */}
+          <div className="flex border-b border-gray-150 gap-6 mb-6">
             <button
               type="button"
-              onClick={handleAddField}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-700 rounded-xl text-xs font-black transition-all border border-indigo-100/80 shadow-sm hover:shadow-md cursor-pointer"
+              onClick={() => setActiveTab("call")}
+              className={`pb-3 text-sm font-black tracking-wider uppercase flex items-center gap-2 border-b-2 transition-all relative ${
+                activeTab === "call"
+                  ? callTheme.tabClass
+                  : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
+              }`}
             >
-              <Plus size={14} className="stroke-[3]" /> Add Custom Field
+              <Phone size={14} className={activeTab === "call" ? callTheme.iconClass : "text-gray-400"} />
+              Record Call Entry
+              {activeTab === "call" && (
+                <span className={`absolute bottom-[-2px] left-0 right-0 h-0.5 rounded-full ${callTheme.tabLine} animate-pulse`} />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("profile")}
+              className={`pb-3 text-sm font-black tracking-wider uppercase flex items-center gap-2 border-b-2 transition-all relative ${
+                activeTab === "profile"
+                  ? callTheme.tabClass
+                  : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
+              }`}
+            >
+              <User size={14} className={activeTab === "profile" ? callTheme.iconClass : "text-gray-400"} />
+              Edit Profile Details
+              {activeTab === "profile" && (
+                <span className={`absolute bottom-[-2px] left-0 right-0 h-0.5 rounded-full ${callTheme.tabLine} animate-pulse`} />
+              )}
             </button>
           </div>
 
-          {/* Lead form question responses – full-width textareas */}
-          {questionFields.length > 0 && (
-            <div className="space-y-3">
-              <p className="text-[10px] font-black text-purple-400 uppercase tracking-widest flex items-center gap-1.5"><MessageSquare size={11} /> Lead Form Responses</p>
-              {questionFields.map(field => (
-                <div key={field} className="bg-purple-50/40 border border-purple-100 rounded-xl p-3 space-y-1.5">
-                  <label className="text-[10px] font-semibold text-purple-700 leading-snug block">{labelFor(field)}</label>
-                  <textarea
-                    value={edited[field] || ""}
-                    readOnly={true}
-                    ref={el => {
-                      if (el) {
-                        setTimeout(() => {
-                          el.style.height = 'inherit';
-                          el.style.height = `${el.scrollHeight}px`;
-                        }, 0);
+          {activeTab === "call" ? (
+            <div className={`space-y-6 p-6 rounded-3xl border transition-all ${callTheme.panelClass}`}>
+              {/* Call Type and Options */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  Call Type
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {CALL_TYPE_OPTIONS.map(opt => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => handleCallTypeChange(opt)}
+                      className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${
+                        edited.callType === opt
+                          ? callTheme.callTypeBtnSelected
+                          : callTheme.callTypeBtnUnselected
+                      }`}
+                    >
+                      {opt === "outgoing f" ? "Outgoing (F)" : opt === "incoming f" ? "Incoming (F)" : opt.charAt(0).toUpperCase() + opt.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Called For and Source Dropdowns */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Searchable Dropdown: Called For */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <Phone size={13} className="text-blue-500" /> Called For <span className="text-red-500 font-bold ml-0.5">*</span>
+                  </label>
+                  <SearchableDropdown
+                    options={CALLED_FOR_OPTIONS}
+                    selected={String(edited[calledForField] || "")}
+                    onChange={val => handleChange(calledForField, val)}
+                    placeholder="Search & select multiple..."
+                    isMulti={true}
+                    colorClass="blue"
+                    disabled={!getEditable(calledForField)}
+                  />
+                  {getOtherValuesForField(calledForField).map((item, idx) => (
+                    <div key={idx} className="text-[10px] text-blue-600 font-bold mt-1 flex items-center gap-1">
+                      <span className="opacity-70">👤 {item.name}:</span>
+                      <span className="bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 font-medium">
+                        {Array.isArray(item.val) ? item.val.join(", ") : String(item.val)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Searchable Dropdown: Source */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <Tag size={13} className="text-amber-500" /> Source
+                  </label>
+                  <SearchableDropdown
+                    options={SOURCE_OPTIONS}
+                    selected={String(edited[sourceField] || "")}
+                    onChange={val => handleChange(sourceField, val)}
+                    placeholder="Search & select source..."
+                    colorClass="amber"
+                    disabled={!getEditable(sourceField)}
+                  />
+                  {getOtherValuesForField(sourceField).map((item, idx) => (
+                    <div key={idx} className="text-[10px] text-amber-600 font-bold mt-1 flex items-center gap-1">
+                      <span className="opacity-70">👤 {item.name}:</span>
+                      <span className="bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 font-medium">{item.val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Call Result Status & Objection Tracker */}
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <CheckCircle2 size={13} className="text-indigo-500" /> General Result Status <span className="text-red-500 font-bold ml-0.5">*</span>
+                  </label>
+                  <SearchableDropdown
+                    options={STATUS_OPTIONS}
+                    selected={edited.status || ""}
+                    onChange={val => {
+                      if (val === "Reg.Done") {
+                        const calledForVal = edited[calledForField] || "";
+                        const selectedArr = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
+                        if (selectedArr.length !== 1 && CALLED_FOR_OPTIONS.length > 1) {
+                          setPromptSelection("");
+                          setPendingSave(false);
+                          setShowCalledForPrompt(true);
+                          return;
+                        }
                       }
+                      setEdited(prev => ({
+                        ...prev,
+                        status: val,
+                        queryStatus: val === "Query" ? (prev.queryStatus || "Pending") : prev.queryStatus,
+                      }));
                     }}
-                    rows={1}
-                    className="w-full bg-gray-100/60 border border-purple-100/80 rounded-lg px-3 py-2 text-sm text-gray-500 cursor-not-allowed resize-none overflow-hidden focus:outline-none transition leading-relaxed placeholder:text-gray-300"
-                    placeholder="No response..."
+                    placeholder="Search & select status..."
+                    colorClass="indigo"
+                  />
+                  {getOtherValuesForField("status").map((item, idx) => (
+                    <div key={idx} className="text-[10px] text-indigo-600 font-bold mt-1 flex items-center gap-1">
+                      <span className="opacity-70">👤 {item.name}:</span>
+                      <span className="bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-medium">{item.val}</span>
+                    </div>
+                  ))}
+
+                  {/* Query Sub-status Toggle */}
+                  {edited.status === "Query" && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest shrink-0">Query:</span>
+                      <div className="flex gap-1.5">
+                        {["Pending", "Solved"].map(qs => (
+                          <button
+                            key={qs}
+                            type="button"
+                            onClick={() => handleChange("queryStatus", qs)}
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all ${
+                              (edited.queryStatus || "Pending") === qs
+                                ? qs === "Pending"
+                                  ? "bg-amber-500 text-white border-amber-500 shadow shadow-amber-500/20 scale-105"
+                                  : "bg-emerald-500 text-white border-emerald-500 shadow shadow-emerald-500/20 scale-105"
+                                : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
+                            }`}
+                          >
+                            {qs === "Pending" ? "⏳ Pending" : "✅ Solved"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Objection Tracker */}
+                {(edited.status === "Not interested" || edited.status === "Not possible") && (
+                  <div className="space-y-3 p-4 bg-red-50/50 border border-red-100 rounded-2xl animate-slide-up">
+                    <label className="text-[10px] font-black text-red-500 uppercase tracking-widest flex items-center gap-2">
+                      <AlertCircle size={13} /> Why are they {edited.status.toLowerCase()}?
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {OBJECTION_REASONS.map(reason => (
+                        <button
+                          key={reason}
+                          type="button"
+                          onClick={() => handleChange("objectionReason", edited.objectionReason === reason ? "" : reason)}
+                          className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${edited.objectionReason === reason
+                              ? "bg-red-500 text-white border-red-500 shadow-lg shadow-red-500/20 scale-105"
+                              : "bg-white text-red-600 border-red-200 hover:bg-red-100"
+                            }`}
+                        >
+                          {reason}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Call Notes & History */}
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <MessageSquare size={13} className="text-indigo-500" /> Call Notes
+                    {mergedHistory && mergedHistory.length > 0 && (
+                      <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-600 rounded text-[9px] font-black">{mergedHistory.length} past</span>
+                    )}
+                  </label>
+
+                  {/* Past history entries */}
+                  {mergedHistory && mergedHistory.length > 0 && (
+                    <div className="space-y-2 pr-1 border border-gray-100 rounded-2xl p-3 bg-gray-50/50 max-h-[250px] overflow-y-auto">
+                      {[...mergedHistory].reverse().map((h, revIdx) => {
+                        const origIdx = h.originalIndex;
+                        return (
+                          <div key={revIdx} className="flex gap-2.5">
+                            <div className="shrink-0 flex flex-col items-center pt-2">
+                              <div className={`w-2 h-2 rounded-full ${h.isCurrentDoc ? "bg-indigo-300" : "bg-amber-400 animate-pulse"} shrink-0`} />
+                              {revIdx < mergedHistory.length - 1 && <div className="w-px flex-1 bg-gray-200 mt-1" />}
+                            </div>
+                            <div className="flex-1 bg-white rounded-xl p-3 border border-gray-100 shadow-sm mb-1">
+                              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                <span className="text-[10px] font-black text-gray-500 uppercase tracking-wide">
+                                  📅 {(() => {
+                                    const d = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : (h.timestamp.seconds ? new Date(h.timestamp.seconds * 1000) : new Date(h.timestamp))) : null;
+                                    return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "Unknown Date";
+                                  })()}
+                                </span>
+                                {h.status && (
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${h.status === "Interested" ? "bg-blue-100 text-blue-700" :
+                                    h.status === "Reg.Done" ? "bg-emerald-100 text-emerald-700" :
+                                      "bg-gray-100 text-gray-600"
+                                    }`}>{h.status}</span>
+                                )}
+                                {!h.isCurrentDoc && (
+                                  <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[9px] font-bold border border-amber-200 uppercase tracking-wider">
+                                    {h.sourceProgram}
+                                  </span>
+                                )}
+                                <span className="text-[9px] text-gray-300 font-bold ml-auto truncate max-w-[80px]">{h.attenderName}</span>
+                              </div>
+                              <textarea
+                                value={h.remark || ""}
+                                readOnly={!h.isCurrentDoc || origIdx === -1}
+                                onChange={e => {
+                                  if (!h.isCurrentDoc || origIdx === -1) return;
+                                  const updatedHistory = [...(edited.history || [])];
+                                  updatedHistory[origIdx] = { ...updatedHistory[origIdx], remark: e.target.value };
+                                  handleChange("history", updatedHistory);
+                                  e.target.style.height = 'inherit';
+                                  e.target.style.height = `${e.target.scrollHeight}px`;
+                                }}
+                                onFocus={e => {
+                                  e.target.style.height = 'inherit';
+                                  e.target.style.height = `${e.target.scrollHeight}px`;
+                                }}
+                                ref={el => {
+                                  if (el) {
+                                    setTimeout(() => {
+                                      el.style.height = 'inherit';
+                                      el.style.height = `${el.scrollHeight}px`;
+                                    }, 0);
+                                  }
+                                }}
+                                rows={1}
+                                className={`w-full bg-transparent text-sm text-gray-700 resize-none overflow-hidden focus:outline-none rounded-lg px-1 py-0.5 transition leading-relaxed placeholder:text-gray-300 ${
+                                  h.isCurrentDoc && origIdx !== -1 ? "focus:bg-slate-50 focus:ring-2 focus:ring-indigo-100" : "text-gray-500 italic"
+                                }`}
+                                placeholder="No note for this call..."
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* New note text area */}
+                  <div className="relative">
+                    <textarea
+                      value={edited.remark || ""}
+                      onChange={e => {
+                        handleChange("remark", e.target.value);
+                        e.target.style.height = 'inherit';
+                        e.target.style.height = `${e.target.scrollHeight}px`;
+                      }}
+                      onFocus={e => {
+                        e.target.style.height = 'inherit';
+                        e.target.style.height = `${e.target.scrollHeight}px`;
+                      }}
+                      ref={el => {
+                        if (el) {
+                          setTimeout(() => {
+                            el.style.height = 'inherit';
+                            el.style.height = `${el.scrollHeight}px`;
+                          }, 0);
+                        }
+                      }}
+                      rows={2}
+                      className="w-full px-4 py-3 bg-white border-2 border-indigo-200 rounded-2xl text-sm font-medium resize-none overflow-hidden focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition leading-relaxed"
+                      placeholder="✏️ Add note for today's call..."
+                    />
+                    <span className="absolute bottom-3 right-3 text-[9px] text-indigo-300 font-black uppercase tracking-wider pointer-events-none">New Note</span>
+                  </div>
+                </div>
+
+                {/* Follow-up / Callback scheduling */}
+                <div className="space-y-2">
+                  <label className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-2 ${edited.callbackDate ? "text-amber-500" : "text-slate-400"}`}>
+                    <CalendarDays size={13} /> {edited.callbackDate ? "Follow-up Scheduled" : "Schedule Follow-up"}
+                  </label>
+                  <div className="flex gap-3">
+                    <input
+                      type="date"
+                      value={getCallbackDateStr()}
+                      onChange={e => {
+                        handleChange("callbackDate", e.target.value);
+                        if (e.target.value && !edited.callbackStatus) handleChange("callbackStatus", "pending");
+                      }}
+                      className={`flex-1 px-4 py-3 border rounded-2xl text-sm font-bold focus:outline-none transition ${edited.callbackDate ? "bg-amber-50 border-amber-200 text-amber-700 ring-4 ring-amber-500/10" : "bg-gray-50 border-gray-100 text-gray-700"}`}
+                    />
+                    {edited.callbackDate && (
+                      <button type="button" onClick={() => { handleChange("callbackDate", null); handleChange("callbackStatus", null); }} className="px-4 py-2 bg-red-50 text-red-500 font-bold rounded-xl text-xs hover:bg-red-100 transition">Remove</button>
+                    )}
+                  </div>
+
+                  {edited.callbackDate && (
+                    <div className="flex gap-2 flex-wrap pt-1">
+                      {[
+                        { value: "pending", label: "⏳ Pending", activeClass: "bg-amber-500 text-white border-amber-500 shadow-lg shadow-amber-400/20", inactiveClass: "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100" },
+                        { value: "done", label: "✅ Done", activeClass: "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-400/20", inactiveClass: "bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100" },
+                        { value: "rescheduled", label: "🔄 Rescheduled", activeClass: "bg-blue-500 text-white border-blue-500 shadow-lg shadow-blue-400/20", inactiveClass: "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100" },
+                        { value: "cancelled", label: "❌ Cancelled", activeClass: "bg-red-500 text-white border-red-500 shadow-lg shadow-red-400/20", inactiveClass: "bg-red-50 text-red-500 border-red-200 hover:bg-red-100" },
+                      ].map(opt => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => handleChange("callbackStatus", opt.value)}
+                          className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all ${(edited.callbackStatus || "pending") === opt.value
+                            ? opt.activeClass + " scale-105"
+                            : opt.inactiveClass + " scale-95 hover:scale-100"
+                            }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Fast Registration */}
+                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col gap-3">
+                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm uppercase tracking-wider">
+                    <Flame size={16} /> Fast Registration
+                  </div>
+                  {edited.status === "Reg.Done" ? (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={true}
+                        className="flex-1 py-3 rounded-xl font-bold bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2"
+                      >
+                        <CheckCircle2 size={18} />
+                        Added to Abhivyakti
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowUndoStatusPrompt(true)}
+                        className="px-4 py-3 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs transition flex items-center justify-center gap-1 active:scale-95 hover:scale-105"
+                      >
+                        Undo
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const calledForVal = edited[calledForField] || "";
+                        const selectedArr = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
+                        if (selectedArr.length !== 1 && CALLED_FOR_OPTIONS.length > 1) {
+                          setPromptSelection("");
+                          setPendingSave(true);
+                          setShowCalledForPrompt(true);
+                        } else {
+                          const targetProg = selectedArr.length === 1 ? selectedArr[0] : (CALLED_FOR_OPTIONS[0] || "");
+                          handleSaveAndClose({
+                            [calledForField]: targetProg,
+                            status: "Reg.Done"
+                          });
+                        }
+                      }}
+                      className="w-full py-3 rounded-xl font-bold transition flex items-center justify-center gap-2 bg-white text-emerald-700 border-2 border-emerald-500 hover:bg-emerald-50 active:scale-95"
+                    >
+                      <CheckCircle2 size={18} />
+                      Add to Abhivyakti Report
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6 p-6 rounded-3xl border border-gray-100 bg-gray-50/30">
+              {/* Primary Contact Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {/* Name */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                    <User size={11} className="text-emerald-500" /> Name
+                  </label>
+                  <input
+                    value={edited.Name || ""}
+                    onChange={e => handleChange("Name", e.target.value)}
+                    onBlur={e => handleChange("Name", formatContactName(e.target.value))}
+                    readOnly={!getEditable("Name")}
+                    className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                      !getEditable("Name")
+                        ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                        : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                    }`}
                   />
                 </div>
-              ))}
-            </div>
-          )}
 
-          {/* Campaign & Ads metadata – compact 3-col grid, always visible */}
-          {campaignFields.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5"><Tag size={10} /> Campaign / Ads Data</p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-3 bg-gray-50/50 border border-gray-100 rounded-xl">
-                {campaignFields.map(field => (
-                  <div key={field} className="space-y-1">
-                    <label className="text-[9px] font-black text-gray-300 uppercase tracking-widest block">{labelFor(field)}</label>
-                    <input
-                      value={edited[field] || ""}
-                      readOnly={true}
-                      className="w-full px-2 py-1.5 bg-gray-100/60 border border-gray-150 rounded-lg text-xs font-mono text-gray-400 cursor-not-allowed focus:outline-none transition"
-                      placeholder="—"
-                    />
+                {/* Phone */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                    <Phone size={11} className="text-blue-500" /> Phone
+                  </label>
+                  <input
+                    value={edited.Phone || ""}
+                    onChange={e => handleChange("Phone", e.target.value)}
+                    readOnly={!getEditable("Phone")}
+                    className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                      !getEditable("Phone")
+                        ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                        : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                    }`}
+                  />
+                </div>
+
+                {/* Mobile */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                    <Phone size={11} className="text-cyan-500" /> Mobile
+                  </label>
+                  <input
+                    value={edited.Mobile || ""}
+                    onChange={e => handleChange("Mobile", e.target.value)}
+                    readOnly={!getEditable("Mobile")}
+                    className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                      !getEditable("Mobile")
+                        ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                        : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                    }`}
+                  />
+                </div>
+
+                {/* Email */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                    <Hash size={11} className="text-purple-500" /> Email
+                  </label>
+                  <input
+                    value={edited.Email || ""}
+                    onChange={e => handleChange("Email", e.target.value)}
+                    readOnly={!getEditable("Email")}
+                    className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                      !getEditable("Email")
+                        ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                        : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                    }`}
+                  />
+                </div>
+
+                {/* City */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                    <MapPin size={11} className="text-red-500" /> City
+                  </label>
+                  <input
+                    value={edited.City || ""}
+                    onChange={e => handleChange("City", e.target.value)}
+                    readOnly={!getEditable("City")}
+                    className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                      !getEditable("City")
+                        ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                        : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                    }`}
+                  />
+                </div>
+
+                {/* State */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                    <MapPin size={11} className="text-orange-500" /> State
+                  </label>
+                  <input
+                    value={edited.State || ""}
+                    onChange={e => handleChange("State", e.target.value)}
+                    readOnly={!getEditable("State")}
+                    className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                      !getEditable("State")
+                        ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                        : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                    }`}
+                  />
+                </div>
+
+                {/* Khoji */}
+                <div className="space-y-1 col-span-1 md:col-span-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                    <CheckCircle2 size={11} className="text-pink-500" /> Khoji
+                  </label>
+                  <div className="flex items-center gap-2 h-[38px]">
+                    {(() => {
+                      const isDew = edited.Khoji === "Dew drop khoji";
+                      const isYes = edited.Khoji === "Yes" || isDew;
+                      const editable = getEditable("Khoji");
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            disabled={!editable}
+                            onClick={() => handleChange("Khoji", isYes ? "No" : "Yes")}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition ${
+                              isYes
+                                ? "bg-emerald-500 border-emerald-500 text-white shadow-sm"
+                                : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                            }`}
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!editable}
+                            onClick={() => handleChange("Khoji", isYes ? "No" : "Yes")}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition ${
+                              !isYes
+                                ? "bg-red-500 border-red-500 text-white shadow-sm"
+                                : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                            }`}
+                          >
+                            No
+                          </button>
+                          <label className="flex items-center gap-2 cursor-pointer ml-4 select-none">
+                            <input
+                              type="checkbox"
+                              checked={isDew}
+                              disabled={!editable}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  handleChange("Khoji", "Dew drop khoji");
+                                } else {
+                                  handleChange("Khoji", "Yes");
+                                }
+                              }}
+                              className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                            />
+                            <span className="text-xs font-semibold text-gray-700">Dew drop khoji</span>
+                          </label>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Tags */}
+                <div className="space-y-1 col-span-1 md:col-span-4">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
+                    <Tag size={11} className="text-indigo-500" /> Tags
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 p-2 bg-gray-50 border border-gray-150 rounded-xl min-h-[38px] items-center">
+                    {(() => {
+                      const tagsVal = edited.Tags || "";
+                      const tagsArr = tagsVal.split(",").map(t => t.trim()).filter(Boolean);
+                      if (tagsArr.length === 0) {
+                        return <span className="text-xs text-gray-400 px-2 font-medium">No tags mapped</span>;
+                      }
+                      return tagsArr.map((tag, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 shadow-sm"
+                        >
+                          {tag}
+                        </span>
+                      ));
+                    })()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Program Mapping */}
+              <div className="space-y-2 max-w-md">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <Tag size={13} className="text-indigo-500" /> Program / Tag Mapping
+                </label>
+                <SearchableDropdown
+                  options={["— Untagged —", ...localPrograms.map(p => p.name)]}
+                  selected={edited.programName || "— Untagged —"}
+                  onChange={val => {
+                    if (!val || val === "— Untagged —") {
+                      handleChange("programId", "");
+                      handleChange("programName", "");
+                      handleChange("Sub Program", "");
+                      handleChange("subProgram", "");
+                    } else {
+                      const prog = localPrograms.find(p => p.name === val);
+                      if (prog) {
+                        handleChange("programId", prog.id);
+                        handleChange("programName", prog.name);
+                        handleChange("Sub Program", prog.name);
+                        handleChange("subProgram", prog.name);
+                        
+                        // Sync to Tags field for display
+                        const existingTagsStr = edited.Tags || "";
+                        const existingTags = existingTagsStr.split(",").map(x => x.trim()).filter(Boolean);
+                        if (!existingTags.includes(prog.name)) {
+                          existingTags.push(prog.name);
+                        }
+                        handleChange("Tags", existingTags.join(", "));
+                      }
+                    }
+                  }}
+                  placeholder="Search & select program..."
+                  allowCreate={true}
+                  onCreate={handleCreateProgramTag}
+                  colorClass="indigo"
+                />
+                {getOtherValuesForField("programName").map((item, idx) => (
+                  <div key={idx} className="text-[10px] text-indigo-600 font-bold mt-1 flex items-center gap-1">
+                    <span className="opacity-70">👤 {item.name}:</span>
+                    <span className="bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-medium">{item.val}</span>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
 
-          {/* Dropdown selectors for Source, Called For, Program Mapping */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Searchable Dropdown: Source */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Tag size={13} className="text-amber-500" /> Source
-              </label>
-              <SearchableDropdown
-                options={SOURCE_OPTIONS}
-                selected={String(edited[sourceField] || "")}
-                onChange={val => handleChange(sourceField, val)}
-                placeholder="Search & select source..."
-                colorClass="amber"
-                disabled={!getEditable(sourceField)}
-              />
-              {getOtherValuesForField(sourceField).map((item, idx) => (
-                <div key={idx} className="text-[10px] text-amber-600 font-bold mt-1 flex items-center gap-1">
-                  <span className="opacity-70">👤 {item.name}:</span>
-                  <span className="bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 font-medium">{item.val}</span>
+              {/* Custom Fields section */}
+              {basicFields.length > 0 && (
+                <div className="space-y-4">
+                  <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                    <Plus size={13} className="text-indigo-500" /> Custom Fields
+                  </h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {basicFields.map(field => {
+                      const editable = getEditable(field);
+                      return (
+                        <div
+                          key={field}
+                          className={`space-y-1 ${
+                            field === "Tags"
+                              ? "col-span-2 md:col-span-4"
+                              : [
+                                  "What do you want to get out of this call",
+                                  "How Did You Hear About Us?",
+                                  "What is stopping you from hitting results...",
+                                  "Tentative Date of the Mini Shivir you attended",
+                                  "Which Mini Shivir did you attend?",
+                                  "Your Health issues",
+                                  "What is your Tejstan/Center name"
+                                ].includes(field)
+                              ? "col-span-2 md:col-span-4"
+                              : [
+                                  "Profession", "Source of Information", "When You want to attend the event:", 
+                                  "Shivir/event category", "Guest Designation", "Platform Name:"
+                                ].includes(field) || field.length > 15
+                              ? "col-span-2 md:col-span-2"
+                              : "col-span-1"
+                          }`}
+                        >
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1 truncate" title={labelFor(field)}>
+                            {iconFor(field)} {labelFor(field)}
+                          </label>
+                          {String(field).toLowerCase().includes("note") || String(field).toLowerCase().includes("remark") || field.length > 30 ? (
+                            <textarea
+                              value={edited[field] || ""}
+                              onChange={e => handleChange(field, e.target.value)}
+                              readOnly={!editable}
+                              className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                                !editable
+                                  ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0"
+                                  : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                              }`}
+                              rows={2}
+                            />
+                          ) : (
+                            <input
+                              value={edited[field] || ""}
+                              onChange={e => handleChange(field, e.target.value)}
+                              readOnly={!editable}
+                              className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                                !editable
+                                  ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0"
+                                  : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                              }`}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              ))}
-            </div>
+              )}
 
-            {/* Searchable Dropdown: Called For */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Phone size={13} className="text-blue-500" /> Called For <span className="text-red-500 font-bold ml-0.5">*</span>
-              </label>
-              <SearchableDropdown
-                options={CALLED_FOR_OPTIONS}
-                selected={String(edited[calledForField] || "")}
-                onChange={val => handleChange(calledForField, val)}
-                placeholder="Search & select multiple..."
-                isMulti={true}
-                colorClass="blue"
-                disabled={!getEditable(calledForField)}
-              />
-              {getOtherValuesForField(calledForField).map((item, idx) => (
-                <div key={idx} className="text-[10px] text-blue-600 font-bold mt-1 flex items-center gap-1">
-                  <span className="opacity-70">👤 {item.name}:</span>
-                  <span className="bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 font-medium">
-                    {Array.isArray(item.val) ? item.val.join(", ") : String(item.val)}
-                  </span>
+              {/* Add Custom Field button */}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleAddField}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-700 rounded-xl text-xs font-black transition-all border border-indigo-100/80 shadow-sm hover:shadow-md cursor-pointer"
+                >
+                  <Plus size={14} className="stroke-[3]" /> Add Custom Field
+                </button>
+              </div>
+
+              {/* Lead form question responses */}
+              {questionFields.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-[10px] font-black text-purple-400 uppercase tracking-widest flex items-center gap-1.5"><MessageSquare size={11} /> Lead Form Responses</p>
+                  {questionFields.map(field => (
+                    <div key={field} className="bg-purple-50/40 border border-purple-100 rounded-xl p-3 space-y-1.5">
+                      <label className="text-[10px] font-semibold text-purple-700 leading-snug block">{labelFor(field)}</label>
+                      <textarea
+                        value={edited[field] || ""}
+                        readOnly={true}
+                        ref={el => {
+                          if (el) {
+                            setTimeout(() => {
+                              el.style.height = 'inherit';
+                              el.style.height = `${el.scrollHeight}px`;
+                            }, 0);
+                          }
+                        }}
+                        rows={1}
+                        className="w-full bg-gray-100/60 border border-purple-100/80 rounded-lg px-3 py-2 text-sm text-gray-500 cursor-not-allowed resize-none overflow-hidden focus:outline-none transition leading-relaxed placeholder:text-gray-300"
+                        placeholder="No response..."
+                      />
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )}
 
-            {/* Program Mapping */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Tag size={13} className="text-indigo-500" /> Program / Tag Mapping
-              </label>
-              <SearchableDropdown
-                options={["— Untagged —", ...localPrograms.map(p => p.name)]}
-                selected={edited.programName || "— Untagged —"}
-                onChange={val => {
-                  if (!val || val === "— Untagged —") {
-                    handleChange("programId", "");
-                    handleChange("programName", "");
-                    handleChange("Sub Program", "");
-                    handleChange("subProgram", "");
-                  } else {
-                    const prog = localPrograms.find(p => p.name === val);
-                    if (prog) {
-                      handleChange("programId", prog.id);
-                      handleChange("programName", prog.name);
-                      handleChange("Sub Program", prog.name);
-                      handleChange("subProgram", prog.name);
-                      
-                      // Sync to Tags field for display
-                      const existingTagsStr = edited.Tags || "";
-                      const existingTags = existingTagsStr.split(",").map(x => x.trim()).filter(Boolean);
-                      if (!existingTags.includes(prog.name)) {
-                        existingTags.push(prog.name);
-                      }
-                      handleChange("Tags", existingTags.join(", "));
-                    }
-                  }
-                }}
-                placeholder="Search & select program..."
-                allowCreate={true}
-                onCreate={handleCreateProgramTag}
-                colorClass="indigo"
-              />
-              {getOtherValuesForField("programName").map((item, idx) => (
-                <div key={idx} className="text-[10px] text-indigo-600 font-bold mt-1 flex items-center gap-1">
-                  <span className="opacity-70">👤 {item.name}:</span>
-                  <span className="bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-medium">{item.val}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Abhivyakti Quick Action & Call Status */}
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <CheckCircle2 size={13} className="text-indigo-500" /> General Result Status <span className="text-red-500 font-bold ml-0.5">*</span>
-              </label>
-              <SearchableDropdown
-                options={STATUS_OPTIONS}
-                selected={edited.status || ""}
-                onChange={val => {
-                  if (val === "Reg.Done") {
-                    const calledForVal = edited[calledForField] || "";
-                    const selectedArr = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
-                    if (selectedArr.length !== 1 && CALLED_FOR_OPTIONS.length > 1) {
-                      setPromptSelection("");
-                      setPendingSave(false);
-                      setShowCalledForPrompt(true);
-                      return;
-                    }
-                  }
-                  setEdited(prev => ({
-                    ...prev,
-                    status: val,
-                    // Auto-default queryStatus to Pending when Query is selected
-                    queryStatus: val === "Query" ? (prev.queryStatus || "Pending") : prev.queryStatus,
-                  }));
-                }}
-                placeholder="Search & select status..."
-                colorClass="indigo"
-              />
-              {getOtherValuesForField("status").map((item, idx) => (
-                <div key={idx} className="text-[10px] text-indigo-600 font-bold mt-1 flex items-center gap-1">
-                  <span className="opacity-70">👤 {item.name}:</span>
-                  <span className="bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-medium">{item.val}</span>
-                </div>
-              ))}
-
-              {/* Query Sub-status Toggle */}
-              {edited.status === "Query" && (
-                <div className="flex items-center gap-2 pt-1">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest shrink-0">Query:</span>
-                  <div className="flex gap-1.5">
-                    {["Pending", "Solved"].map(qs => (
-                      <button
-                        key={qs}
-                        type="button"
-                        onClick={() => handleChange("queryStatus", qs)}
-                        className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all ${
-                          (edited.queryStatus || "Pending") === qs
-                            ? qs === "Pending"
-                              ? "bg-amber-500 text-white border-amber-500 shadow shadow-amber-500/20 scale-105"
-                              : "bg-emerald-500 text-white border-emerald-500 shadow shadow-emerald-500/20 scale-105"
-                            : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
-                        }`}
-                      >
-                        {qs === "Pending" ? "⏳ Pending" : "✅ Solved"}
-                      </button>
+              {/* Campaign & Ads metadata */}
+              {campaignFields.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5"><Tag size={10} /> Campaign / Ads Data</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-3 bg-gray-50/50 border border-gray-100 rounded-xl">
+                    {campaignFields.map(field => (
+                      <div key={field} className="space-y-1">
+                        <label className="text-[9px] font-black text-gray-300 uppercase tracking-widest block">{labelFor(field)}</label>
+                        <input
+                          value={edited[field] || ""}
+                          readOnly={true}
+                          className="w-full px-2 py-1.5 bg-gray-100/60 border border-gray-150 rounded-lg text-xs font-mono text-gray-400 cursor-not-allowed focus:outline-none transition"
+                          placeholder="—"
+                        />
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
             </div>
-
-            {/* Objection Tracker (Conditional) */}
-            {(edited.status === "Not interested" || edited.status === "Not possible") && (
-              <div className="space-y-3 p-4 bg-red-50 border border-red-100 rounded-2xl animate-slide-up">
-                <label className="text-[10px] font-black text-red-500 uppercase tracking-widest flex items-center gap-2">
-                  <AlertCircle size={13} /> Why are they {edited.status.toLowerCase()}?
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {OBJECTION_REASONS.map(reason => (
-                    <button
-                      key={reason}
-                      type="button"
-                      onClick={() => handleChange("objectionReason", edited.objectionReason === reason ? "" : reason)}
-                      className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${edited.objectionReason === reason
-                          ? "bg-red-500 text-white border-red-500 shadow-lg shadow-red-500/20 scale-105"
-                          : "bg-white text-red-600 border-red-200 hover:bg-red-100"
-                        }`}
-                    >
-                      {reason}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-            {/* Note + Callback */}
-            <div className="space-y-6">
-
-              {/* Call Notes Timeline */}
-              <div className="space-y-3">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <MessageSquare size={13} className="text-indigo-500" /> Call Notes
-                  {mergedHistory && mergedHistory.length > 0 && (
-                    <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-600 rounded text-[9px] font-black">{mergedHistory.length} past</span>
-                  )}
-                </label>
-
-                {/* Past history entries */}
-                {mergedHistory && mergedHistory.length > 0 && (
-                  <div className="space-y-2 pr-1 border border-gray-100 rounded-2xl p-3 bg-gray-50/50">
-                    {[...mergedHistory].reverse().map((h, revIdx) => {
-                      const origIdx = h.originalIndex;
-                      return (
-                        <div key={revIdx} className="flex gap-2.5">
-                          <div className="shrink-0 flex flex-col items-center pt-2">
-                            <div className={`w-2 h-2 rounded-full ${h.isCurrentDoc ? "bg-indigo-300" : "bg-amber-400 animate-pulse"} shrink-0`} />
-                            {revIdx < mergedHistory.length - 1 && <div className="w-px flex-1 bg-gray-200 mt-1" />}
-                          </div>
-                          <div className="flex-1 bg-white rounded-xl p-3 border border-gray-100 shadow-sm mb-1">
-                            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                              <span className="text-[10px] font-black text-gray-500 uppercase tracking-wide">
-                                📅 {(() => {
-                                  const d = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : (h.timestamp.seconds ? new Date(h.timestamp.seconds * 1000) : new Date(h.timestamp))) : null;
-                                  return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "Unknown Date";
-                                })()}
-                              </span>
-                              {h.status && (
-                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${h.status === "Interested" ? "bg-blue-100 text-blue-700" :
-                                  h.status === "Reg.Done" ? "bg-emerald-100 text-emerald-700" :
-                                    "bg-gray-100 text-gray-600"
-                                  }`}>{h.status}</span>
-                              )}
-                              {!h.isCurrentDoc && (
-                                <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[9px] font-bold border border-amber-200 uppercase tracking-wider">
-                                  {h.sourceProgram}
-                                </span>
-                              )}
-                              <span className="text-[9px] text-gray-300 font-bold ml-auto truncate max-w-[80px]">{h.attenderName}</span>
-                            </div>
-                            <textarea
-                              value={h.remark || ""}
-                              readOnly={!h.isCurrentDoc || origIdx === -1}
-                              onChange={e => {
-                                if (!h.isCurrentDoc || origIdx === -1) return;
-                                const updatedHistory = [...(edited.history || [])];
-                                updatedHistory[origIdx] = { ...updatedHistory[origIdx], remark: e.target.value };
-                                handleChange("history", updatedHistory);
-                                e.target.style.height = 'inherit';
-                                e.target.style.height = `${e.target.scrollHeight}px`;
-                              }}
-                              onFocus={e => {
-                                e.target.style.height = 'inherit';
-                                e.target.style.height = `${e.target.scrollHeight}px`;
-                              }}
-                              ref={el => {
-                                if (el) {
-                                  setTimeout(() => {
-                                    el.style.height = 'inherit';
-                                    el.style.height = `${el.scrollHeight}px`;
-                                  }, 0);
-                                }
-                              }}
-                              rows={1}
-                              className={`w-full bg-transparent text-sm text-gray-700 resize-none overflow-hidden focus:outline-none rounded-lg px-1 py-0.5 transition leading-relaxed placeholder:text-gray-300 ${
-                                h.isCurrentDoc && origIdx !== -1 ? "focus:bg-slate-50 focus:ring-2 focus:ring-indigo-100" : "text-gray-500 italic"
-                              }`}
-                              placeholder="No note for this call..."
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* New note for current call */}
-                <div className="relative">
-                  <textarea
-                    value={edited.remark || ""}
-                    onChange={e => {
-                      handleChange("remark", e.target.value);
-                      e.target.style.height = 'inherit';
-                      e.target.style.height = `${e.target.scrollHeight}px`;
-                    }}
-                    onFocus={e => {
-                      e.target.style.height = 'inherit';
-                      e.target.style.height = `${e.target.scrollHeight}px`;
-                    }}
-                    ref={el => {
-                      if (el) {
-                        setTimeout(() => {
-                          el.style.height = 'inherit';
-                          el.style.height = `${el.scrollHeight}px`;
-                        }, 0);
-                      }
-                    }}
-                    rows={2}
-                    className="w-full px-4 py-3 bg-white border-2 border-indigo-200 rounded-2xl text-sm font-medium resize-none overflow-hidden focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition leading-relaxed"
-                    placeholder="✏️ Add note for today's call..."
-                  />
-                  <span className="absolute bottom-3 right-3 text-[9px] text-indigo-300 font-black uppercase tracking-wider pointer-events-none">New Note</span>
-                </div>
-              </div>
-
-              {/* Follow-up / Callback */}
-              <div className="space-y-2">
-                <label className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-2 ${edited.callbackDate ? "text-amber-500" : "text-slate-400"}`}>
-                  <CalendarDays size={13} /> {edited.callbackDate ? "Follow-up Scheduled" : "Schedule Follow-up"}
-                </label>
-                <div className="flex gap-3">
-                  <input
-                    type="date"
-                    value={getCallbackDateStr()}
-                    onChange={e => {
-                      handleChange("callbackDate", e.target.value);
-                      if (e.target.value && !edited.callbackStatus) handleChange("callbackStatus", "pending");
-                    }}
-                    className={`flex-1 px-4 py-3 border rounded-2xl text-sm font-bold focus:outline-none transition ${edited.callbackDate ? "bg-amber-50 border-amber-200 text-amber-700 ring-4 ring-amber-500/10" : "bg-gray-50 border-gray-100 text-gray-700"}`}
-                  />
-                  {edited.callbackDate && (
-                    <button onClick={() => { handleChange("callbackDate", null); handleChange("callbackStatus", null); }} className="px-4 py-2 bg-red-50 text-red-500 font-bold rounded-xl text-xs hover:bg-red-100 transition">Remove</button>
-                  )}
-                </div>
-
-                {/* Follow-up status selector */}
-                {edited.callbackDate && (
-                  <div className="flex gap-2 flex-wrap pt-1">
-                    {[
-                      { value: "pending", label: "⏳ Pending", activeClass: "bg-amber-500 text-white border-amber-500 shadow-lg shadow-amber-400/20", inactiveClass: "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100" },
-                      { value: "done", label: "✅ Done", activeClass: "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-400/20", inactiveClass: "bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100" },
-                      { value: "rescheduled", label: "🔄 Rescheduled", activeClass: "bg-blue-500 text-white border-blue-500 shadow-lg shadow-blue-400/20", inactiveClass: "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100" },
-                      { value: "cancelled", label: "❌ Cancelled", activeClass: "bg-red-500 text-white border-red-500 shadow-lg shadow-red-400/20", inactiveClass: "bg-red-50 text-red-500 border-red-200 hover:bg-red-100" },
-                    ].map(opt => (
-                      <button
-                        key={opt.value}
-                        onClick={() => handleChange("callbackStatus", opt.value)}
-                        className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all ${(edited.callbackStatus || "pending") === opt.value
-                          ? opt.activeClass + " scale-105"
-                          : opt.inactiveClass + " scale-95 hover:scale-100"
-                          }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Fast Registration / Add to Abhivyakti Report */}
-              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col gap-3">
-                <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm uppercase tracking-wider">
-                  <Flame size={16} /> Fast Registration
-                </div>
-                {edited.status === "Reg.Done" ? (
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      disabled={true}
-                      className="flex-1 py-3 rounded-xl font-bold bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2"
-                    >
-                      <CheckCircle2 size={18} />
-                      Added to Abhivyakti
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowUndoStatusPrompt(true)}
-                      className="px-4 py-3 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs transition flex items-center justify-center gap-1 active:scale-95 hover:scale-105"
-                    >
-                      Undo
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const calledForVal = edited[calledForField] || "";
-                      const selectedArr = calledForVal.split(",").map(x => x.trim()).filter(Boolean);
-                      if (selectedArr.length !== 1 && CALLED_FOR_OPTIONS.length > 1) {
-                        setPromptSelection("");
-                        setPendingSave(false);
-                        setShowCalledForPrompt(true);
-                      } else {
-                        handleChange("status", "Reg.Done");
-                      }
-                    }}
-                    className="w-full py-3 rounded-xl font-bold transition flex items-center justify-center gap-2 bg-white text-emerald-700 border-2 border-emerald-500 hover:bg-emerald-50 active:scale-95"
-                  >
-                    <CheckCircle2 size={18} />
-                    Add to Abhivyakti Report
-                  </button>
-                )}
-              </div>
-          </div>
+          )}
         </div>
 
 
@@ -2446,13 +2486,10 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                   key={opt}
                   type="button"
                   onClick={() => {
-                    setEdited(prev => ({
-                      ...prev,
-                      status: opt,
-                      [calledForField]: ""
-                    }));
                     setShowUndoStatusPrompt(false);
-                    toast.success(`Registration undone. Status set to "${opt}"`);
+                    handleSaveAndClose({
+                      status: opt
+                    });
                   }}
                   className="w-full px-4 py-3 rounded-2xl text-xs font-bold border border-gray-150 bg-gray-50 text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 transition text-left mb-1.5"
                 >
