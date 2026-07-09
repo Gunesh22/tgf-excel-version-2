@@ -729,7 +729,8 @@ export function AttenderFilters({
                     icon={<CheckSquare size={11} className="text-pink-500" />}
                     options={[
                       { value: "Yes", label: "Yes (Khoji)" },
-                      { value: "No", label: "No (New)" }
+                      { value: "No", label: "No (New)" },
+                      { value: "Dew drop khoji", label: "Dew drop khoji" }
                     ]}
                     selectedValues={filterKhoji}
                     onChange={val => { setFilterKhoji(val); setPage(1); }}

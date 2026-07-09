@@ -764,10 +764,15 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       if (filterKhoji.length > 0) {
         const val = getKhojiValue(log);
         const affirmative = isKhojiAffirmative(val);
-        const hasYes = filterKhoji.includes("Yes");
-        const hasNo = filterKhoji.includes("No");
-        if (hasYes && !hasNo && !affirmative) return false;
-        if (hasNo && !hasYes && affirmative) return false;
+        const isDew = String(val || "").toLowerCase().includes("dew d") || String(val || "").toLowerCase().includes("dewdrop");
+        const isNo = isKhojiNegative(val) || !val;
+        
+        let match = false;
+        if (filterKhoji.includes("Yes") && affirmative && !isDew) match = true;
+        if (filterKhoji.includes("No") && isNo) match = true;
+        if (filterKhoji.includes("Dew drop khoji") && isDew) match = true;
+        
+        if (!match) return false;
       }
 
       // 11. Date & Time Range Filter

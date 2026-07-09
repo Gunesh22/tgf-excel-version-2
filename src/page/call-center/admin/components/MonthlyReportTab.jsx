@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { subscribeToAllCallLogs } from "../../../../lib/db";
 import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp } from "../utils.jsx";
+import { isKhojiAffirmative, isKhojiNegative } from "../../attender/utils.js";
 
 function MonthlySection({ title, children, defaultOpen = true }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -197,9 +198,22 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
   const [selectedSources, setSelectedSources] = useState([]);
   const [selectedCalledFors, setSelectedCalledFors] = useState([]);
   const [selectedStatuses, setSelectedStatuses] = useState([]);
+  const [selectedCallTypes, setSelectedCallTypes] = useState([]);
+  const [selectedKhojiStatuses, setSelectedKhojiStatuses] = useState([]);
   const [conversionSearch, setConversionSearch] = useState("");
   const [convPage, setConvPage] = useState(1);
   const loading = false;
+
+  const callTypeOptions = React.useMemo(() => [
+    { value: "incoming", label: "Incoming" },
+    { value: "outgoing", label: "Outgoing" }
+  ], []);
+
+  const khojiStatusOptions = React.useMemo(() => [
+    { value: "Yes", label: "Yes (Khoji)" },
+    { value: "No", label: "No (New)" },
+    { value: "Dew drop khoji", label: "Dew drop khoji" }
+  ], []);
 
   const programOptions = React.useMemo(() => {
     return programs.map(p => ({ value: p.id, label: p.name }));
@@ -416,9 +430,35 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
       if (selectedAttenderIds.length > 0 && !selectedAttenderIds.includes(att.attenderId)) return false;
 
+      // Call Type filter
+      if (selectedCallTypes.length > 0) {
+        const cType = (att.callType || "outgoing").toLowerCase();
+        const matches = selectedCallTypes.some(t => {
+          if (t === "incoming") return cType.startsWith("incoming");
+          if (t === "outgoing") return cType.startsWith("outgoing");
+          return false;
+        });
+        if (!matches) return false;
+      }
+
+      // Khoji Status filter
+      if (selectedKhojiStatuses.length > 0) {
+        const val = att.Khoji;
+        const affirmative = isKhojiAffirmative(val);
+        const isDew = String(val || "").toLowerCase().includes("dew d") || String(val || "").toLowerCase().includes("dewdrop");
+        const isNo = isKhojiNegative(val) || !val;
+
+        let match = false;
+        if (selectedKhojiStatuses.includes("Yes") && affirmative && !isDew) match = true;
+        if (selectedKhojiStatuses.includes("No") && isNo) match = true;
+        if (selectedKhojiStatuses.includes("Dew drop khoji") && isDew) match = true;
+
+        if (!match) return false;
+      }
+
       return true;
     });
-  }, [allHistoricalAttempts, startDate, endDate, selectedAttenderIds]);
+  }, [allHistoricalAttempts, startDate, endDate, selectedAttenderIds, selectedCallTypes, selectedKhojiStatuses]);
 
   const monthFiltered = React.useMemo(() => {
     const contactIds = new Set(allAttempts.map(a => a.contactId));
@@ -1210,7 +1250,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     toast.success("Excel analytics report downloaded successfully!");
   };
 
-  const activeFilters = selectedProgramIds.length + selectedAttenderIds.length + selectedSources.length + selectedCalledFors.length + selectedStatuses.length;
+  const activeFilters = selectedProgramIds.length + selectedAttenderIds.length + selectedSources.length + selectedCalledFors.length + selectedStatuses.length + selectedCallTypes.length + selectedKhojiStatuses.length;
 
   return (
     <div className="p-8 space-y-8">
@@ -1225,7 +1265,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       {/* Filter Bar */}
       <div className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm space-y-4">
         {/* Row 1: Dropdowns grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
           <MultiSelect
             options={programOptions}
             selected={selectedProgramIds}
@@ -1264,6 +1304,22 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             onChange={setSelectedStatuses}
             placeholder="Status"
             allLabel="📊 All Statuses"
+          />
+
+          <MultiSelect
+            options={callTypeOptions}
+            selected={selectedCallTypes}
+            onChange={setSelectedCallTypes}
+            placeholder="Call Type"
+            allLabel="📞 All Call Types"
+          />
+
+          <MultiSelect
+            options={khojiStatusOptions}
+            selected={selectedKhojiStatuses}
+            onChange={setSelectedKhojiStatuses}
+            placeholder="Khoji Status"
+            allLabel="🔮 All Khoji Statuses"
           />
         </div>
 
@@ -1342,6 +1398,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                   setSelectedSources([]);
                   setSelectedCalledFors([]);
                   setSelectedStatuses([]);
+                  setSelectedCallTypes([]);
+                  setSelectedKhojiStatuses([]);
                 }}
                 className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-black hover:bg-red-100 transition animate-fade-in"
               >

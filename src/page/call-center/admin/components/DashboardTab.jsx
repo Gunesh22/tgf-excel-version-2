@@ -5,6 +5,7 @@ import { BarChart3, Download, Search, X, ChevronDown, Check } from "lucide-react
 import { subscribeToAllCallLogs } from "../../../../lib/db";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from "recharts";
 import { COLORS, cleanExportRow, CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp } from "../utils.jsx";
+import { isKhojiAffirmative, isKhojiNegative } from "../../attender/utils.js";
 
 // ── Multi-select dropdown ──────────────────────────────────────────────────
 function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All" }) {
@@ -110,10 +111,23 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
   const [selectedSources, setSelectedSources] = useState([]);
   const [selectedCalledFors, setSelectedCalledFors] = useState([]);
   const [selectedStatuses, setSelectedStatuses] = useState([]);
+  const [selectedCallTypes, setSelectedCallTypes] = useState([]);
+  const [selectedKhojiStatuses, setSelectedKhojiStatuses] = useState([]);
   const [dateFrom, setDateFrom] = useState(todayStr);
   const [dateTo, setDateTo] = useState(todayStr);
   const [conversionSearch, setConversionSearch] = useState("");
   const [convPage, setConvPage] = useState(1);
+
+  const callTypeOptions = useMemo(() => [
+    { value: "incoming", label: "Incoming" },
+    { value: "outgoing", label: "Outgoing" }
+  ], []);
+
+  const khojiStatusOptions = useMemo(() => [
+    { value: "Yes", label: "Yes (Khoji)" },
+    { value: "No", label: "No (New)" },
+    { value: "Dew drop khoji", label: "Dew drop khoji" }
+  ], []);
 
   const programOptions = programs.map(p => ({ value: p.id, label: p.name }));
   const attenderOptions = attenders.map(a => ({ value: a.id, label: a.name }));
@@ -178,6 +192,9 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       const calledForKey = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
       const calledForVal = calledForKey ? String(log[calledForKey] || "").trim() : "";
 
+      const khojiKey = Object.keys(log).find(k => ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(k.toLowerCase()));
+      const khojiVal = log.Khoji || (khojiKey ? String(log[khojiKey] || "").trim() : "");
+
       const feedbackKey = Object.keys(log).find(k => ["prog. feedback", "feedback", "user feedback", "program feedback"].includes(k.toLowerCase()));
       const feedbackVal = feedbackKey ? String(log[feedbackKey] || "").trim() : "";
 
@@ -212,7 +229,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
           lastCalledAt: state.lastCalledAt || null,
           source: att.source || state.Source || state.source || sourceVal,
           calledFor: att.calledFor || state["Called For"] || state.calledFor || calledForVal,
-          feedback: feedbackVal
+          feedback: feedbackVal,
+          Khoji: khojiVal
         };
       };
 
@@ -341,6 +359,32 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       // Status filter
       if (selectedStatuses.length > 0 && !selectedStatuses.includes(log.status || "Pending")) return false;
 
+      // Call Type filter
+      if (selectedCallTypes.length > 0) {
+        const cType = (log.callType || "outgoing").toLowerCase();
+        const matches = selectedCallTypes.some(t => {
+          if (t === "incoming") return cType.startsWith("incoming");
+          if (t === "outgoing") return cType.startsWith("outgoing");
+          return false;
+        });
+        if (!matches) return false;
+      }
+
+      // Khoji Status filter
+      if (selectedKhojiStatuses.length > 0) {
+        const val = log.Khoji;
+        const affirmative = isKhojiAffirmative(val);
+        const isDew = String(val || "").toLowerCase().includes("dew d") || String(val || "").toLowerCase().includes("dewdrop");
+        const isNo = isKhojiNegative(val) || !val;
+
+        let match = false;
+        if (selectedKhojiStatuses.includes("Yes") && affirmative && !isDew) match = true;
+        if (selectedKhojiStatuses.includes("No") && isNo) match = true;
+        if (selectedKhojiStatuses.includes("Dew drop khoji") && isDew) match = true;
+
+        if (!match) return false;
+      }
+
       // Date range based on action update time
       const logDate = log.updatedAt;
       if (!logDate || isNaN(logDate)) return false;
@@ -349,7 +393,7 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
 
       return true;
     });
-  }, [flattenedLogs, selectedProgramIds, selectedAttenderIds, selectedSources, selectedCalledFors, selectedStatuses, dateFrom, dateTo, programs]);
+  }, [flattenedLogs, selectedProgramIds, selectedAttenderIds, selectedSources, selectedCalledFors, selectedStatuses, selectedCallTypes, selectedKhojiStatuses, dateFrom, dateTo, programs]);
 
   const attenderStats = useMemo(() => {
     const map = {};
@@ -430,7 +474,7 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
     return `${Math.floor(hrs / 24)}d ago`;
   };
 
-  const activeFilters = selectedProgramIds.length + selectedAttenderIds.length + selectedSources.length + selectedCalledFors.length + selectedStatuses.length;
+  const activeFilters = selectedProgramIds.length + selectedAttenderIds.length + selectedSources.length + selectedCalledFors.length + selectedStatuses.length + selectedCallTypes.length + selectedKhojiStatuses.length;
 
   return (
     <div className="p-8 space-y-8">
@@ -453,7 +497,7 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
         {/* Filter Bar */}
         <div className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm space-y-4">
           {/* Row 1: Dropdowns grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
             {/* Tags multi-select */}
             <MultiSelect
               options={programOptions}
@@ -497,6 +541,24 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
               onChange={setSelectedStatuses}
               placeholder="Status"
               allLabel="📊 All Statuses"
+            />
+
+            {/* Call Type multi-select */}
+            <MultiSelect
+              options={callTypeOptions}
+              selected={selectedCallTypes}
+              onChange={setSelectedCallTypes}
+              placeholder="Call Type"
+              allLabel="📞 All Call Types"
+            />
+
+            {/* Khoji Status multi-select */}
+            <MultiSelect
+              options={khojiStatusOptions}
+              selected={selectedKhojiStatuses}
+              onChange={setSelectedKhojiStatuses}
+              placeholder="Khoji Status"
+              allLabel="🔮 All Khoji Statuses"
             />
           </div>
 
@@ -567,6 +629,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
                     setSelectedSources([]);
                     setSelectedCalledFors([]);
                     setSelectedStatuses([]);
+                    setSelectedCallTypes([]);
+                    setSelectedKhojiStatuses([]);
                     setDateFrom(todayStr);
                     setDateTo(todayStr);
                   }}

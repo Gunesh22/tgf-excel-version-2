@@ -1679,6 +1679,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 {(() => {
                   const isYes = isKhojiAffirmative(edited.Khoji);
                   const isNo = isKhojiNegative(edited.Khoji);
+                  const isDew = String(edited.Khoji || "").toLowerCase().includes("dew d") || String(edited.Khoji || "").toLowerCase().includes("dewdrop");
                   const editable = getEditable("Khoji");
                   return (
                     <>
@@ -1706,6 +1707,22 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                       >
                         No
                       </button>
+                      <label className="flex items-center gap-2 cursor-pointer ml-4 select-none">
+                        <input
+                          type="checkbox"
+                          checked={isDew}
+                          disabled={!editable}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              handleChange("Khoji", "Dew drop khoji");
+                            } else {
+                              handleChange("Khoji", "Yes");
+                            }
+                          }}
+                          className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                        />
+                        <span className="text-xs font-semibold text-gray-700">Dew drop khoji</span>
+                      </label>
                     </>
                   );
                 })()}
@@ -1801,6 +1818,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                           {(() => {
                              const isYes = isKhojiAffirmative(edited[field]);
                              const isNo = isKhojiNegative(edited[field]);
+                             const isDew = String(edited[field] || "").toLowerCase().includes("dew d") || String(edited[field] || "").toLowerCase().includes("dewdrop");
+                             const showDewDrop = field.toLowerCase().includes("khoji");
                              return (
                                <>
                                  <button
@@ -1827,6 +1846,24 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                                  >
                                    No
                                  </button>
+                                 {showDewDrop && (
+                                   <label className="flex items-center gap-2 cursor-pointer ml-4 select-none">
+                                     <input
+                                       type="checkbox"
+                                       checked={isDew}
+                                       disabled={!editable}
+                                       onChange={(e) => {
+                                         if (e.target.checked) {
+                                           handleChange(field, "Dew drop khoji");
+                                         } else {
+                                           handleChange(field, "Yes");
+                                         }
+                                       }}
+                                       className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                                     />
+                                     <span className="text-xs font-semibold text-gray-700">Dew drop khoji</span>
+                                   </label>
+                                 )}
                                </>
                              );
                           })()}
