@@ -26,8 +26,8 @@ export const TAB_ITEMS = [
   { id: "settings", label: "Dropdown Options ⚙️", icon: <Settings size={18} /> },
 ];
 
-export const CONNECTED_STATUSES = ["Info given", "Interested", "Reg.Done", "reminder", "Query", "Already Reg.d", "Next time", "Shivir done", "Not possible", "Pending", "Not interested", "Not Attended"];
-export const NOT_CONNECTED_STATUSES = ["NA", "Busy", "Call Cut", "switched off", "Invalid No", "Called by mistake", "no network", "wrong no.", "no answer"];
+export const CONNECTED_STATUSES = ["Info given", "Interested", "Reg.Done", "reminder", "Reminder", "Query", "Already Reg.d", "Next time", "Shivir done", "Not possible", "Pending", "Not interested", "Not Attended"];
+export const NOT_CONNECTED_STATUSES = ["NA", "Busy", "Call Cut", "switched off", "Switched Off", "Invalid No", "Called by mistake", "no network", "No Network", "wrong no.", "Wrong No.", "no answer", "No Answer"];
 
 export const STANDARD_TARGETS = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Source", "Tags", "Ignore"];
 

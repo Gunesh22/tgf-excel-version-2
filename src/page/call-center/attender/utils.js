@@ -89,6 +89,7 @@ export const CONNECTED_STATUSES = [
   "Interested",
   "Reg.Done",
   "reminder",
+  "Reminder",
   "Query",
   "Already Reg.d",
   "Next time",
@@ -104,11 +105,15 @@ export const NOT_CONNECTED_STATUSES = [
   "Busy",
   "Call Cut",
   "switched off",
+  "Switched Off",
   "Invalid No",
   "Called by mistake",
   "no network",
+  "No Network",
   "wrong no.",
-  "no answer"
+  "Wrong No.",
+  "no answer",
+  "No Answer"
 ];
 
 export const DEFAULT_COLUMNS = [
