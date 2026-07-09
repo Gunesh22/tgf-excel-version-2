@@ -1289,12 +1289,45 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         // Maintain a timeline of interactions.
         // Only push a new history entry if:
         //   a) the status actually changed from what was previously saved, OR
-        //   b) the attender typed a new remark this session (non-empty), OR
-        //   c) the call type changed (e.g., from outgoing to incoming)
-        // (Fix for Flaw 1: Metadata edits that do not alter status, remark, or callType will not add a history entry)
-        const statusChanged = row.status !== updates.status;
-        const hasNewRemark = String(updates.remark || "").trim().length > 0;
-        const callTypeChanged = String(row.callType || "outgoing").toLowerCase() !== String(targetEdited.callType || "outgoing").toLowerCase();
+        //   b) the attender typed a new/modified remark, OR
+        //   c) the call type changed (e.g., from outgoing to incoming), OR
+        //   d) the callback date changed, OR
+        //   e) the objection reason changed.
+        // (Fix: Metadata-only edits that do not alter these call-specific fields will not add a history entry)
+        const oldStatus = String(row.status || "").trim();
+        const newStatus = String(updates.status || "").trim();
+        const statusChanged = oldStatus !== newStatus;
+
+        const oldRemark = String(row.remark || "").trim();
+        const newRemark = String(updates.remark || "").trim();
+        const remarkChanged = oldRemark !== newRemark;
+
+        const oldCallType = String(row.callType || "outgoing").toLowerCase();
+        const newCallType = String(targetEdited.callType || "outgoing").toLowerCase();
+        const callTypeChanged = oldCallType !== newCallType;
+
+        const getTimestampOrNull = (val) => {
+          if (!val) return null;
+          if (val instanceof Date) return val.getTime();
+          if (typeof val === "string") return new Date(val).getTime();
+          if (val.toDate && typeof val.toDate === "function") return val.toDate().getTime();
+          if (typeof val === "object" && val.seconds !== undefined) return val.seconds * 1000;
+          try {
+            return new Date(val).getTime();
+          } catch (e) {
+            return null;
+          }
+        };
+
+        const oldCallbackTime = getTimestampOrNull(row.callbackDate);
+        const newCallbackTime = getTimestampOrNull(updates.callbackDate);
+        const callbackDateChanged = oldCallbackTime !== newCallbackTime;
+
+        const oldObjection = String(row.objectionReason || "").trim();
+        const newObjection = String(updates.objectionReason || "").trim();
+        const objectionReasonChanged = oldObjection !== newObjection;
+
+        const isCallAttemptUpdated = statusChanged || remarkChanged || callTypeChanged || callbackDateChanged || objectionReasonChanged;
         
         // Scenario 2: Incoming call & Registration on an Outgoing Campaign
         const isIncomingConvertOnOutgoingProgram = 
@@ -1330,7 +1363,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
           updates.history = [...baseHistory, queryHist, regHist];
           updates.callType = "outgoing"; // Force outgoing conversion at root level
-        } else if (statusChanged || hasNewRemark || callTypeChanged) {
+        } else if (isCallAttemptUpdated) {
           const safeName = attenderName || "Unknown";
           const nowStr = new Date().toISOString();
           const newHist = {
@@ -1343,15 +1376,17 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             callType: targetEdited.callType || "outgoing"
           };
 
-          // Fix for Flaw 2: 1-minute session collapsing (merge edits by same attender if within 1 min)
+          // Fix for Flaw 2: 1-minute session collapsing (merge edits by same attender if within 1 min AND status & callType are identical)
           let collapsed = false;
           if (baseHistory.length > 0) {
             const lastEntryIndex = baseHistory.length - 1;
             const lastEntry = baseHistory[lastEntryIndex];
             
             const isSameAttender = String(lastEntry.attenderName || "").toLowerCase().trim() === safeName.toLowerCase().trim();
+            const isSameStatus = String(lastEntry.status || "").trim() === String(newHist.status || "").trim();
+            const isSameCallType = String(lastEntry.callType || "").toLowerCase().trim() === String(newHist.callType || "").toLowerCase().trim();
             
-            if (isSameAttender && lastEntry.timestamp) {
+            if (isSameAttender && isSameStatus && isSameCallType && lastEntry.timestamp) {
               const lastTime = new Date(lastEntry.timestamp).getTime();
               const currTime = new Date(nowStr).getTime();
               const diffMinutes = (currTime - lastTime) / (1000 * 60);
