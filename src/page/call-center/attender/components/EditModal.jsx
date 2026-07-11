@@ -1372,22 +1372,20 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             callType: targetEdited.callType || "outgoing"
           };
 
-          // Fix for Flaw 2: 1-minute session collapsing (merge edits by same attender if within 1 min AND status & callType are identical)
+          // Fix for Flaw 2: 2-minute session collapsing (merge edits by same attender if within 2 min)
           let collapsed = false;
           if (baseHistory.length > 0) {
             const lastEntryIndex = baseHistory.length - 1;
             const lastEntry = baseHistory[lastEntryIndex];
             
             const isSameAttender = String(lastEntry.attenderName || "").toLowerCase().trim() === safeName.toLowerCase().trim();
-            const isSameStatus = String(lastEntry.status || "").trim() === String(newHist.status || "").trim();
-            const isSameCallType = String(lastEntry.callType || "").toLowerCase().trim() === String(newHist.callType || "").toLowerCase().trim();
             
-            if (isSameAttender && isSameStatus && isSameCallType && lastEntry.timestamp) {
+            if (isSameAttender && lastEntry.timestamp) {
               const lastTime = new Date(lastEntry.timestamp).getTime();
               const currTime = new Date(nowStr).getTime();
               const diffMinutes = (currTime - lastTime) / (1000 * 60);
               
-              if (diffMinutes < 1) {
+              if (diffMinutes < 2) {
                 const mergedEntry = {
                   ...lastEntry,
                   status: newHist.status,

@@ -2344,100 +2344,82 @@ export const updateCacheContacts = async (contactIds) => {
   if (!contactIds || contactIds.length === 0) return;
   
   try {
-    await runTransaction(db, async (transaction) => {
-      const contactSnaps = [];
-      const liveContacts = [];
-      
-      for (const id of contactIds) {
-        const contactRef = doc(db, "contacts", id);
-        const contactSnap = await transaction.get(contactRef);
-        contactSnaps.push({ id, snap: contactSnap });
-        if (contactSnap.exists()) {
-          liveContacts.push({ id, data: contactSnap.data() });
-        }
-      }
-      
-      const monthsToLoad = new Set();
-      const currentMonth = getMonthStr(new Date());
-      monthsToLoad.add(currentMonth);
-      
-      liveContacts.forEach(({ data }) => {
-        const createdMonth = getMonthStr(data.createdAt);
-        if (createdMonth) monthsToLoad.add(createdMonth);
-        
-        if (data.attenderStates) {
-          Object.values(data.attenderStates).forEach(state => {
+    // 1. Fetch updated contacts in parallel (no transaction needed)
+    const contactPromises = contactIds.map(async (id) => {
+      const contactRef = doc(db, "contacts", id);
+      const snap = await getDoc(contactRef);
+      return { id, snap };
+    });
+    const contactSnaps = await Promise.all(contactPromises);
+
+    const currentMonth = getMonthStr(new Date());
+
+    // 2. Group cache updates by month
+    const monthlyUpdatesMap = {};
+
+    contactSnaps.forEach(({ id, snap }) => {
+      const exists = snap.exists();
+      const raw = exists ? snap.data() : null;
+      const isLive = exists && raw.isAssigned && !raw._deleted;
+
+      const contactMonths = new Set();
+      // Even if not live, check history to find months this contact belonged to, so we can clean them up.
+      if (raw) {
+        const createdMonth = getMonthStr(raw.createdAt) || currentMonth;
+        contactMonths.add(createdMonth);
+
+        if (raw.attenderStates) {
+          Object.values(raw.attenderStates).forEach(state => {
             (state.history || []).forEach(h => {
               const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
               const hMonth = getMonthStr(hTs);
-              if (hMonth) monthsToLoad.add(hMonth);
+              if (hMonth) contactMonths.add(hMonth);
             });
           });
         }
-        
-        (data.history || []).forEach(h => {
+
+        (raw.history || []).forEach(h => {
           const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
           const hMonth = getMonthStr(hTs);
-          if (hMonth) monthsToLoad.add(hMonth);
+          if (hMonth) contactMonths.add(hMonth);
         });
-      });
-      
-      const cacheSnapsMap = {};
-      const cacheRefMap = {};
-      for (const month of monthsToLoad) {
-        const ref = doc(db, "callCenterCache", month);
-        const snap = await transaction.get(ref);
-        cacheRefMap[month] = ref;
-        cacheSnapsMap[month] = snap;
+      } else {
+        contactMonths.add(currentMonth);
       }
-      
-      const monthlyContactsData = {};
-      for (const month of monthsToLoad) {
-        const snap = cacheSnapsMap[month];
-        monthlyContactsData[month] = snap.exists() ? (snap.data().contacts || {}) : {};
-      }
-      
-      contactSnaps.forEach(({ id, snap }) => {
-        const contactExists = snap.exists();
-        const raw = contactExists ? snap.data() : null;
-        const isLive = contactExists && raw.isAssigned && !raw._deleted;
-        
-        const contactMonths = new Set();
+
+      contactMonths.forEach(month => {
+        if (!monthlyUpdatesMap[month]) {
+          monthlyUpdatesMap[month] = {};
+        }
         if (isLive) {
-          const createdMonth = getMonthStr(raw.createdAt) || currentMonth;
-          contactMonths.add(createdMonth);
-          
-          if (raw.attenderStates) {
-            Object.values(raw.attenderStates).forEach(state => {
-              (state.history || []).forEach(h => {
-                const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
-                const hMonth = getMonthStr(hTs);
-                if (hMonth) contactMonths.add(hMonth);
-              });
-            });
-          }
-          
-          (raw.history || []).forEach(h => {
-            const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
-            const hMonth = getMonthStr(hTs);
-            if (hMonth) contactMonths.add(hMonth);
-          });
-        }
-        
-        for (const month of monthsToLoad) {
-          const contactsMap = monthlyContactsData[month];
-          if (isLive && contactMonths.has(month)) {
-            contactsMap[id] = pruneContactForCacheForMonth({ id, ...raw }, month);
-          } else {
-            delete contactsMap[id];
-          }
+          monthlyUpdatesMap[month][`contacts.${id}`] = pruneContactForCacheForMonth({ id, ...raw }, month);
+        } else {
+          monthlyUpdatesMap[month][`contacts.${id}`] = deleteField();
         }
       });
-      
-      for (const month of monthsToLoad) {
-        transaction.set(cacheRefMap[month], { contacts: monthlyContactsData[month] });
+    });
+
+    // 3. Apply updates to each month document
+    const updatePromises = Object.entries(monthlyUpdatesMap).map(async ([month, updates]) => {
+      const ref = doc(db, "callCenterCache", month);
+      try {
+        await updateDoc(ref, updates);
+      } catch (err) {
+        if (err.code === "not-found" || err.message?.includes("not-found") || err.message?.includes("not found") || err.message?.includes("NOT_FOUND")) {
+          // Convert the dot-notation updates map to a nested object for setDoc merge
+          const nestedData = { contacts: {} };
+          Object.entries(updates).forEach(([key, val]) => {
+            const contactId = key.split(".")[1];
+            nestedData.contacts[contactId] = val;
+          });
+          await setDoc(ref, nestedData, { merge: true });
+        } else {
+          throw err;
+        }
       }
     });
+
+    await Promise.all(updatePromises);
   } catch (err) {
     console.error("updateCacheContacts error:", err);
   }
