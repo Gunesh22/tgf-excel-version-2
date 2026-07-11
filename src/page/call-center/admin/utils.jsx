@@ -26,8 +26,8 @@ export const TAB_ITEMS = [
   { id: "settings", label: "Dropdown Options ⚙️", icon: <Settings size={18} /> },
 ];
 
-export const CONNECTED_STATUSES = ["Info given", "Interested", "Reg.Done", "reminder", "Reminder", "Query", "Already Reg.d", "Next time", "Shivir done", "Not possible", "Pending", "Not interested", "Not Attended"];
-export const NOT_CONNECTED_STATUSES = ["NA", "Busy", "Call Cut", "switched off", "Switched Off", "Invalid No", "Called by mistake", "no network", "No Network", "wrong no.", "Wrong No.", "no answer", "No Answer"];
+export const CONNECTED_STATUSES = ["Info given", "Interested", "Reg.Done", "reminder", "Query", "Already Reg.d", "Next time", "Shivir done", "Not possible", "Pending", "Not interested", "Not Attended"];
+export const NOT_CONNECTED_STATUSES = ["NA", "Busy", "Call Cut", "switched off", "Invalid No", "Called by mistake", "No Network", "wrong no.", "no answer"];
 
 export const STANDARD_TARGETS = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Source", "Tags", "Ignore"];
 
@@ -135,3 +135,29 @@ export const cleanExportRow = (log) => {
 
   return row;
 };
+
+export function getCanonicalStatus(status) {
+  if (!status) return "";
+  const sLower = status.trim().toLowerCase();
+  if (sLower === "interested") return "Interested";
+  if (sLower === "reg.done" || sLower === "registered") return "Reg.Done";
+  if (sLower === "not interested" || sLower === "not intrested") return "Not interested";
+  if (sLower === "na") return "NA";
+  if (sLower === "busy") return "Busy";
+  if (sLower === "call cut") return "Call Cut";
+  if (sLower === "switched off") return "switched off";
+  if (sLower === "invalid no") return "Invalid No";
+  if (sLower === "already reg.d" || sLower === "already registered") return "Already Reg.d";
+  if (sLower === "info given") return "Info given";
+  if (sLower === "next time") return "Next time";
+  if (sLower === "reminder") return "reminder";
+  if (sLower === "query") return "Query";
+  if (sLower === "called by mistake") return "Called by mistake";
+  if (sLower === "not possible") return "Not possible";
+  if (sLower === "shivir done") return "Shivir done";
+  if (sLower === "no answer") return "no answer";
+  if (sLower === "no network") return "No Network";
+  if (sLower === "wrong no" || sLower === "wrong no.") return "wrong no.";
+  return status;
+}
+

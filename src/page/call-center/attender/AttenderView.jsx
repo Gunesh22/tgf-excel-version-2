@@ -25,7 +25,8 @@ import {
   getKhojiValue,
   isKhojiAffirmative,
   isKhojiNegative,
-  isIgnoredField
+  isIgnoredField,
+  getCanonicalStatus
 } from "./utils";
 import { EditModal } from "./components/EditModal";
 import { MyPerformanceDashboard } from "./components/MyPerformanceDashboard";
@@ -958,7 +959,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     tagFilteredLogs.forEach(log => {
       const hist = log.history || [];
       const isCalled = log.status || log.callbackDate || log.remark || log.remarks || hist.length > 0;
-      const status = isCalled ? (log.status || "Pending") : "";
+      const status = isCalled ? getCanonicalStatus(log.status || "Pending") : "";
 
       const attemptsCount = hist.length || (status ? 1 : 0);
       totalAttempts += attemptsCount;

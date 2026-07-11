@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { User, PhoneCall, CheckCircle2, TrendingUp, Clock, Sun, AlertCircle, ChevronDown } from "lucide-react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
-import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES } from "../utils";
+import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, getCanonicalStatus } from "../utils";
 
 // ─── Colour palette for pie ───────────────────────────────────────────────────
 const PIE_COLORS = ["#4f46e5", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6", "#64748b"];
@@ -291,7 +291,7 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
     const statusCounts = {};
 
     filteredAttempts.forEach(att => {
-      const s = att.status || "Pending";
+      const s = getCanonicalStatus(att.status || "Pending");
       statusCounts[s] = (statusCounts[s] || 0) + 1;
       
       // Exclude "Pending" from counting as connected or notConnected

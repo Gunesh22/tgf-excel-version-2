@@ -5,7 +5,7 @@ import {
   Download, ChevronRight, ChevronDown, Calendar, TrendingUp, UserCheck, Smile, Info, Search, X, Check
 } from "lucide-react";
 import { subscribeToAllCallLogs } from "../../../../lib/db";
-import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp } from "../utils.jsx";
+import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp, getCanonicalStatus } from "../utils.jsx";
 import { isKhojiAffirmative, isKhojiNegative } from "../../attender/utils.js";
 
 function MonthlySection({ title, children, defaultOpen = true }) {
@@ -313,7 +313,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       const khojiVal = log.Khoji || (khojiKey ? String(log[khojiKey] || "").trim() : "");
 
       const processAttempt = (att) => {
-        const status = att.status || "Pending";
+        const status = getCanonicalStatus(att.status || "Pending");
         if (selectedStatuses.length > 0 && !selectedStatuses.includes(status)) {
           return null;
         }
@@ -564,13 +564,15 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         total++;
       }
     });
-    return Object.entries(map).map(([status, countObj]) => ({
-      "Call Outcome Status": status,
-      "No. of Calls": countObj.total,
-      "Incoming": countObj.incoming,
-      "Outgoing": countObj.outgoing,
-      "Percentage (%)": total ? `${((countObj.total / total) * 100).toFixed(1)}%` : "0.0%"
-    }));
+    return Object.entries(map)
+      .filter(([_, countObj]) => countObj.total > 0)
+      .map(([status, countObj]) => ({
+        "Call Outcome Status": status,
+        "No. of Calls": countObj.total,
+        "Incoming": countObj.incoming,
+        "Outgoing": countObj.outgoing,
+        "Percentage (%)": total ? `${((countObj.total / total) * 100).toFixed(1)}%` : "0.0%"
+      }));
   }, [allAttempts]);
 
   const notConnectedBreakdown = React.useMemo(() => {
@@ -595,13 +597,15 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         total++;
       }
     });
-    return Object.entries(map).map(([status, countObj]) => ({
-      "Call Outcome Status": status,
-      "No. of Calls": countObj.total,
-      "Incoming": countObj.incoming,
-      "Outgoing": countObj.outgoing,
-      "Percentage (%)": total ? `${((countObj.total / total) * 100).toFixed(1)}%` : "0.0%"
-    }));
+    return Object.entries(map)
+      .filter(([_, countObj]) => countObj.total > 0)
+      .map(([status, countObj]) => ({
+        "Call Outcome Status": status,
+        "No. of Calls": countObj.total,
+        "Incoming": countObj.incoming,
+        "Outgoing": countObj.outgoing,
+        "Percentage (%)": total ? `${((countObj.total / total) * 100).toFixed(1)}%` : "0.0%"
+      }));
   }, [allAttempts]);
 
   const dayWiseTimeline = React.useMemo(() => {
