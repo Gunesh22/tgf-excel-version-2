@@ -290,6 +290,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   const [saving, setSaving] = useState(false);
   const [globalDup, setGlobalDup] = useState(null);
   const [isSearchingCRM, setIsSearchingCRM] = useState(false);
+  const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
   const [dupPopoverOpen, setDupPopoverOpen] = useState(false);
   const handleDismissRef = useRef(null);
   const [addedFields, setAddedFields] = useState([]);
@@ -570,31 +571,42 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
   // Debounced duplicate check — only on phone/mobile value change, not every keystroke
   const phoneVal = useMemo(() => {
-    const key = Object.keys(edited).find(k => {
-      const kl = k.toLowerCase();
-      return (kl === "phone") || (kl.includes("phone") && !kl.includes("mobile")) || kl.includes("whatsapp") || (kl.includes("cont") && !kl.includes("mobile"));
-    }) || "Phone";
-    return String(edited[key] || "").trim();
-  }, [edited]);
+    return String(edited.Phone || "").trim();
+  }, [edited.Phone]);
 
   const mobileVal = useMemo(() => {
-    const key = Object.keys(edited).find(k => {
-      const kl = k.toLowerCase();
-      return kl.includes("mobile");
-    }) || "Mobile";
-    return String(edited[key] || "").trim();
-  }, [edited]);
+    return String(edited.Mobile || "").trim();
+  }, [edited.Mobile]);
+
+  const initialPhone = useMemo(() => {
+    return getFieldWithFallback(row, "Phone");
+  }, [row]);
+
+  const initialMobile = useMemo(() => {
+    return getFieldWithFallback(row, "Mobile");
+  }, [row]);
 
   const dupTimerRef = useRef(null);
+  const activeToastRef = useRef(null);
   useEffect(() => {
     if (dupTimerRef.current) clearTimeout(dupTimerRef.current);
 
-    const hasPhone = phoneVal && phoneVal.length >= 5;
-    const hasMobile = mobileVal && mobileVal.length >= 5;
+    const hasPhone = phoneVal !== initialPhone && phoneVal.replace(/\D/g, "").length >= 10;
+    const hasMobile = mobileVal !== initialMobile && mobileVal.replace(/\D/g, "").length >= 10;
 
     if (!hasPhone && !hasMobile) {
       setGlobalDup(null);
+      setIsCheckingDuplicate(false);
+      if (activeToastRef.current) {
+        toast.dismiss(activeToastRef.current);
+        activeToastRef.current = null;
+      }
       return;
+    }
+
+    setIsCheckingDuplicate(true);
+    if (!activeToastRef.current) {
+      activeToastRef.current = toast.loading(`Checking details for ${phoneVal || mobileVal}...`);
     }
 
     dupTimerRef.current = setTimeout(async () => {
@@ -638,6 +650,11 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             programName: dup?.programName,
             showWarning: hasAssignedMatch
           });
+
+          if (activeToastRef.current) {
+            toast.success("Duplicate contact found! Details auto-filled.", { id: activeToastRef.current });
+            activeToastRef.current = null;
+          }
 
           // ── Auto-fill all contact fields from the duplicate ──
           if (dup) {
@@ -705,6 +722,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             const digitsCount = String(searchVal || "").replace(/\D/g, "").length;
             if (digitsCount >= 10) {
               setIsSearchingCRM(true);
+              if (activeToastRef.current) {
+                toast.loading(`No duplicates. Searching GoHighLevel CRM...`, { id: activeToastRef.current });
+              }
               console.log(`[CRM Fetch] Initiated search CRM by phone for value: "${searchVal}" (digits: ${digitsCount})`);
               try {
                 const crmContact = await searchCRMByPhone(searchVal);
@@ -726,29 +746,126 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                     }
                     return updated;
                   });
-                  toast.success("Lead found in CRM! Details auto-filled.");
+                  if (activeToastRef.current) {
+                    toast.success("Lead found in CRM! Details auto-filled.", { id: activeToastRef.current });
+                    activeToastRef.current = null;
+                  } else {
+                    toast.success("Lead found in CRM! Details auto-filled.");
+                  }
                 } else {
                   console.log(`[CRM Fetch] No contact found in CRM for phone "${searchVal}"`);
+                  if (activeToastRef.current) {
+                    toast.dismiss(activeToastRef.current);
+                    activeToastRef.current = null;
+                  }
                 }
               } catch (crmErr) {
                 console.error(`[CRM Fetch] Error searching CRM for phone "${searchVal}":`, crmErr);
+                if (activeToastRef.current) {
+                  toast.error("CRM search failed.", { id: activeToastRef.current });
+                  activeToastRef.current = null;
+                }
               } finally {
                 setIsSearchingCRM(false);
               }
             } else {
               console.log(`[CRM Fetch] Skipping CRM search because search value "${searchVal}" has only ${digitsCount} digits (minimum 10 required).`);
+              if (activeToastRef.current) {
+                toast.dismiss(activeToastRef.current);
+                activeToastRef.current = null;
+              }
+            }
+          } else {
+            if (activeToastRef.current) {
+              toast.dismiss(activeToastRef.current);
+              activeToastRef.current = null;
             }
           }
         }
       } catch (err) {
         console.error("[EditModal] Duplicate check failed:", err);
         setGlobalDup(null);
+        if (activeToastRef.current) {
+          toast.error("Verification failed.", { id: activeToastRef.current });
+          activeToastRef.current = null;
+        }
+      } finally {
+        setIsCheckingDuplicate(false);
       }
     }, 800);
 
-    return () => { if (dupTimerRef.current) clearTimeout(dupTimerRef.current); };
+    return () => {
+      if (dupTimerRef.current) clearTimeout(dupTimerRef.current);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phoneVal, mobileVal, row._isNew, row.id, edited.contactId]);
+  }, [phoneVal, mobileVal, row._isNew, row.id, edited.contactId, initialPhone, initialMobile]);
+
+  const dupWarningMessage = useMemo(() => {
+    if (!globalDup) return "";
+    const attenders = new Set();
+    const calledFors = new Set();
+    let isAssignedToMe = false;
+    let isAssignedToOthers = false;
+    let isUnassigned = false;
+
+    globalDup.matches.forEach(m => {
+      const docAssigned = m.isAssigned === true || (Array.isArray(m.assignedTo) && m.assignedTo.length > 0);
+      if (!docAssigned) {
+        isUnassigned = true;
+      }
+
+      // Gather Called For values
+      const docCalledFor = m["Called For"] || m.calledFor || "";
+      if (docCalledFor && docCalledFor !== "Unknown") {
+        calledFors.add(docCalledFor);
+      }
+
+      if (m.attenderStates) {
+        Object.keys(m.attenderStates).forEach(attId => {
+          const state = m.attenderStates[attId];
+          if (state) {
+            if (state.attenderName && state.attenderName !== "Unknown") {
+              if (attId === attenderId || state.attenderName === attenderName) {
+                isAssignedToMe = true;
+              } else {
+                attenders.add(state.attenderName);
+                isAssignedToOthers = true;
+              }
+            }
+            const stateCalledFor = state["Called For"] || state.calledFor || "";
+            if (stateCalledFor && stateCalledFor !== "Unknown") {
+              calledFors.add(stateCalledFor);
+            }
+          }
+        });
+      }
+      
+      const topName = m.assignedName || m.attenderName;
+      const topId = m.attenderId;
+      if (topName && topName !== "Unknown") {
+        if (topId === attenderId || topName === attenderName) {
+          isAssignedToMe = true;
+        } else {
+          attenders.add(topName);
+          isAssignedToOthers = true;
+        }
+      }
+    });
+
+    const attList = Array.from(attenders).filter(Boolean);
+    const cfList = Array.from(calledFors).filter(Boolean);
+    const cfStr = cfList.length > 0 ? ` for ${cfList.join(", ")}` : "";
+
+    if (isAssignedToOthers && attList.length > 0) {
+      return `Already assigned to ${attList.join(", ")}${cfStr}`;
+    } else if (isAssignedToMe) {
+      return `Already assigned to you${cfStr}`;
+    } else if (isUnassigned) {
+      return `Already present in database (Unassigned)${cfStr}`;
+    } else {
+      return `Already present in database${cfStr}`;
+    }
+  }, [globalDup, attenderId, attenderName]);
 
   const isPhoneDuplicate = useMemo(() => {
     if (!globalDup || !globalDup.showWarning || !globalDup.first || !phoneVal) return false;
@@ -1541,6 +1658,13 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                     Last edited by: {getLastEditedBy()}
                   </span>
                 )}
+
+                {(isCheckingDuplicate || isSearchingCRM) && (
+                  <span className="text-[10px] font-black bg-white/20 px-2 py-0.5 rounded text-white animate-pulse flex items-center gap-1.5 shrink-0">
+                    <Loader size={10} className="animate-spin text-white" />
+                    {isCheckingDuplicate ? "CHECKING DUPLICATES..." : "SEARCHING CRM..."}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -1567,82 +1691,6 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         </div>
 
         <div ref={modalScrollRef} className="overflow-y-auto flex-1 p-8 space-y-8">
-          {globalDup && globalDup.showWarning && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 animate-slide-up shadow-sm">
-              <AlertCircle className="text-amber-500 shrink-0" size={16} />
-              <p className="text-xs font-bold text-amber-800">
-                ⚠️ Duplicate Detected:{" "}
-                <span className="bg-amber-200/70 px-2 py-0.5 rounded-lg text-amber-900 ml-1">
-                  {(() => {
-                    const attenders = new Set();
-                    const calledFors = new Set();
-                    let isAssignedToMe = false;
-                    let isAssignedToOthers = false;
-                    let isUnassigned = false;
-
-                    globalDup.matches.forEach(m => {
-                      const docAssigned = m.isAssigned === true || (Array.isArray(m.assignedTo) && m.assignedTo.length > 0);
-                      if (!docAssigned) {
-                        isUnassigned = true;
-                      }
-
-                      // Gather Called For values
-                      const docCalledFor = m["Called For"] || m.calledFor || "";
-                      if (docCalledFor && docCalledFor !== "Unknown") {
-                        calledFors.add(docCalledFor);
-                      }
-
-                      if (m.attenderStates) {
-                        Object.keys(m.attenderStates).forEach(attId => {
-                          const state = m.attenderStates[attId];
-                          if (state) {
-                            if (state.attenderName && state.attenderName !== "Unknown") {
-                              if (attId === attenderId || state.attenderName === attenderName) {
-                                isAssignedToMe = true;
-                              } else {
-                                attenders.add(state.attenderName);
-                                isAssignedToOthers = true;
-                              }
-                            }
-                            const stateCalledFor = state["Called For"] || state.calledFor || "";
-                            if (stateCalledFor && stateCalledFor !== "Unknown") {
-                              calledFors.add(stateCalledFor);
-                            }
-                          }
-                        });
-                      }
-                      
-                      const topName = m.assignedName || m.attenderName;
-                      const topId = m.attenderId;
-                      if (topName && topName !== "Unknown") {
-                        if (topId === attenderId || topName === attenderName) {
-                          isAssignedToMe = true;
-                        } else {
-                          attenders.add(topName);
-                          isAssignedToOthers = true;
-                        }
-                      }
-                    });
-
-                    const attList = Array.from(attenders).filter(Boolean);
-                    const cfList = Array.from(calledFors).filter(Boolean);
-                    const cfStr = cfList.length > 0 ? ` for ${cfList.join(", ")}` : "";
-
-                    if (isAssignedToOthers && attList.length > 0) {
-                      return `Already assigned to ${attList.join(", ")}${cfStr}`;
-                    } else if (isAssignedToMe) {
-                      return `Already assigned to you${cfStr}`;
-                    } else if (isUnassigned) {
-                      return `Already present in database (Unassigned)${cfStr}`;
-                    } else {
-                      return `Already present in database${cfStr}`;
-                    }
-                  })()}
-                </span>
-              </p>
-            </div>
-          )}
-
           {/* Tab Switcher */}
           <div className="flex border-b border-gray-150 gap-6 mb-6">
             <button
@@ -1671,11 +1719,39 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             >
               <User size={14} className={activeTab === "profile" ? callTheme.iconClass : "text-gray-400"} />
               Edit Profile Details
+              {(isCheckingDuplicate || isSearchingCRM) && (
+                <Loader size={12} className="animate-spin text-indigo-500 shrink-0" />
+              )}
+              {globalDup && globalDup.showWarning && (
+                <AlertCircle size={14} className="text-amber-500 shrink-0 animate-bounce" title={dupWarningMessage} />
+              )}
               {activeTab === "profile" && (
                 <span className={`absolute bottom-[-2px] left-0 right-0 h-0.5 rounded-full ${callTheme.tabLine} animate-pulse`} />
               )}
             </button>
           </div>
+
+          {/* Duplicate Banner */}
+          {globalDup && (
+            <div className="bg-amber-50 border border-amber-250 rounded-2xl p-4 flex items-start gap-3 shadow-md animate-slide-up">
+              <div className="p-2 bg-amber-100 text-amber-600 rounded-xl mt-0.5 animate-pulse">
+                <AlertCircle size={18} className="stroke-[2.5]" />
+              </div>
+              <div className="flex-1 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
+                    Duplicate Warning
+                  </span>
+                  <span className="text-[9px] font-bold text-amber-700 bg-amber-100/60 px-2 py-0.5 rounded-lg border border-amber-200">
+                    {globalDup.matches[0]?.source || "Firestore"}
+                  </span>
+                </div>
+                <p className="text-xs font-semibold text-amber-900 leading-normal">
+                  {dupWarningMessage}
+                </p>
+              </div>
+            </div>
+          )}
 
           {activeTab === "call" ? (
             <div className={`space-y-6 p-6 rounded-3xl border transition-all ${callTheme.panelClass}`}>
@@ -2064,6 +2140,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
                     <Phone size={11} className="text-blue-500" /> Phone
+                    {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1" />}
+                    {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1" />}
                   </label>
                   <input
                     value={edited.Phone || ""}
@@ -2081,6 +2159,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
                     <Phone size={11} className="text-cyan-500" /> Mobile
+                    {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1" />}
+                    {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1" />}
                   </label>
                   <input
                     value={edited.Mobile || ""}
