@@ -242,22 +242,26 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
   }, [callLogs, settingsOptions]);
 
   const statusOptions = React.useMemo(() => {
-    const statuses = new Set(settingsOptions?.statusOptions || []);
+    const statuses = new Set();
+    const rawOptions = settingsOptions?.statusOptions || [];
+    rawOptions.forEach(opt => {
+      if (opt) statuses.add(getCanonicalStatus(opt));
+    });
     callLogs.forEach(log => {
       if (log.attenderStates) {
         Object.values(log.attenderStates).forEach(state => {
-          if (state.status) statuses.add(state.status);
+          if (state.status) statuses.add(getCanonicalStatus(state.status));
           if (state.history) {
             state.history.forEach(h => {
-              if (h.status) statuses.add(h.status);
+              if (h.status) statuses.add(getCanonicalStatus(h.status));
             });
           }
         });
       }
-      if (log.status) statuses.add(log.status);
+      if (log.status) statuses.add(getCanonicalStatus(log.status));
       if (log.history) {
         log.history.forEach(h => {
-          if (h.status) statuses.add(h.status);
+          if (h.status) statuses.add(getCanonicalStatus(h.status));
         });
       }
     });
@@ -317,6 +321,11 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         if (selectedStatuses.length > 0 && !selectedStatuses.includes(status)) {
           return null;
         }
+        const finalCalledFor = att.calledFor || calledForVal;
+        const attemptCalledFors = finalCalledFor.split(",").map(x => x.trim()).filter(Boolean);
+        if (selectedCalledFors.length > 0 && !attemptCalledFors.some(cf => selectedCalledFors.includes(cf))) {
+          return null;
+        }
         return {
           ...att,
           status,
@@ -326,7 +335,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           programName,
           contactId: log.id,
           source: att.source || sourceVal,
-          calledFor: att.calledFor || calledForVal,
+          calledFor: finalCalledFor,
           feedback: feedbackVal,
           Khoji: khojiVal
         };
@@ -860,6 +869,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         : ["Unknown"];
       
       calledFors.forEach(prog => {
+        if (selectedCalledFors.length > 0 && !selectedCalledFors.includes(prog)) {
+          return;
+        }
         if (!map[prog]) {
           map[prog] = { name: prog, total: 0, connected: 0, notConnected: 0, incoming: 0, outgoing: 0, conversions: 0, incomingConversions: 0, outgoingConversions: 0, query: 0, denominator: 0 };
         }
@@ -906,7 +918,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       "denominator": a.denominator,
       "Conversion Rate (%)": a.denominator ? `${((a.conversions / a.denominator) * 100).toFixed(1)}%` : "0.0%"
     })).sort((a, b) => b["Total Calls"] - a["Total Calls"]);
-  }, [allAttempts]);
+  }, [allAttempts, selectedCalledFors]);
 
   const calledForBreakdownTotals = React.useMemo(() => {
     const totals = { 
@@ -1036,6 +1048,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         : ["Unknown"];
 
       calledFors.forEach(prog => {
+        if (selectedCalledFors.length > 0 && !selectedCalledFors.includes(prog)) {
+          return;
+        }
         const key = `${src} &&& ${prog}`;
         if (!map[key]) {
           map[key] = { 
@@ -1123,7 +1138,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       
       return b["Total Calls"] - a["Total Calls"];
     });
-  }, [allAttempts]);
+  }, [allAttempts, selectedCalledFors]);
 
   const sourceVsCalledForBreakdownTotals = React.useMemo(() => {
     const totals = { 
