@@ -23,7 +23,7 @@ export const TAB_ITEMS = [
   { id: "import", label: "Lead Distribution 📂", icon: <Upload size={18} /> },
   { id: "attenders", label: "Attenders", icon: <Users size={18} /> },
   { id: "abhivyakti", label: "Abhivyakti", icon: <ClipboardCheck size={18} /> },
-  { id: "settings", label: "Dropdown Options ⚙️", icon: <Settings size={18} /> },
+  { id: "settings", label: "Settings", icon: <Settings size={18} /> },
 ];
 
 export const CONNECTED_STATUSES = ["Info given", "Interested", "Reg.Done", "reminder", "Query", "Already Reg.d", "Next time", "Shivir done", "Not possible", "Pending", "Not interested", "Not Attended"];

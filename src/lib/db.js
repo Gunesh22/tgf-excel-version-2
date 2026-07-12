@@ -2340,6 +2340,69 @@ export const rebuildCallCenterCache = async () => {
   await batch.commit();
 };
 
+export const updateContactInLockedReport = async (month, contactId, prunedContact) => {
+  const lockedColl = collection(db, "lockedMonthlyReports");
+  const q = query(lockedColl, where("month", "==", month));
+  const snap = await getDocs(q);
+  
+  let targetDoc = null;
+  
+  // Find if the contact already exists in one of the parts
+  for (const d of snap.docs) {
+    const contacts = d.data().contacts || {};
+    if (contacts[contactId]) {
+      targetDoc = d;
+      break;
+    }
+  }
+  
+  if (targetDoc) {
+    const ref = doc(db, "lockedMonthlyReports", targetDoc.id);
+    if (prunedContact === null) {
+      await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
+    } else {
+      await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+    }
+  } else {
+    // Contact doesn't exist in any part
+    if (prunedContact === null) return; // Nothing to delete
+    
+    // Find a part with < 500 contacts, or create a new part
+    let chosenDoc = null;
+    let maxPartNum = 0;
+    
+    snap.docs.forEach(d => {
+      const match = d.id.match(/_part(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1]);
+        if (num > maxPartNum) maxPartNum = num;
+      }
+      
+      const count = Object.keys(d.data().contacts || {}).length;
+      if (count < 500 && !chosenDoc) {
+        chosenDoc = d;
+      }
+    });
+    
+    if (chosenDoc) {
+      const ref = doc(db, "lockedMonthlyReports", chosenDoc.id);
+      await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+    } else {
+      const newPartId = `${month}_part${maxPartNum + 1}`;
+      const ref = doc(db, "lockedMonthlyReports", newPartId);
+      await setDoc(ref, {
+        month,
+        lockedAt: new Date().toISOString(),
+        lockedBy: "System",
+        status: "completed",
+        contacts: {
+          [contactId]: prunedContact
+        }
+      });
+    }
+  }
+};
+
 export const updateCacheContacts = async (contactIds) => {
   if (!contactIds || contactIds.length === 0) return;
   
@@ -2401,20 +2464,43 @@ export const updateCacheContacts = async (contactIds) => {
 
     // 3. Apply updates to each month document
     const updatePromises = Object.entries(monthlyUpdatesMap).map(async ([month, updates]) => {
-      const ref = doc(db, "callCenterCache", month);
-      try {
-        await updateDoc(ref, updates);
-      } catch (err) {
-        if (err.code === "not-found" || err.message?.includes("not-found") || err.message?.includes("not found") || err.message?.includes("NOT_FOUND")) {
-          // Convert the dot-notation updates map to a nested object for setDoc merge
-          const nestedData = { contacts: {} };
-          Object.entries(updates).forEach(([key, val]) => {
-            const contactId = key.split(".")[1];
-            nestedData.contacts[contactId] = val;
-          });
-          await setDoc(ref, nestedData, { merge: true });
-        } else {
-          throw err;
+      const isLockedMonth = month < currentMonth;
+      
+      if (isLockedMonth) {
+        // If it's a historical month, check if the active cache document still exists
+        const cacheRef = doc(db, "callCenterCache", month);
+        const cacheSnap = await getDoc(cacheRef);
+        
+        if (cacheSnap.exists()) {
+          // If the active cache still exists (not auto-locked yet), update the active cache.
+          // It will be locked/purged shortly.
+          await updateDoc(cacheRef, updates);
+          return;
+        }
+        
+        // Otherwise, write the update directly to the locked report snapshot parts
+        const contactUpdates = Object.entries(updates).map(async ([key, val]) => {
+          const contactId = key.split(".")[1];
+          const isDeleteVal = !(val && val.id);
+          await updateContactInLockedReport(month, contactId, isDeleteVal ? null : val);
+        });
+        await Promise.all(contactUpdates);
+      } else {
+        // Current/future month: update active cache
+        const ref = doc(db, "callCenterCache", month);
+        try {
+          await updateDoc(ref, updates);
+        } catch (err) {
+          if (err.code === "not-found" || err.message?.includes("not-found") || err.message?.includes("not found") || err.message?.includes("NOT_FOUND")) {
+            const nestedData = { contacts: {} };
+            Object.entries(updates).forEach(([key, val]) => {
+              const contactId = key.split(".")[1];
+              nestedData.contacts[contactId] = val;
+            });
+            await setDoc(ref, nestedData, { merge: true });
+          } else {
+            throw err;
+          }
         }
       }
     });
@@ -2542,22 +2628,30 @@ export const verifyCallCenterCache = async () => {
 
 export const subscribeToAllCallLogs = (tag, callback) => {
   const cacheColl = collection(db, "callCenterCache");
+  const lockedColl = collection(db, "lockedMonthlyReports");
   
-  return onSnapshot(cacheColl, async (snap) => {
-    if (snap.empty) {
-      console.log("No cache documents exist, rebuilding...");
-      try {
-        await rebuildCallCenterCache();
-      } catch (err) {
-        console.error("Rebuild cache failed:", err);
-      }
-      return;
-    }
+  let lockedDocs = [];
+  let cacheSnap = null;
+  
+  const triggerCallback = () => {
+    if (!cacheSnap) return;
     
-    const sortedDocs = [...snap.docs].filter(d => d.id !== "contacts").sort((a, b) => a.id.localeCompare(b.id));
+    const activeDocs = cacheSnap.docs.filter(d => d.id !== "contacts" && /^\d{4}-\d{2}$/.test(d.id));
+    const activeIds = new Set(activeDocs.map(d => d.id));
+    
+    // Combine active cache docs and locked docs
+    const finalDocs = [
+      ...activeDocs,
+      ...lockedDocs.filter(d => {
+        const docMonth = d.data().month || d.id.split("_")[0];
+        return !activeIds.has(docMonth);
+      })
+    ];
+    
+    finalDocs.sort((a, b) => a.id.localeCompare(b.id));
     
     const contactsMap = {};
-    sortedDocs.forEach(docSnap => {
+    finalDocs.forEach(docSnap => {
       const docContacts = docSnap.data().contacts || {};
       Object.entries(docContacts).forEach(([id, c]) => {
         if (!contactsMap[id]) {
@@ -2623,7 +2717,50 @@ export const subscribeToAllCallLogs = (tag, callback) => {
     });
     
     callback(logs);
-  }, err => console.error("subscribeToAllCallLogs error:", err));
+  };
+
+  // Realtime subscription to locked reports
+  const unsubLocked = onSnapshot(lockedColl, (lockedSnap) => {
+    lockedDocs = lockedSnap.docs;
+    triggerCallback();
+  }, err => console.error("subscribeToAllCallLogs locked error:", err));
+  
+  // Realtime subscription to active cache
+  const unsubCache = onSnapshot(cacheColl, async (snap) => {
+    if (snap.empty) {
+      console.log("No cache documents exist, rebuilding...");
+      try {
+        await rebuildCallCenterCache();
+      } catch (err) {
+        console.error("Rebuild cache failed:", err);
+      }
+      return;
+    }
+
+    // Auto-Lock completed months
+    const activeDocIds = snap.docs.map(d => d.id).filter(id => id !== "contacts" && /^\d{4}-\d{2}$/.test(id));
+    const currentMonth = getMonthStr(new Date());
+    const completedMonths = activeDocIds.filter(m => m < currentMonth);
+    
+    if (completedMonths.length > 0) {
+      completedMonths.forEach(async (month) => {
+        console.log(`[Auto-Lock] Completed month cache detected: ${month}. Triggering auto-lock & purge...`);
+        try {
+          await lockAndPurgeMonthlyReport(month, "Auto-System");
+        } catch (err) {
+          console.error(`[Auto-Lock] Failed to auto-lock month ${month}:`, err);
+        }
+      });
+    }
+    
+    cacheSnap = snap;
+    triggerCallback();
+  }, err => console.error("subscribeToAllCallLogs cache error:", err));
+
+  return () => {
+    unsubLocked();
+    unsubCache();
+  };
 };
 
 // Get all call logs for any attender (admin view)
@@ -3004,5 +3141,209 @@ export const subscribeToRecentRegistrations = (callback) => {
     }));
     callback(list);
   }, err => console.error("subscribeToRecentRegistrations error:", err));
+};
+
+export const getActiveCacheMonths = async () => {
+  const cacheColl = collection(db, "callCenterCache");
+  const snap = await getDocs(cacheColl);
+  return snap.docs
+    .map(d => d.id)
+    .filter(id => id !== "contacts" && /^\d{4}-\d{2}$/.test(id))
+    .sort((a, b) => b.localeCompare(a));
+};
+
+export const getLockedMonthlyReports = async () => {
+  const lockedColl = collection(db, "lockedMonthlyReports");
+  const snap = await getDocs(lockedColl);
+  const grouped = {};
+  
+  snap.docs.forEach(d => {
+    const data = d.data();
+    const month = data.month || d.id.split("_")[0];
+    if (!grouped[month]) {
+      grouped[month] = {
+        id: month,
+        month: month,
+        lockedAt: data.lockedAt,
+        lockedBy: data.lockedBy || "System",
+        parts: 0,
+        contactCount: 0
+      };
+    }
+    grouped[month].parts += 1;
+    grouped[month].contactCount += Object.keys(data.contacts || {}).length;
+    
+    if (data.lockedAt && (!grouped[month].lockedAt || data.lockedAt < grouped[month].lockedAt)) {
+      grouped[month].lockedAt = data.lockedAt;
+    }
+  });
+  
+  return Object.values(grouped).sort((a, b) => b.id.localeCompare(a.id));
+};
+
+export const lockAndPurgeMonthlyReport = async (monthStr, adminName = "Admin") => {
+  if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) {
+    throw new Error("Invalid month format. Expected YYYY-MM.");
+  }
+
+  const cacheDocRef = doc(db, "callCenterCache", monthStr);
+  const lockedColl = collection(db, "lockedMonthlyReports");
+  const q = query(lockedColl, where("month", "==", monthStr));
+  const existingPartsSnap = await getDocs(q);
+
+  const existingContacts = {};
+  let earliestLockedAt = new Date().toISOString();
+  let firstLockedBy = adminName;
+
+  existingPartsSnap.docs.forEach(d => {
+    const data = d.data();
+    if (data.lockedAt && data.lockedAt < earliestLockedAt) {
+      earliestLockedAt = data.lockedAt;
+    }
+    if (data.lockedBy) {
+      firstLockedBy = data.lockedBy;
+    }
+    const contacts = data.contacts || {};
+    Object.assign(existingContacts, contacts);
+  });
+
+  let cacheData;
+  try {
+    cacheData = await runTransaction(db, async (transaction) => {
+      const cacheSnap = await transaction.get(cacheDocRef);
+      
+      if (!cacheSnap.exists()) {
+        throw new Error(`No active cache data found for ${monthStr}.`);
+      }
+      
+      const data = cacheSnap.data();
+      const activeContacts = data.contacts || {};
+      
+      const mergedContacts = {
+        ...existingContacts,
+        ...activeContacts
+      };
+      
+      const contactIds = Object.keys(mergedContacts);
+      
+      if (contactIds.length > 0) {
+        const CHUNK_SIZE = 500;
+        for (let i = 0; i < contactIds.length; i += CHUNK_SIZE) {
+          const chunkIds = contactIds.slice(i, i + CHUNK_SIZE);
+          const chunkContacts = {};
+          chunkIds.forEach(id => {
+            chunkContacts[id] = mergedContacts[id];
+          });
+          
+          const partNum = Math.floor(i / CHUNK_SIZE) + 1;
+          const partId = `${monthStr}_part${partNum}`;
+          const partRef = doc(db, "lockedMonthlyReports", partId);
+          
+          transaction.set(partRef, {
+            month: monthStr,
+            lockedAt: earliestLockedAt,
+            lockedBy: firstLockedBy,
+            status: "completed",
+            contacts: chunkContacts
+          }, { merge: true });
+        }
+      } else {
+        const partRef = doc(db, "lockedMonthlyReports", `${monthStr}_part1`);
+        transaction.set(partRef, {
+          month: monthStr,
+          lockedAt: earliestLockedAt,
+          lockedBy: firstLockedBy,
+          status: "completed",
+          contacts: {}
+        }, { merge: true });
+      }
+      
+      transaction.delete(cacheDocRef);
+      return data;
+    });
+  } catch (err) {
+    console.warn(`[Lock & Purge] Month ${monthStr} skipped or already processed:`, err.message);
+    return { success: false, skipped: true, reason: err.message };
+  }
+
+  const contactsMap = cacheData.contacts || {};
+  const contactIds = Object.keys(contactsMap);
+  if (contactIds.length > 0) {
+    const batchSize = 100;
+    for (let i = 0; i < contactIds.length; i += batchSize) {
+      const batchIds = contactIds.slice(i, i + batchSize);
+      const batch = writeBatch(db);
+      
+      const fetchPromises = batchIds.map(async (id) => {
+        const cRef = doc(db, "contacts", id);
+        const snap = await getDoc(cRef);
+        return { id, snap, cRef };
+      });
+
+      const snaps = await Promise.all(fetchPromises);
+
+      snaps.forEach(({ id, snap, cRef }) => {
+        if (!snap.exists()) return;
+        const c = snap.data();
+        
+        const updates = {};
+        let modified = false;
+
+        // Clean legacy history
+        if (c.history && Array.isArray(c.history)) {
+          const originalLen = c.history.length;
+          const filteredHistory = c.history.filter(h => {
+            const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+            return !(hTs && getMonthStr(hTs) === monthStr);
+          });
+          if (filteredHistory.length !== originalLen) {
+            updates.history = filteredHistory;
+            modified = true;
+          }
+        }
+
+        // Clean attenderStates history
+        if (c.attenderStates) {
+          const updatedAttenderStates = { ...c.attenderStates };
+          let attenderModified = false;
+          
+          Object.keys(updatedAttenderStates).forEach(attId => {
+            const state = updatedAttenderStates[attId];
+            if (state.history && Array.isArray(state.history)) {
+              const originalLen = state.history.length;
+              const filteredHistory = state.history.filter(h => {
+                const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+                return !(hTs && getMonthStr(hTs) === monthStr);
+              });
+              if (filteredHistory.length !== originalLen) {
+                updatedAttenderStates[attId] = {
+                  ...state,
+                  history: filteredHistory
+                };
+                attenderModified = true;
+              }
+            }
+          });
+          
+          if (attenderModified) {
+            updates.attenderStates = updatedAttenderStates;
+            modified = true;
+          }
+        }
+
+        if (modified) {
+          updates.updatedAt = serverTimestamp();
+          batch.update(cRef, updates);
+        }
+      });
+
+      await batch.commit();
+    }
+  }
+
+  // Update status to completed
+  await setDoc(lockedDocRef, { status: "completed" }, { merge: true });
+
+  return { success: true, count: contactIds.length };
 };
 

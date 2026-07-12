@@ -1,8 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-hot-toast";
-import { ShieldCheck, Tag, HelpCircle, Loader, RefreshCw, CheckCircle2, AlertTriangle, Activity } from "lucide-react";
+import { ShieldCheck, Tag, HelpCircle, Loader, RefreshCw, CheckCircle2, AlertTriangle, Activity, Archive } from "lucide-react";
 import { OptionsManagerCard } from "./OptionsManagerCard";
-import { getSettingsOptions, updateCallCenterOptions, rebuildCallCenterCache, verifyCallCenterCache } from "../../../../lib/db";
+import { 
+  getSettingsOptions, 
+  updateCallCenterOptions, 
+  rebuildCallCenterCache, 
+  verifyCallCenterCache,
+  getActiveCacheMonths,
+  getLockedMonthlyReports
+} from "../../../../lib/db";
 
 export default function SettingsTab() {
   const [options, setOptions] = useState(null);
@@ -10,9 +17,13 @@ export default function SettingsTab() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [verificationResult, setVerificationResult] = useState(null);
+  const [activeMonths, setActiveMonths] = useState([]);
+  const [lockedMonths, setLockedMonths] = useState([]);
+  const [isLoadingMonths, setIsLoadingMonths] = useState(false);
 
   useEffect(() => {
     loadOptions();
+    loadMonths();
   }, []);
 
   const loadOptions = async () => {
@@ -28,6 +39,20 @@ export default function SettingsTab() {
     }
   };
 
+  const loadMonths = async () => {
+    setIsLoadingMonths(true);
+    try {
+      const active = await getActiveCacheMonths();
+      const locked = await getLockedMonthlyReports();
+      setActiveMonths(active);
+      setLockedMonths(locked);
+    } catch (err) {
+      console.error("Failed to load months:", err);
+    } finally {
+      setIsLoadingMonths(false);
+    }
+  };
+
   const handleOptionChange = async (type, action, val) => {
     const key = type === "status" ? "statusOptions" : type === "source" ? "sourceOptions" : "calledForOptions";
     const current = options[key] || [];
@@ -40,17 +65,24 @@ export default function SettingsTab() {
       }
       updated = current.filter(x => x !== val);
     } else {
-      if (current.includes(val)) return;
-      updated = [...current, val];
+      if (!val || !val.trim()) return;
+      if (current.includes(val.trim())) {
+        toast.error("Option already exists!");
+        return;
+      }
+      updated = [...current, val.trim()];
     }
 
     try {
-      await updateCallCenterOptions({ [key]: updated });
-      setOptions(prev => ({ ...prev, [key]: updated }));
-      toast.success(`${action === "delete" ? "Deleted" : "Added"} option: ${val}`);
+      await updateCallCenterOptions(key, updated);
+      setOptions(prev => ({
+        ...prev,
+        [key]: updated
+      }));
+      toast.success("Option updated successfully!");
     } catch (err) {
       console.error(err);
-      toast.error("Failed to save changes: " + err.message);
+      toast.error("Failed to update option: " + err.message);
     }
   };
 
@@ -198,6 +230,72 @@ export default function SettingsTab() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm space-y-6">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Archive size={20} className="text-indigo-600" />
+            <h3 className="font-bold text-gray-900 text-base">Archive & Purge Historical Call Logs</h3>
+          </div>
+          <p className="text-xs text-gray-400 font-medium">
+            Historical call logs are automatically locked at the end of each month into static snapshots, and raw entries are purged from the database to optimize space.
+          </p>
+        </div>
+
+        {isLoadingMonths ? (
+          <div className="flex items-center gap-2 text-xs text-gray-500 py-4">
+            <Loader size={16} className="animate-spin text-indigo-500" />
+            Loading historical months...
+          </div>
+        ) : (
+          <div className="overflow-hidden border border-gray-100 rounded-xl">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-gray-600 font-semibold">
+                  <th className="p-3">Month</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {activeMonths.map(month => (
+                  <tr key={month} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="p-3 font-bold text-gray-900">{month}</td>
+                    <td className="p-3">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-100">
+                        Active Month
+                      </span>
+                    </td>
+                    <td className="p-3 text-gray-500 font-medium">Live logs. Will be archived automatically at the end of the month.</td>
+                  </tr>
+                ))}
+
+                {lockedMonths.map(item => (
+                  <tr key={item.id} className="hover:bg-gray-50/50 bg-gray-50/20 transition-colors">
+                    <td className="p-3 font-bold text-gray-900">{item.month}</td>
+                    <td className="p-3">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100">
+                        Archived & Locked
+                      </span>
+                    </td>
+                    <td className="p-3 text-gray-500">
+                      Locked automatically by {item.lockedBy || "System"} on {item.lockedAt ? new Date(item.lockedAt).toLocaleDateString() : "month end"}. Contains {item.contactCount} contacts in {item.parts || 1} part(s). Raw logs purged.
+                    </td>
+                  </tr>
+                ))}
+
+                {activeMonths.length === 0 && lockedMonths.length === 0 && (
+                  <tr>
+                    <td colSpan="3" className="p-6 text-center text-gray-400 font-medium">
+                      No historical months found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
