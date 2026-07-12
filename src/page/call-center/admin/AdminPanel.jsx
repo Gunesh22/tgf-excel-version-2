@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-hot-toast";
 import { Settings, ArrowLeft, ChevronRight, Loader } from "lucide-react";
-import { getPrograms, getAttenders, subscribeToCallCenterOptions, subscribeToAllCallLogs, subscribeToRegistrations, getRegistrationMonths } from "../../../lib/db";
+import { getPrograms, getAttenders, subscribeToCallCenterOptions, subscribeToAllCallLogs, subscribeToRegistrations, getRegistrationMonths, runAutoLockAndPurgeCheck } from "../../../lib/db";
 import ImportContacts from "../ImportContacts";
 import { TAB_ITEMS } from "./utils.jsx";
 import DashboardTab from "./components/DashboardTab";
@@ -21,16 +21,15 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
   const [callLogs, setCallLogs] = useState([]);
   const [callLogsLoading, setCallLogsLoading] = useState(true);
 
-  const [selectedMonth, setSelectedMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
+  const [selectedMonth, setSelectedMonth] = useState("last-6-months");
   const [registrations, setRegistrations] = useState([]);
   const [registrationsLoading, setRegistrationsLoading] = useState(false);
   const [monthOptions, setMonthOptions] = useState([]);
 
   useEffect(() => {
     loadAll();
+    // Run background check for completed months auto-locking / purging once on mount
+    runAutoLockAndPurgeCheck();
     const unsub = subscribeToCallCenterOptions((data) => {
       setSettingsOptions(data);
     });
@@ -41,15 +40,16 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
 
   // Hoisted subscription to all call logs
   useEffect(() => {
+    if (!selectedMonth) return;
     setCallLogsLoading(true);
-    const unsubLogs = subscribeToAllCallLogs("ALL", (logs) => {
+    const unsubLogs = subscribeToAllCallLogs("ALL", selectedMonth, (logs) => {
       setCallLogs(logs);
       setCallLogsLoading(false);
     });
     return () => {
       if (unsubLogs) unsubLogs();
     };
-  }, []);
+  }, [selectedMonth]);
 
   // Hoisted month loading logic
   useEffect(() => {
@@ -57,7 +57,8 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
       try {
         const months = await getRegistrationMonths();
         setMonthOptions(months);
-        if (months.length > 0 && !months.includes(selectedMonth)) {
+        const rangeOptions = ["last-3-months", "last-6-months", "ALL"];
+        if (months.length > 0 && !months.includes(selectedMonth) && !rangeOptions.includes(selectedMonth)) {
           setSelectedMonth(months[0]);
         }
       } catch (err) {
@@ -140,48 +141,51 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto">
-        {isLoading ? (
-          <div className="h-full flex items-center justify-center">
-            <Loader size={32} className="text-indigo-500 animate-spin" />
-          </div>
-        ) : (
-          <>
-            {activeTab === "dashboard" && (
-              callLogsLoading ? (
-                <div className="h-full flex flex-col items-center justify-center gap-4 py-20">
-                  <Loader size={32} className="text-indigo-500 animate-spin" />
-                  <p className="text-slate-400 font-bold text-sm">Loading call database...</p>
-                </div>
-              ) : (
-                <DashboardTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} callLogs={callLogs} />
-              )
-            )}
-            {activeTab === "monthly" && (
-              callLogsLoading ? (
-                <div className="h-full flex flex-col items-center justify-center gap-4 py-20">
-                  <Loader size={32} className="text-indigo-500 animate-spin" />
-                  <p className="text-slate-400 font-bold text-sm">Loading call database...</p>
-                </div>
-              ) : (
-                <MonthlyReportTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} callLogs={callLogs} />
-              )
-            )}
-            {activeTab === "programs" && <ProgramsTab programs={programs} attenders={attenders} onReloadPrograms={refreshAll} />}
-            {activeTab === "import" && <ImportContacts programs={programs} onImportComplete={refreshAll} />}
-            {activeTab === "attenders" && <AttendersTab attenders={attenders} programs={programs} onReloadAttenders={refreshAll} />}
-            {activeTab === "abhivyakti" && (
-              <AbhivyaktiTab
-                selectedMonth={selectedMonth}
-                setSelectedMonth={setSelectedMonth}
-                registrations={registrations}
-                loading={registrationsLoading}
-                monthOptions={monthOptions}
-              />
-            )}
-            {activeTab === "settings" && <SettingsTab />}
-          </>
-        )}
+      <main className="flex-1 overflow-hidden flex flex-col h-full">
+
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="h-full flex items-center justify-center">
+              <Loader size={32} className="text-indigo-500 animate-spin" />
+            </div>
+          ) : (
+            <>
+              {activeTab === "dashboard" && (
+                callLogsLoading ? (
+                  <div className="h-full flex flex-col items-center justify-center gap-4 py-20">
+                    <Loader size={32} className="text-indigo-500 animate-spin" />
+                    <p className="text-slate-400 font-bold text-sm">Loading call database...</p>
+                  </div>
+                ) : (
+                  <DashboardTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} callLogs={callLogs} />
+                )
+              )}
+              {activeTab === "monthly" && (
+                callLogsLoading ? (
+                  <div className="h-full flex flex-col items-center justify-center gap-4 py-20">
+                    <Loader size={32} className="text-indigo-500 animate-spin" />
+                    <p className="text-slate-400 font-bold text-sm">Loading call database...</p>
+                  </div>
+                ) : (
+                  <MonthlyReportTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} callLogs={callLogs} />
+                )
+              )}
+              {activeTab === "programs" && <ProgramsTab programs={programs} attenders={attenders} onReloadPrograms={refreshAll} />}
+              {activeTab === "import" && <ImportContacts programs={programs} onImportComplete={refreshAll} />}
+              {activeTab === "attenders" && <AttendersTab attenders={attenders} programs={programs} onReloadAttenders={refreshAll} />}
+              {activeTab === "abhivyakti" && (
+                <AbhivyaktiTab
+                  selectedMonth={selectedMonth}
+                  setSelectedMonth={setSelectedMonth}
+                  registrations={registrations}
+                  loading={registrationsLoading}
+                  monthOptions={monthOptions}
+                />
+              )}
+              {activeTab === "settings" && <SettingsTab />}
+            </>
+          )}
+        </div>
       </main>
     </div>
   );

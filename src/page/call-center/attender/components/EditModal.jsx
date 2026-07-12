@@ -405,54 +405,67 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
   const dupTimerRef = useRef(null);
   const activeToastRef = useRef(null);
+  const lastSearchedPhoneRef = useRef("");
+  const lastSearchedMobileRef = useRef("");
+
   useEffect(() => {
     if (dupTimerRef.current) clearTimeout(dupTimerRef.current);
 
-    const hasPhone = phoneVal !== initialPhone && phoneVal.replace(/\D/g, "").length >= 10;
-    const hasMobile = mobileVal !== initialMobile && mobileVal.replace(/\D/g, "").length >= 10;
+    const cleanPhone = phoneVal.replace(/\D/g, "");
+    const cleanMobile = mobileVal.replace(/\D/g, "");
 
-    if (!hasPhone && !hasMobile) {
+    const isPhoneEmptyOrInitial = !phoneVal || phoneVal === initialPhone || cleanPhone.length < 10;
+    const isMobileEmptyOrInitial = !mobileVal || mobileVal === initialMobile || cleanMobile.length < 10;
+
+    if (isPhoneEmptyOrInitial && isMobileEmptyOrInitial) {
       setGlobalDup(null);
       setIsCheckingDuplicate(false);
       if (activeToastRef.current) {
         toast.dismiss(activeToastRef.current);
         activeToastRef.current = null;
       }
+      lastSearchedPhoneRef.current = "";
+      lastSearchedMobileRef.current = "";
+      return;
+    }
+
+    const shouldCheckPhone = phoneVal !== initialPhone && cleanPhone.length >= 10 && phoneVal !== lastSearchedPhoneRef.current;
+    const shouldCheckMobile = mobileVal !== initialMobile && cleanMobile.length >= 10 && mobileVal !== lastSearchedMobileRef.current;
+
+    if (!shouldCheckPhone && !shouldCheckMobile) {
       return;
     }
 
     setIsCheckingDuplicate(true);
     if (!activeToastRef.current) {
-      activeToastRef.current = toast.loading(`Checking details for ${phoneVal || mobileVal}...`);
+      activeToastRef.current = toast.loading(`Checking details for ${[phoneVal, mobileVal].filter(Boolean).join(" / ")}...`);
     }
 
     dupTimerRef.current = setTimeout(async () => {
       try {
+        lastSearchedPhoneRef.current = phoneVal;
+        lastSearchedMobileRef.current = mobileVal;
+
         // For NEW incoming entries, don't exclude any id so all matches show.
         // For existing contacts, exclude self so we only flag TRUE duplicates (different docs).
         const excludeId = row._isNew ? null : (edited.contactId || row.id);
 
-        const results = await Promise.all([
-          hasPhone  ? checkGlobalDuplicate(phoneVal,  excludeId) : Promise.resolve(null),
-          hasMobile ? checkGlobalDuplicate(mobileVal, excludeId) : Promise.resolve(null),
-        ]);
+        const combinedValue = [
+          phoneVal !== initialPhone && cleanPhone.length >= 10 ? phoneVal : null,
+          mobileVal !== initialMobile && cleanMobile.length >= 10 ? mobileVal : null
+        ].filter(Boolean).join(", ");
 
-        const [r1, r2] = results;
+        const results = await checkGlobalDuplicate(combinedValue, excludeId);
 
         let combinedMatches = [];
         const allTagsSet = new Set();
-        if (r1 || r2) {
-          const allMatchesMap = new Map();
-          [r1, r2].forEach(res => {
-            if (!res) return;
-            if (Array.isArray(res.matches)) {
-              res.matches.forEach(m => allMatchesMap.set(m.id, m));
-            }
-            if (Array.isArray(res.allTags)) {
-              res.allTags.forEach(t => allTagsSet.add(t));
-            }
-          });
-          combinedMatches = Array.from(allMatchesMap.values());
+        if (results) {
+          if (Array.isArray(results.matches)) {
+            combinedMatches = results.matches;
+          }
+          if (Array.isArray(results.allTags)) {
+            results.allTags.forEach(t => allTagsSet.add(t));
+          }
         }
 
         if (combinedMatches.length > 0) {

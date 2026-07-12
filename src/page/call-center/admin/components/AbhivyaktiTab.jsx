@@ -89,25 +89,41 @@ export default function AbhivyaktiTab({
       else map[dStr].direct++;
     });
 
-    let parsedMonth;
-    if (selectedMonth) {
-      const [year, month] = selectedMonth.split("-").map(Number);
-      parsedMonth = new Date(year, month - 1, 1);
-    } else {
-      parsedMonth = new Date();
-    }
-    const daysInMonth = new Date(parsedMonth.getFullYear(), parsedMonth.getMonth() + 1, 0).getDate();
     const list = [];
-    
-    for (let day = 1; day <= daysInMonth; day++) {
-      const checkDate = new Date(parsedMonth.getFullYear(), parsedMonth.getMonth(), day);
-      const dStr = checkDate.toLocaleDateString("en-IN");
-      const data = map[dStr] || { date: dStr, total: 0, assisted: 0, direct: 0 };
-      list.push({
-        "Date": dStr,
-        "Total Registrations": data.total,
-        "Attender Assisted": data.assisted,
-        "Direct Online": data.direct
+    if (selectedMonth && selectedMonth.includes("-")) {
+      const [year, month] = selectedMonth.split("-").map(Number);
+      const parsedMonth = new Date(year, month - 1, 1);
+      const daysInMonth = new Date(parsedMonth.getFullYear(), parsedMonth.getMonth() + 1, 0).getDate();
+      for (let day = 1; day <= daysInMonth; day++) {
+        const checkDate = new Date(parsedMonth.getFullYear(), parsedMonth.getMonth(), day);
+        const dStr = checkDate.toLocaleDateString("en-IN");
+        const data = map[dStr] || { date: dStr, total: 0, assisted: 0, direct: 0 };
+        list.push({
+          "Date": dStr,
+          "Total Registrations": data.total,
+          "Attender Assisted": data.assisted,
+          "Direct Online": data.direct
+        });
+      }
+    } else {
+      // For range scopes, gather dates present in monthFiltered, sort chronologically, and display
+      const allDates = Array.from(new Set(monthFiltered.map(r => {
+        const d = r.registeredAt?.toDate ? r.registeredAt.toDate() : r.createdAt?.toDate ? r.createdAt.toDate() : r.createdAt ? new Date(r.createdAt) : null;
+        return d ? d.toLocaleDateString("en-IN") : null;
+      }).filter(Boolean))).sort((a, b) => {
+        const [da, ma, ya] = a.split("/").map(Number);
+        const [db, mb, yb] = b.split("/").map(Number);
+        return new Date(ya, ma - 1, da) - new Date(yb, mb - 1, db);
+      });
+
+      allDates.forEach(dStr => {
+        const data = map[dStr] || { date: dStr, total: 0, assisted: 0, direct: 0 };
+        list.push({
+          "Date": dStr,
+          "Total Registrations": data.total,
+          "Attender Assisted": data.assisted,
+          "Direct Online": data.direct
+        });
       });
     }
     return list;
@@ -199,18 +215,6 @@ export default function AbhivyaktiTab({
           <p className="text-slate-500 mt-1">Track registrations, sources, conversions, and export reporting sheets.</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          {monthOptions.length > 0 && (
-            <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
-              className="px-4 py-2.5 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-              {monthOptions.map(m => {
-                const [y, mn] = m.split("-");
-                const dateObj = new Date(parseInt(y), parseInt(mn) - 1, 1);
-                const display = dateObj.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
-                return <option key={m} value={m}>{display}</option>;
-              })}
-            </select>
-          )}
-
           <button onClick={handleExport} disabled={!monthFiltered.length}
             className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-sm transition-all disabled:opacity-50">
             <Download size={18} /> Export Workbook

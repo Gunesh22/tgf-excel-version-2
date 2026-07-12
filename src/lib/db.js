@@ -3,7 +3,7 @@ import {
   updateDoc, deleteDoc, query, where, or,
   serverTimestamp, writeBatch, onSnapshot,
   limit, Timestamp, runTransaction, arrayUnion, arrayRemove, orderBy,
-  deleteField, increment, startAfter
+  deleteField, increment, startAfter, documentId
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { isKhojiField } from "./khojiHelper";
@@ -632,52 +632,38 @@ export const importContacts = async (param1, param2, param3, param4 = null) => {
     });
   }
 
-  // Query Firestore in batches of 30 to check for existing contacts GLOBALLY by normalizedPhone or normalizedMobile
+  // Query Firestore in batches of 30 to check for existing contacts GLOBALLY by normalizedPhones array
   const existingContactsByPhone = new Map(); // normalizedNumber -> Array<{ref, data}>
   const normPhonesList = Array.from(processedPhones).filter(Boolean);
   for (let i = 0; i < normPhonesList.length; i += 30) {
     const phoneBatch = normPhonesList.slice(i, i + 30);
     
-    // Query by normalizedPhone
-    const q1 = query(
+    const q = query(
       collection(db, "contacts"),
-      where("normalizedPhone", "in", phoneBatch)
-    );
-    // Query by normalizedMobile
-    const q2 = query(
-      collection(db, "contacts"),
-      where("normalizedMobile", "in", phoneBatch)
+      where("normalizedPhones", "array-contains-any", phoneBatch)
     );
     
-    const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+    const snap = await getDocs(q);
     
-    const processSnap = (snap) => {
-      snap.docs.forEach(docSnap => {
-        const data = formatContactDoc(docSnap);
-        // Index under whichever normalized number matches our search batch
-        if (data.normalizedPhone && phoneBatch.includes(data.normalizedPhone)) {
-          if (!existingContactsByPhone.has(data.normalizedPhone)) {
-            existingContactsByPhone.set(data.normalizedPhone, []);
+    snap.docs.forEach(docSnap => {
+      const data = formatContactDoc(docSnap);
+      // Index under whichever normalized number matches our search batch, with fallback support for older fields
+      const phones = Array.isArray(data.normalizedPhones)
+        ? data.normalizedPhones
+        : [data.normalizedPhone, data.normalizedMobile].filter(Boolean);
+
+      phones.forEach(p => {
+        if (phoneBatch.includes(p)) {
+          if (!existingContactsByPhone.has(p)) {
+            existingContactsByPhone.set(p, []);
           }
-          const list = existingContactsByPhone.get(data.normalizedPhone);
-          if (!list.some(item => item.ref.id === docSnap.ref.id)) {
-            list.push({ ref: docSnap.ref, data });
-          }
-        }
-        if (data.normalizedMobile && phoneBatch.includes(data.normalizedMobile)) {
-          if (!existingContactsByPhone.has(data.normalizedMobile)) {
-            existingContactsByPhone.set(data.normalizedMobile, []);
-          }
-          const list = existingContactsByPhone.get(data.normalizedMobile);
+          const list = existingContactsByPhone.get(p);
           if (!list.some(item => item.ref.id === docSnap.ref.id)) {
             list.push({ ref: docSnap.ref, data });
           }
         }
       });
-    };
-    
-    processSnap(snap1);
-    processSnap(snap2);
+    });
   }
 
   const batchWriteOps = [];
@@ -886,12 +872,6 @@ export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
   
   const promises = [];
   numbersToCheck.forEach(norm => {
-    promises.push(
-      getDocs(query(collection(db, "contacts"), where("normalizedPhone", "==", norm)))
-    );
-    promises.push(
-      getDocs(query(collection(db, "contacts"), where("normalizedMobile", "==", norm)))
-    );
     promises.push(
       getDocs(query(collection(db, "contacts"), where("normalizedPhones", "array-contains", norm)))
     );
@@ -1517,21 +1497,11 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
 
   if (finalNormalizedPhones.length > 0) {
     try {
-      let existingSnap;
-      const q1 = query(collection(db, "contacts"), where("normalizedPhone", "in", finalNormalizedPhones));
-      const q2 = query(collection(db, "contacts"), where("normalizedMobile", "in", finalNormalizedPhones));
       const q3 = query(collection(db, "contacts"), where("normalizedPhones", "array-contains-any", finalNormalizedPhones));
-      const [snap1, snap2, snap3] = await Promise.all([getDocs(q1), getDocs(q2), getDocs(q3)]);
+      const snap3 = await getDocs(q3);
       
-      const mergedDocs = [];
-      const seenIds = new Set();
-      [...snap1.docs, ...snap2.docs, ...snap3.docs].forEach(d => {
-        if (!seenIds.has(d.id)) {
-          seenIds.add(d.id);
-          mergedDocs.push(d);
-        }
-      });
-      existingSnap = { empty: mergedDocs.length === 0, docs: mergedDocs };
+      const mergedDocs = snap3.docs;
+      const existingSnap = { empty: mergedDocs.length === 0, docs: mergedDocs };
 
       if (!existingSnap.empty) {
         // Find ANY existing active document
@@ -1748,22 +1718,6 @@ export const globalSearchContacts = async (queryStr) => {
       getDocs(
         query(
           collection(db, "contacts"),
-          where("normalizedPhone", "==", norm.slice(-10))
-        )
-      )
-    );
-    queries.push(
-      getDocs(
-        query(
-          collection(db, "contacts"),
-          where("normalizedMobile", "==", norm.slice(-10))
-        )
-      )
-    );
-    queries.push(
-      getDocs(
-        query(
-          collection(db, "contacts"),
           where("normalizedPhones", "array-contains", norm)
         )
       )
@@ -1905,18 +1859,9 @@ export const claimCRMContact = async (crmContact, attenderId, attenderName) => {
   let existingId = null;
   if (finalNormalizedPhones.length > 0) {
     try {
-      const q1 = query(collection(db, "contacts"), where("normalizedPhone", "in", finalNormalizedPhones));
-      const q2 = query(collection(db, "contacts"), where("normalizedMobile", "in", finalNormalizedPhones));
       const q3 = query(collection(db, "contacts"), where("normalizedPhones", "array-contains-any", finalNormalizedPhones));
-      const [snap1, snap2, snap3] = await Promise.all([getDocs(q1), getDocs(q2), getDocs(q3)]);
-      const mergedDocs = [];
-      const seenIds = new Set();
-      [...snap1.docs, ...snap2.docs, ...snap3.docs].forEach(d => {
-        if (!seenIds.has(d.id)) {
-          seenIds.add(d.id);
-          mergedDocs.push(d);
-        }
-      });
+      const snap3 = await getDocs(q3);
+      const mergedDocs = snap3.docs;
       const matchDoc = mergedDocs.find(docSnap => docSnap.data()._deleted !== true) || mergedDocs[0];
       if (matchDoc) {
         existingId = matchDoc.id;
@@ -2209,6 +2154,12 @@ const getMonthStr = (ts) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 };
 
+const getCutoffMonth = (numMonths = 3) => {
+  const d = new Date();
+  d.setMonth(d.getMonth() - (numMonths - 1));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
 const pruneContactForCacheForMonth = (c, monthStr) => {
   const pruned = {
     id: c.id,
@@ -2286,6 +2237,14 @@ const pruneContactForCacheForMonth = (c, monthStr) => {
   return pruned;
 };
 
+const getByteSize = (obj) => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(obj)).length;
+  } catch (e) {
+    return JSON.stringify(obj).length;
+  }
+};
+
 export const rebuildCallCenterCache = async () => {
   const q = query(collection(db, "contacts"), where("isAssigned", "==", true));
   const snap = await getDocs(q);
@@ -2334,10 +2293,148 @@ export const rebuildCallCenterCache = async () => {
     batch.delete(d.ref);
   });
   
+  const cutoffMonth = getCutoffMonth(3);
   Object.entries(monthlyData).forEach(([month, contactsMap]) => {
-    batch.set(doc(db, "callCenterCache", month), { contacts: contactsMap });
+    if (month < cutoffMonth) return;
+    const contactEntries = Object.entries(contactsMap);
+    if (contactEntries.length > 0) {
+      let partNum = 1;
+      let currentPartContacts = {};
+      
+      contactEntries.forEach(([id, contact]) => {
+        const testPart = { contacts: { ...currentPartContacts, [id]: contact } };
+        const estimatedSize = getByteSize(testPart);
+        
+        if (estimatedSize > 850 * 1024) {
+          // Commit current part
+          batch.set(doc(db, "callCenterCache", `${month}_part${partNum}`), { contacts: currentPartContacts });
+          partNum++;
+          currentPartContacts = { [id]: contact };
+        } else {
+          currentPartContacts[id] = contact;
+        }
+      });
+      // Commit the last part
+      batch.set(doc(db, "callCenterCache", `${month}_part${partNum}`), { contacts: currentPartContacts });
+    } else {
+      batch.set(doc(db, "callCenterCache", `${month}_part1`), { contacts: {} });
+    }
   });
+  
+  // Always ensure there is at least one placeholder document in the collection to prevent infinite rebuild loop when empty
+  batch.set(doc(db, "callCenterCache", "placeholder"), { isPlaceholder: true });
+
   await batch.commit();
+};
+
+export const updateContactInActiveCache = async (month, contactId, prunedContact) => {
+  const cacheColl = collection(db, "callCenterCache");
+  const snap = await getDocs(cacheColl);
+  
+  let targetDoc = null;
+  const parts = [];
+  
+  snap.docs.forEach(d => {
+    if (d.id === month || d.id.startsWith(`${month}_part`)) {
+      parts.push(d);
+      const contacts = d.data().contacts || {};
+      if (contacts[contactId]) {
+        targetDoc = d;
+      }
+    }
+  });
+  
+  if (targetDoc) {
+    const ref = doc(db, "callCenterCache", targetDoc.id);
+    if (prunedContact === null) {
+      await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
+    } else {
+      // Check if updating in-place exceeds size limit (850 KB)
+      const data = targetDoc.data();
+      const updatedContacts = { ...data.contacts, [contactId]: prunedContact };
+      const newSize = getByteSize({ contacts: updatedContacts });
+      
+      if (newSize < 850 * 1024) {
+        await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+      } else {
+        // Exceeds limit! Remove from this part and find another part or create one
+        await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
+        
+        let chosenDoc = null;
+        let maxPartNum = 0;
+        
+        parts.forEach(d => {
+          if (d.id === targetDoc.id) return;
+          
+          const match = d.id.match(/_part(\d+)$/);
+          if (match) {
+            const num = parseInt(match[1]);
+            if (num > maxPartNum) maxPartNum = num;
+          } else {
+            maxPartNum = Math.max(maxPartNum, 1);
+          }
+          
+          const dContacts = d.data().contacts || {};
+          const testContacts = { ...dContacts, [contactId]: prunedContact };
+          const testSize = getByteSize({ contacts: testContacts });
+          if (testSize < 850 * 1024 && !chosenDoc) {
+            chosenDoc = d;
+          }
+        });
+        
+        if (chosenDoc) {
+          const chosenRef = doc(db, "callCenterCache", chosenDoc.id);
+          await updateDoc(chosenRef, { [`contacts.${contactId}`]: prunedContact });
+        } else {
+          const newPartNum = maxPartNum > 0 ? maxPartNum + 1 : 1;
+          const newPartId = `${month}_part${newPartNum}`;
+          const newRef = doc(db, "callCenterCache", newPartId);
+          await setDoc(newRef, {
+            contacts: {
+              [contactId]: prunedContact
+            }
+          }, { merge: true });
+        }
+      }
+    }
+  } else {
+    // Contact doesn't exist in any active cache part
+    if (prunedContact === null) return; // Nothing to delete
+    
+    let chosenDoc = null;
+    let maxPartNum = 0;
+    
+    parts.forEach(d => {
+      const match = d.id.match(/_part(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1]);
+        if (num > maxPartNum) maxPartNum = num;
+      } else {
+        maxPartNum = Math.max(maxPartNum, 1);
+      }
+      
+      const dContacts = d.data().contacts || {};
+      const testContacts = { ...dContacts, [contactId]: prunedContact };
+      const testSize = getByteSize({ contacts: testContacts });
+      if (testSize < 850 * 1024 && !chosenDoc) {
+        chosenDoc = d;
+      }
+    });
+    
+    if (chosenDoc) {
+      const ref = doc(db, "callCenterCache", chosenDoc.id);
+      await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+    } else {
+      const newPartNum = maxPartNum > 0 ? maxPartNum + 1 : 1;
+      const newPartId = `${month}_part${newPartNum}`;
+      const ref = doc(db, "callCenterCache", newPartId);
+      await setDoc(ref, {
+        contacts: {
+          [contactId]: prunedContact
+        }
+      }, { merge: true });
+    }
+  }
 };
 
 export const updateContactInLockedReport = async (month, contactId, prunedContact) => {
@@ -2361,13 +2458,59 @@ export const updateContactInLockedReport = async (month, contactId, prunedContac
     if (prunedContact === null) {
       await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
     } else {
-      await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+      // Check size limit (850 KB)
+      const data = targetDoc.data();
+      const updatedContacts = { ...data.contacts, [contactId]: prunedContact };
+      const newSize = getByteSize({ contacts: updatedContacts });
+      
+      if (newSize < 850 * 1024) {
+        await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+      } else {
+        // Exceeds limit! Remove from this part and find another
+        await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
+        
+        let chosenDoc = null;
+        let maxPartNum = 0;
+        
+        snap.docs.forEach(d => {
+          if (d.id === targetDoc.id) return;
+          
+          const match = d.id.match(/_part(\d+)$/);
+          if (match) {
+            const num = parseInt(match[1]);
+            if (num > maxPartNum) maxPartNum = num;
+          }
+          
+          const dContacts = d.data().contacts || {};
+          const testContacts = { ...dContacts, [contactId]: prunedContact };
+          const testSize = getByteSize({ contacts: testContacts });
+          if (testSize < 850 * 1024 && !chosenDoc) {
+            chosenDoc = d;
+          }
+        });
+        
+        if (chosenDoc) {
+          const chosenRef = doc(db, "lockedMonthlyReports", chosenDoc.id);
+          await updateDoc(chosenRef, { [`contacts.${contactId}`]: prunedContact });
+        } else {
+          const newPartId = `${month}_part${maxPartNum + 1}`;
+          const ref = doc(db, "lockedMonthlyReports", newPartId);
+          await setDoc(ref, {
+            month,
+            lockedAt: new Date().toISOString(),
+            lockedBy: "System",
+            status: "completed",
+            contacts: {
+              [contactId]: prunedContact
+            }
+          });
+        }
+      }
     }
   } else {
     // Contact doesn't exist in any part
     if (prunedContact === null) return; // Nothing to delete
     
-    // Find a part with < 500 contacts, or create a new part
     let chosenDoc = null;
     let maxPartNum = 0;
     
@@ -2378,8 +2521,10 @@ export const updateContactInLockedReport = async (month, contactId, prunedContac
         if (num > maxPartNum) maxPartNum = num;
       }
       
-      const count = Object.keys(d.data().contacts || {}).length;
-      if (count < 500 && !chosenDoc) {
+      const dContacts = d.data().contacts || {};
+      const testContacts = { ...dContacts, [contactId]: prunedContact };
+      const testSize = getByteSize({ contacts: testContacts });
+      if (testSize < 850 * 1024 && !chosenDoc) {
         chosenDoc = d;
       }
     });
@@ -2463,44 +2608,26 @@ export const updateCacheContacts = async (contactIds) => {
     });
 
     // 3. Apply updates to each month document
+    const cutoffMonth = getCutoffMonth(3);
     const updatePromises = Object.entries(monthlyUpdatesMap).map(async ([month, updates]) => {
-      const isLockedMonth = month < currentMonth;
+      const isCompletedMonth = month < currentMonth;
+      const isLockedMonth = month < cutoffMonth;
       
-      if (isLockedMonth) {
-        // If it's a historical month, check if the active cache document still exists
-        const cacheRef = doc(db, "callCenterCache", month);
-        const cacheSnap = await getDoc(cacheRef);
-        
-        if (cacheSnap.exists()) {
-          // If the active cache still exists (not auto-locked yet), update the active cache.
-          // It will be locked/purged shortly.
-          await updateDoc(cacheRef, updates);
-          return;
-        }
-        
-        // Otherwise, write the update directly to the locked report snapshot parts
-        const contactUpdates = Object.entries(updates).map(async ([key, val]) => {
+      if (isCompletedMonth) {
+        // If it's a completed month, update the locked report snapshot parts
+        for (const [key, val] of Object.entries(updates)) {
           const contactId = key.split(".")[1];
           const isDeleteVal = !(val && val.id);
           await updateContactInLockedReport(month, contactId, isDeleteVal ? null : val);
-        });
-        await Promise.all(contactUpdates);
-      } else {
-        // Current/future month: update active cache
-        const ref = doc(db, "callCenterCache", month);
-        try {
-          await updateDoc(ref, updates);
-        } catch (err) {
-          if (err.code === "not-found" || err.message?.includes("not-found") || err.message?.includes("not found") || err.message?.includes("NOT_FOUND")) {
-            const nestedData = { contacts: {} };
-            Object.entries(updates).forEach(([key, val]) => {
-              const contactId = key.split(".")[1];
-              nestedData.contacts[contactId] = val;
-            });
-            await setDoc(ref, nestedData, { merge: true });
-          } else {
-            throw err;
-          }
+        }
+      }
+      
+      // Also update the active cache if it's not locked/deleted yet
+      if (!isLockedMonth) {
+        for (const [key, val] of Object.entries(updates)) {
+          const contactId = key.split(".")[1];
+          const isDeleteVal = !(val && val.id);
+          await updateContactInActiveCache(month, contactId, isDeleteVal ? null : val);
         }
       }
     });
@@ -2554,7 +2681,11 @@ export const verifyCallCenterCache = async () => {
     const cacheSnap = await getDocs(cacheColl);
     const cacheMonthlyData = {};
     cacheSnap.docs.filter(d => d.id !== "contacts").forEach(d => {
-      cacheMonthlyData[d.id] = d.data().contacts || {};
+      const monthKey = d.id.split("_")[0];
+      if (!cacheMonthlyData[monthKey]) {
+        cacheMonthlyData[monthKey] = {};
+      }
+      Object.assign(cacheMonthlyData[monthKey], d.data().contacts || {});
     });
     
     const liveMonths = Object.keys(liveMonthlyData);
@@ -2626,20 +2757,56 @@ export const verifyCallCenterCache = async () => {
   }
 };
 
-export const subscribeToAllCallLogs = (tag, callback) => {
-  const cacheColl = collection(db, "callCenterCache");
-  const lockedColl = collection(db, "lockedMonthlyReports");
+export const getMonthRange = (option) => {
+  const current = new Date();
+  const currentMonthStr = getMonthStr(current);
   
+  if (!option) {
+    return { startMonth: currentMonthStr, endMonth: currentMonthStr };
+  }
+  
+  if (option === "last-3-months") {
+    const start = new Date();
+    start.setMonth(start.getMonth() - 2);
+    return { startMonth: getMonthStr(start), endMonth: currentMonthStr };
+  }
+  
+  if (option === "last-6-months") {
+    const start = new Date();
+    start.setMonth(start.getMonth() - 5);
+    return { startMonth: getMonthStr(start), endMonth: currentMonthStr };
+  }
+  
+  if (option === "ALL") {
+    return { startMonth: "0000-00", endMonth: currentMonthStr };
+  }
+  
+  // Specific month like "2026-07"
+  return { startMonth: option, endMonth: option };
+};
+
+export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
+  let targetOption = scopeOption;
+  let finalCallback = callback;
+  if (typeof scopeOption === "function") {
+    finalCallback = scopeOption;
+    targetOption = getMonthStr(new Date());
+  } else if (!targetOption) {
+    targetOption = getMonthStr(new Date());
+  }
+
+  const { startMonth, endMonth } = getMonthRange(targetOption);
+
   let lockedDocs = [];
   let cacheSnap = null;
   
   const triggerCallback = () => {
     if (!cacheSnap) return;
     
-    const activeDocs = cacheSnap.docs.filter(d => d.id !== "contacts" && /^\d{4}-\d{2}$/.test(d.id));
-    const activeIds = new Set(activeDocs.map(d => d.id));
+    const activeDocs = cacheSnap.docs.filter(d => d.id !== "contacts" && /^\d{4}-\d{2}(_part\d+)?$/.test(d.id));
+    const activeIds = new Set(activeDocs.map(d => d.id.split("_")[0]));
     
-    // Combine active cache docs and locked docs
+    // Combine active cache docs and locked docs in the range
     const finalDocs = [
       ...activeDocs,
       ...lockedDocs.filter(d => {
@@ -2716,41 +2883,43 @@ export const subscribeToAllCallLogs = (tag, callback) => {
       return ta - tb;
     });
     
-    callback(logs);
+    finalCallback(logs);
   };
 
-  // Realtime subscription to locked reports
-  const unsubLocked = onSnapshot(lockedColl, (lockedSnap) => {
-    lockedDocs = lockedSnap.docs;
-    triggerCallback();
-  }, err => console.error("subscribeToAllCallLogs locked error:", err));
+  // Fetch the locked monthly reports in range
+  const lockedQuery = query(
+    collection(db, "lockedMonthlyReports"),
+    where(documentId(), ">=", startMonth),
+    where(documentId(), "<=", endMonth + "\uf8ff")
+  );
   
-  // Realtime subscription to active cache
-  const unsubCache = onSnapshot(cacheColl, async (snap) => {
+  getDocs(lockedQuery).then(snap => {
+    lockedDocs = snap.docs;
+    triggerCallback();
+  }).catch(err => {
+    console.error("subscribeToAllCallLogs locked fetch error:", err);
+    triggerCallback();
+  });
+  
+  // Realtime subscription to cache scoped to the month range using documentId range
+  const cacheQuery = query(
+    collection(db, "callCenterCache"),
+    where(documentId(), ">=", startMonth),
+    where(documentId(), "<=", endMonth + "\uf8ff")
+  );
+
+  const unsubCache = onSnapshot(cacheQuery, async (snap) => {
     if (snap.empty) {
-      console.log("No cache documents exist, rebuilding...");
-      try {
-        await rebuildCallCenterCache();
-      } catch (err) {
-        console.error("Rebuild cache failed:", err);
+      console.log(`No cache documents exist for range ${startMonth} to ${endMonth}, checking rebuild...`);
+      const currentMonth = getMonthStr(new Date());
+      if (endMonth === currentMonth) {
+        try {
+          await rebuildCallCenterCache();
+        } catch (err) {
+          console.error("Rebuild cache failed:", err);
+        }
       }
       return;
-    }
-
-    // Auto-Lock completed months
-    const activeDocIds = snap.docs.map(d => d.id).filter(id => id !== "contacts" && /^\d{4}-\d{2}$/.test(id));
-    const currentMonth = getMonthStr(new Date());
-    const completedMonths = activeDocIds.filter(m => m < currentMonth);
-    
-    if (completedMonths.length > 0) {
-      completedMonths.forEach(async (month) => {
-        console.log(`[Auto-Lock] Completed month cache detected: ${month}. Triggering auto-lock & purge...`);
-        try {
-          await lockAndPurgeMonthlyReport(month, "Auto-System");
-        } catch (err) {
-          console.error(`[Auto-Lock] Failed to auto-lock month ${month}:`, err);
-        }
-      });
     }
     
     cacheSnap = snap;
@@ -2758,9 +2927,54 @@ export const subscribeToAllCallLogs = (tag, callback) => {
   }, err => console.error("subscribeToAllCallLogs cache error:", err));
 
   return () => {
-    unsubLocked();
     unsubCache();
   };
+};
+
+export const runAutoLockAndPurgeCheck = async () => {
+  try {
+    console.log("[Auto-Lock] Starting lock and purge background checks...");
+    const cacheColl = collection(db, "callCenterCache");
+    const snap = await getDocs(cacheColl);
+    const activeDocIds = snap.docs.map(d => d.id).filter(id => id !== "contacts" && /^\d{4}-\d{2}(_part\d+)?$/.test(id));
+    const currentMonth = getMonthStr(new Date());
+    const cutoffMonth = getCutoffMonth(3);
+    const completedMonths = activeDocIds
+      .map(id => id.split("_")[0])
+      .filter(m => m < currentMonth)
+      .filter((v, i, a) => a.indexOf(v) === i); // unique
+    
+    if (completedMonths.length > 0) {
+      const lockedSnap = await getDocs(collection(db, "lockedMonthlyReports"));
+      const lockedMonths = new Set(lockedSnap.docs.map(d => d.id));
+
+      for (const month of completedMonths) {
+        const isOldCache = month < cutoffMonth;
+        if (isOldCache) {
+          console.log(`[Auto-Purge] Old cache detected: ${month}. Triggering lock & purge...`);
+          try {
+            await lockAndPurgeMonthlyReport(month, "Auto-System", true);
+          } catch (err) {
+            console.error(`[Auto-Purge] Failed to purge cache for ${month}:`, err);
+          }
+        } else {
+          // Completed but within 3-month window: ensure snapshot exists
+          const hasSnapshot = lockedMonths.has(month);
+          if (!hasSnapshot) {
+            console.log(`[Auto-Snapshot] Completed month detected within window: ${month}. Generating snapshot...`);
+            try {
+              await lockAndPurgeMonthlyReport(month, "Auto-System", false);
+            } catch (err) {
+              console.error(`[Auto-Snapshot] Failed to snapshot month ${month}:`, err);
+            }
+          }
+        }
+      }
+    }
+    console.log("[Auto-Lock] Checks completed successfully.");
+  } catch (err) {
+    console.error("runAutoLockAndPurgeCheck failed:", err);
+  }
 };
 
 // Get all call logs for any attender (admin view)
@@ -2877,14 +3091,25 @@ export const getRegistrationMonths = async () => {
   }
 };
 
-export const subscribeToRegistrations = (monthYear, callback) => {
-  // Query registrations by registeredYearMonth to optimize performance and prevent memory limits
-  let q;
-  if (monthYear && monthYear !== "ALL") {
-    q = query(collection(db, "registrations"), where("registeredYearMonth", "==", monthYear));
-  } else {
-    q = query(collection(db, "registrations"));
+export const subscribeToRegistrations = (scopeOption, callback) => {
+  let targetOption = scopeOption;
+  let finalCallback = callback;
+  if (typeof scopeOption === "function") {
+    finalCallback = scopeOption;
+    targetOption = getMonthStr(new Date());
+  } else if (!targetOption) {
+    targetOption = getMonthStr(new Date());
   }
+
+  const { startMonth, endMonth } = getMonthRange(targetOption);
+
+  // Query registrations by registeredYearMonth range to optimize performance
+  let q = query(
+    collection(db, "registrations"),
+    where("registeredYearMonth", ">=", startMonth),
+    where("registeredYearMonth", "<=", endMonth)
+  );
+
   return onSnapshot(q, snap => {
     const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     // Sort descending by registeredAt client-side
@@ -2893,7 +3118,7 @@ export const subscribeToRegistrations = (monthYear, callback) => {
       const tb = b.registeredAt?.toMillis ? b.registeredAt.toMillis() : 0;
       return tb - ta;
     });
-    callback(docs);
+    finalCallback(docs);
   }, err => console.error("subscribeToRegistrations error:", err));
 };
 
@@ -3146,10 +3371,15 @@ export const subscribeToRecentRegistrations = (callback) => {
 export const getActiveCacheMonths = async () => {
   const cacheColl = collection(db, "callCenterCache");
   const snap = await getDocs(cacheColl);
-  return snap.docs
-    .map(d => d.id)
-    .filter(id => id !== "contacts" && /^\d{4}-\d{2}$/.test(id))
-    .sort((a, b) => b.localeCompare(a));
+  const months = new Set();
+  snap.docs.forEach(d => {
+    const id = d.id;
+    if (id !== "contacts" && /^\d{4}-\d{2}(_part\d+)?$/.test(id)) {
+      const baseMonth = id.split("_")[0];
+      months.add(baseMonth);
+    }
+  });
+  return Array.from(months).sort((a, b) => b.localeCompare(a));
 };
 
 export const getLockedMonthlyReports = async () => {
@@ -3181,12 +3411,21 @@ export const getLockedMonthlyReports = async () => {
   return Object.values(grouped).sort((a, b) => b.id.localeCompare(a.id));
 };
 
-export const lockAndPurgeMonthlyReport = async (monthStr, adminName = "Admin") => {
+export const lockAndPurgeMonthlyReport = async (monthStr, adminName = "Admin", purgeActive = false) => {
   if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) {
     throw new Error("Invalid month format. Expected YYYY-MM.");
   }
 
-  const cacheDocRef = doc(db, "callCenterCache", monthStr);
+  // Get all active cache parts for this month first
+  const cacheColl = collection(db, "callCenterCache");
+  const cacheSnap = await getDocs(cacheColl);
+  const activeCacheDocRefs = [];
+  cacheSnap.docs.forEach(d => {
+    if (d.id === monthStr || d.id.startsWith(`${monthStr}_part`)) {
+      activeCacheDocRefs.push(d.ref);
+    }
+  });
+
   const lockedColl = collection(db, "lockedMonthlyReports");
   const q = query(lockedColl, where("month", "==", monthStr));
   const existingPartsSnap = await getDocs(q);
@@ -3207,46 +3446,83 @@ export const lockAndPurgeMonthlyReport = async (monthStr, adminName = "Admin") =
     Object.assign(existingContacts, contacts);
   });
 
-  let cacheData;
+  let activeContacts;
   try {
-    cacheData = await runTransaction(db, async (transaction) => {
-      const cacheSnap = await transaction.get(cacheDocRef);
+    activeContacts = await runTransaction(db, async (transaction) => {
+      if (activeCacheDocRefs.length === 0) {
+        throw new Error(`No active cache data found for ${monthStr}.`);
+      }
+
+      const activeSnaps = await Promise.all(activeCacheDocRefs.map(ref => transaction.get(ref)));
       
-      if (!cacheSnap.exists()) {
+      if (!activeSnaps.some(s => s.exists())) {
         throw new Error(`No active cache data found for ${monthStr}.`);
       }
       
-      const data = cacheSnap.data();
-      const activeContacts = data.contacts || {};
+      const mergedActive = {};
+      activeSnaps.forEach(snap => {
+        if (snap.exists()) {
+          const contacts = snap.data().contacts || {};
+          Object.assign(mergedActive, contacts);
+        }
+      });
       
       const mergedContacts = {
         ...existingContacts,
-        ...activeContacts
+        ...mergedActive
       };
       
       const contactIds = Object.keys(mergedContacts);
+
+      // Clear out all existing locked part documents in the transaction to prevent orphan parts
+      existingPartsSnap.docs.forEach(docSnap => {
+        transaction.delete(docSnap.ref);
+      });
       
       if (contactIds.length > 0) {
-        const CHUNK_SIZE = 500;
-        for (let i = 0; i < contactIds.length; i += CHUNK_SIZE) {
-          const chunkIds = contactIds.slice(i, i + CHUNK_SIZE);
-          const chunkContacts = {};
-          chunkIds.forEach(id => {
-            chunkContacts[id] = mergedContacts[id];
-          });
-          
-          const partNum = Math.floor(i / CHUNK_SIZE) + 1;
-          const partId = `${monthStr}_part${partNum}`;
-          const partRef = doc(db, "lockedMonthlyReports", partId);
-          
-          transaction.set(partRef, {
+        let partNum = 1;
+        let currentPartContacts = {};
+        
+        contactIds.forEach(id => {
+          const contact = mergedContacts[id];
+          const testPart = {
             month: monthStr,
             lockedAt: earliestLockedAt,
             lockedBy: firstLockedBy,
             status: "completed",
-            contacts: chunkContacts
-          }, { merge: true });
-        }
+            contacts: { ...currentPartContacts, [id]: contact }
+          };
+          const estimatedSize = getByteSize(testPart);
+          
+          if (estimatedSize > 850 * 1024) {
+            // Commit current part
+            const partId = `${monthStr}_part${partNum}`;
+            const partRef = doc(db, "lockedMonthlyReports", partId);
+            transaction.set(partRef, {
+              month: monthStr,
+              lockedAt: earliestLockedAt,
+              lockedBy: firstLockedBy,
+              status: "completed",
+              contacts: currentPartContacts
+            }, { merge: true });
+            
+            partNum++;
+            currentPartContacts = { [id]: contact };
+          } else {
+            currentPartContacts[id] = contact;
+          }
+        });
+        
+        // Commit the last part
+        const partId = `${monthStr}_part${partNum}`;
+        const partRef = doc(db, "lockedMonthlyReports", partId);
+        transaction.set(partRef, {
+          month: monthStr,
+          lockedAt: earliestLockedAt,
+          lockedBy: firstLockedBy,
+          status: "completed",
+          contacts: currentPartContacts
+        }, { merge: true });
       } else {
         const partRef = doc(db, "lockedMonthlyReports", `${monthStr}_part1`);
         transaction.set(partRef, {
@@ -3258,92 +3534,96 @@ export const lockAndPurgeMonthlyReport = async (monthStr, adminName = "Admin") =
         }, { merge: true });
       }
       
-      transaction.delete(cacheDocRef);
-      return data;
+      // Delete all matching active cache parts only if purgeActive is true
+      if (purgeActive) {
+        activeCacheDocRefs.forEach(ref => {
+          transaction.delete(ref);
+        });
+      }
+      
+      return mergedActive;
     });
   } catch (err) {
     console.warn(`[Lock & Purge] Month ${monthStr} skipped or already processed:`, err.message);
     return { success: false, skipped: true, reason: err.message };
   }
 
-  const contactsMap = cacheData.contacts || {};
-  const contactIds = Object.keys(contactsMap);
-  if (contactIds.length > 0) {
-    const batchSize = 100;
-    for (let i = 0; i < contactIds.length; i += batchSize) {
-      const batchIds = contactIds.slice(i, i + batchSize);
-      const batch = writeBatch(db);
-      
-      const fetchPromises = batchIds.map(async (id) => {
-        const cRef = doc(db, "contacts", id);
-        const snap = await getDoc(cRef);
-        return { id, snap, cRef };
-      });
-
-      const snaps = await Promise.all(fetchPromises);
-
-      snaps.forEach(({ id, snap, cRef }) => {
-        if (!snap.exists()) return;
-        const c = snap.data();
+  // Purge history from contact documents only if purgeActive is true
+  if (purgeActive) {
+    const contactIds = Object.keys(activeContacts || {});
+    if (contactIds.length > 0) {
+      const batchSize = 100;
+      for (let i = 0; i < contactIds.length; i += batchSize) {
+        const batchIds = contactIds.slice(i, i + batchSize);
+        const batch = writeBatch(db);
         
-        const updates = {};
-        let modified = false;
+        const fetchPromises = batchIds.map(async (id) => {
+          const cRef = doc(db, "contacts", id);
+          const snap = await getDoc(cRef);
+          return { id, snap, cRef };
+        });
 
-        // Clean legacy history
-        if (c.history && Array.isArray(c.history)) {
-          const originalLen = c.history.length;
-          const filteredHistory = c.history.filter(h => {
-            const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
-            return !(hTs && getMonthStr(hTs) === monthStr);
-          });
-          if (filteredHistory.length !== originalLen) {
-            updates.history = filteredHistory;
-            modified = true;
-          }
-        }
+        const snaps = await Promise.all(fetchPromises);
 
-        // Clean attenderStates history
-        if (c.attenderStates) {
-          const updatedAttenderStates = { ...c.attenderStates };
-          let attenderModified = false;
+        snaps.forEach(({ id, snap, cRef }) => {
+          if (!snap.exists()) return;
+          const c = snap.data();
           
-          Object.keys(updatedAttenderStates).forEach(attId => {
-            const state = updatedAttenderStates[attId];
-            if (state.history && Array.isArray(state.history)) {
-              const originalLen = state.history.length;
-              const filteredHistory = state.history.filter(h => {
-                const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
-                return !(hTs && getMonthStr(hTs) === monthStr);
-              });
-              if (filteredHistory.length !== originalLen) {
-                updatedAttenderStates[attId] = {
-                  ...state,
-                  history: filteredHistory
-                };
-                attenderModified = true;
-              }
+          const updates = {};
+          let modified = false;
+
+          // Clean legacy history
+          if (c.history && Array.isArray(c.history)) {
+            const originalLen = c.history.length;
+            const filteredHistory = c.history.filter(h => {
+              const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+              return !(hTs && getMonthStr(hTs) === monthStr);
+            });
+            if (filteredHistory.length !== originalLen) {
+              updates.history = filteredHistory;
+              modified = true;
             }
-          });
-          
-          if (attenderModified) {
-            updates.attenderStates = updatedAttenderStates;
-            modified = true;
           }
-        }
 
-        if (modified) {
-          updates.updatedAt = serverTimestamp();
-          batch.update(cRef, updates);
-        }
-      });
+          // Clean attenderStates history
+          if (c.attenderStates) {
+            const updatedAttenderStates = { ...c.attenderStates };
+            let attenderModified = false;
+            
+            Object.keys(updatedAttenderStates).forEach(attId => {
+              const state = updatedAttenderStates[attId];
+              if (state.history && Array.isArray(state.history)) {
+                const originalLen = state.history.length;
+                const filteredHistory = state.history.filter(h => {
+                  const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
+                  return !(hTs && getMonthStr(hTs) === monthStr);
+                });
+                if (filteredHistory.length !== originalLen) {
+                  updatedAttenderStates[attId] = {
+                    ...state,
+                    history: filteredHistory
+                  };
+                  attenderModified = true;
+                }
+              }
+            });
+            
+            if (attenderModified) {
+              updates.attenderStates = updatedAttenderStates;
+              modified = true;
+            }
+          }
 
-      await batch.commit();
+          if (modified) {
+            updates.updatedAt = serverTimestamp();
+            batch.update(cRef, updates);
+          }
+        });
+
+        await batch.commit();
+      }
     }
   }
 
-  // Update status to completed
-  await setDoc(lockedDocRef, { status: "completed" }, { merge: true });
-
-  return { success: true, count: contactIds.length };
+  return { success: true, count: Object.keys(activeContacts || {}).length };
 };
-
