@@ -30,11 +30,17 @@ export const formatPhoneForDialing = (phone) => {
 };
 
 export const CallButton = ({ phone, variant = "default" }) => {
-  const formattedPhone = formatPhoneForDialing(phone);
-  
-  if (!phone || String(phone).trim() === "") {
-    return null; // Don't show call button if there is no phone number
+  if (!phone) {
+    return null;
   }
+
+  // If there are no actual digits in the input, don't show the button
+  const digits = String(phone).replace(/[^0-9]/g, "");
+  if (digits.length === 0) {
+    return null;
+  }
+
+  const formattedPhone = formatPhoneForDialing(phone);
 
   if (variant === "header") {
     return (
