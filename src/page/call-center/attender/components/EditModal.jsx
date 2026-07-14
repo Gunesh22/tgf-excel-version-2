@@ -38,6 +38,7 @@ import SearchableDropdown from "./edit-modal/SearchableDropdown";
 import DuplicateBanner from "./edit-modal/DuplicateBanner";
 import CallEntryTab from "./edit-modal/CallEntryTab";
 import ProfileDetailsTab from "./edit-modal/ProfileDetailsTab";
+import CallButton from "./CallButton";
 
 export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs = [], onSave, onDelete, onClose }) => {
   const [edited, setEdited] = useState(() => {
@@ -1477,7 +1478,10 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
               {edited.callType === "incoming" ? <PhoneIncoming size={20} /> : <PhoneOutgoing size={20} />}
             </div>
             <div>
-              <h3 className="text-white font-black text-xl leading-none">{getLogName() || "Unknown Entry"}</h3>
+              <div className="flex items-center gap-3">
+                <h3 className="text-white font-black text-xl leading-none">{getLogName() || "Unknown Entry"}</h3>
+                <CallButton phone={edited.Phone || edited.Mobile} variant="header" />
+              </div>
               <div className="flex items-center gap-3 mt-1">
                 {edited.createdAt && (
                   <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">

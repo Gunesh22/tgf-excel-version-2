@@ -3,6 +3,7 @@ import {
   User, Phone, Hash, MapPin, CheckCircle2, Tag, Plus, MessageSquare, Loader, Clock
 } from "lucide-react";
 import { formatContactName } from "../../utils";
+import CallButton from "../CallButton";
 
 export const ProfileDetailsTab = ({
   edited,
@@ -70,16 +71,19 @@ export const ProfileDetailsTab = ({
             {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1" />}
             {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1" />}
           </label>
-          <input
-            value={edited.Phone || ""}
-            onChange={e => handleChange("Phone", e.target.value)}
-            readOnly={!getEditable("Phone")}
-            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-              !getEditable("Phone")
-                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
-            }`}
-          />
+          <div className="flex gap-2">
+            <input
+              value={edited.Phone || ""}
+              onChange={e => handleChange("Phone", e.target.value)}
+              readOnly={!getEditable("Phone")}
+              className={`flex-1 px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                !getEditable("Phone")
+                  ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                  : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+              }`}
+            />
+            <CallButton phone={edited.Phone} />
+          </div>
         </div>
 
         {/* Mobile */}
@@ -89,16 +93,19 @@ export const ProfileDetailsTab = ({
             {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1" />}
             {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1" />}
           </label>
-          <input
-            value={edited.Mobile || ""}
-            onChange={e => handleChange("Mobile", e.target.value)}
-            readOnly={!getEditable("Mobile")}
-            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-              !getEditable("Mobile")
-                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
-            }`}
-          />
+          <div className="flex gap-2">
+            <input
+              value={edited.Mobile || ""}
+              onChange={e => handleChange("Mobile", e.target.value)}
+              readOnly={!getEditable("Mobile")}
+              className={`flex-1 px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                !getEditable("Mobile")
+                  ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                  : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+              }`}
+            />
+            <CallButton phone={edited.Mobile} />
+          </div>
         </div>
 
         {/* Email */}
