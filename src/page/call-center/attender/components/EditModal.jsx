@@ -981,7 +981,14 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   };
 
   const handleChange = (key, val) => {
-    setEdited(prev => ({ ...prev, [key]: val }));
+    setEdited(prev => {
+      const next = { ...prev, [key]: val };
+      if (key === "status" && val === "Reg.Done") {
+        next.callbackDate = null;
+        next.callbackStatus = null;
+      }
+      return next;
+    });
   };
 
   const handleCallTypeChange = (newCallType) => {
@@ -1070,7 +1077,12 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
     const targetEdited = (overrideFields && typeof overrideFields === "object" && !overrideFields.target && !overrideFields.nativeEvent)
       ? { ...edited, ...overrideFields }
-      : edited;
+      : { ...edited };
+
+    if (targetEdited.status === "Reg.Done") {
+      targetEdited.callbackDate = null;
+      targetEdited.callbackStatus = null;
+    }
 
     // Fix for Flaw 3: Clicking "Save" with No Changes (Ghost Calls)
     const isNew = !!row._isNew;
@@ -1726,9 +1738,20 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                   type="button"
                   onClick={() => {
                     setShowUndoStatusPrompt(false);
-                    handleSaveAndClose({
-                      status: opt
-                    });
+                    if (opt === "Not interested" || opt === "Not possible" || opt === "Callback") {
+                      setEdited(prev => ({
+                        ...prev,
+                        status: opt,
+                        callbackDate: opt === "Callback" ? prev.callbackDate : null,
+                        callbackStatus: opt === "Callback" ? prev.callbackStatus : null,
+                        objectionReason: ""
+                      }));
+                      toast.success(`Status set to "${opt}". Please fill in any details and save.`);
+                    } else {
+                      handleSaveAndClose({
+                        status: opt
+                      });
+                    }
                   }}
                   className="w-full px-4 py-3 rounded-2xl text-xs font-bold border border-gray-150 bg-gray-50 text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 transition text-left mb-1.5"
                 >

@@ -126,11 +126,18 @@ export const CallEntryTab = ({
                   return;
                 }
               }
-              setEdited(prev => ({
-                ...prev,
-                status: val,
-                queryStatus: val === "Query" ? (prev.queryStatus || "Pending") : prev.queryStatus,
-              }));
+              setEdited(prev => {
+                const next = {
+                  ...prev,
+                  status: val,
+                  queryStatus: val === "Query" ? (prev.queryStatus || "Pending") : prev.queryStatus,
+                };
+                if (val === "Reg.Done") {
+                  next.callbackDate = null;
+                  next.callbackStatus = null;
+                }
+                return next;
+              });
             }}
             placeholder="Search & select status..."
             colorClass="indigo"

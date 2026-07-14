@@ -1095,6 +1095,7 @@ export const subscribeToCallLogs = (...args) => {
           callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
           history: attState.history !== undefined ? attState.history : (rawData.history || []),
           callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
+          callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
           objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
           lastCalledAt: attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null),
           firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
@@ -1143,8 +1144,8 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     const logSnap = await getDoc(contactRef);
     if (logSnap.exists()) {
       logData = logSnap.data();
-      if (attenderId) {
-        previousStatus = logData.attenderStates?.[attenderId]?.status || "";
+      if (attenderId && logData.attenderStates?.[attenderId]?.status !== undefined) {
+        previousStatus = logData.attenderStates[attenderId].status || "";
       } else {
         previousStatus = logData.status || "";
       }
@@ -1189,12 +1190,17 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     updates.Tags = deleteField();
   }
 
+  if (updates.status === "Reg.Done") {
+    updates.callbackDate = null;
+    updates.callbackStatus = null;
+  }
+
   // Split updates into shared (top-level) and attender-specific (nested)
   const sharedUpdates = {};
   const attenderSpecificUpdates = {};
 
   const attenderSpecificFields = [
-    "status", "remark", "callType", "history", "callbackDate",
+    "status", "remark", "callType", "history", "callbackDate", "callbackStatus",
     "objectionReason", "lastCalledAt", "firstCalledAt", "registeredYearMonth",
     "Source", "Called For"
   ];
@@ -1348,7 +1354,9 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
 
   // Handle "Reg.Done" registrations collection sync
   const currentStatus = attenderSpecificUpdates.status !== undefined ? attenderSpecificUpdates.status : updates.status;
-  const previousCalledFor = logData?.["Called For"] || logData?.calledFor || "";
+  const previousCalledFor = (attenderId && (logData.attenderStates?.[attenderId]?.["Called For"] || logData.attenderStates?.[attenderId]?.calledFor))
+    ? (logData.attenderStates[attenderId]["Called For"] || logData.attenderStates[attenderId].calledFor)
+    : (logData?.["Called For"] || logData?.calledFor || "");
   const currentCalledFor = updates["Called For"] !== undefined ? updates["Called For"] : (updates.calledFor !== undefined ? updates.calledFor : previousCalledFor);
 
   if (currentStatus === "Reg.Done") {
@@ -1395,13 +1403,40 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     }
   } else if (previousStatus === "Reg.Done" && currentStatus && currentStatus !== "Reg.Done") {
     try {
-      // Revert: always delete the registration document under the previous called for program
       const targetCalledFor = previousCalledFor || currentCalledFor;
-      const cleanedCalledFor = String(targetCalledFor).trim().replace(/[^a-zA-Z0-9]/g, "_");
-      const registrationId = `${logId}_${cleanedCalledFor}`;
-      await deleteDoc(doc(db, "registrations", registrationId));
-      await updateDoc(contactRef, { registeredYearMonth: deleteField() });
-      console.log("🗑️ Reverted registration deleted for log:", registrationId);
+
+      // Check if any other attender still has active registrations for the same or another program
+      let hasSameProgramRegistration = false;
+      let hasAnyOtherRegistration = false;
+      if (attenderId && logData.attenderStates) {
+        Object.keys(logData.attenderStates).forEach(aId => {
+          if (aId !== attenderId && logData.attenderStates[aId]?.status === "Reg.Done") {
+            hasAnyOtherRegistration = true;
+            const otherCalledFor = logData.attenderStates[aId]?.["Called For"] || logData.attenderStates[aId]?.calledFor || "";
+            if (String(otherCalledFor).trim().toLowerCase() === String(targetCalledFor).trim().toLowerCase()) {
+              hasSameProgramRegistration = true;
+            }
+          }
+        });
+      }
+
+      // 1. Delete the registration document only if no other attender has registered this lead for this same program
+      if (!hasSameProgramRegistration) {
+        const cleanedCalledFor = String(targetCalledFor).trim().replace(/[^a-zA-Z0-9]/g, "_");
+        const registrationId = `${logId}_${cleanedCalledFor}`;
+        await deleteDoc(doc(db, "registrations", registrationId));
+        console.log("🗑️ Reverted registration deleted for log:", registrationId);
+      } else {
+        console.log("ℹ️ Registration document kept because another attender registered for the same program.");
+      }
+
+      // 2. Delete the top-level registeredYearMonth only if no other attender has any active registration left
+      if (!hasAnyOtherRegistration) {
+        await updateDoc(contactRef, { registeredYearMonth: deleteField() });
+        console.log("🗑️ Top-level registeredYearMonth deleted from contact");
+      } else {
+        console.log("ℹ️ Top-level registeredYearMonth kept because another attender registration is active.");
+      }
     } catch (e) {
       console.error("Registration deletion failed on revert:", e);
     }
@@ -1547,6 +1582,9 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   const prevHistory = Array.isArray(currentAttState.history) ? currentAttState.history : [];
   const newHistory = [...prevHistory, historyEntry];
 
+  const targetCallbackStatus = data.status === "Reg.Done" ? null : (data.callbackStatus !== undefined ? data.callbackStatus : (currentAttState.callbackStatus || ""));
+  const targetCallbackDate = data.status === "Reg.Done" ? null : (data.callbackDate !== undefined ? data.callbackDate : (currentAttState.callbackDate || null));
+
   // Update attender-specific states
   const updatedStates = {
     ...prevStates,
@@ -1556,7 +1594,8 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
       remark: data.remark !== undefined ? data.remark : (currentAttState.remark || ""),
       callType: data.callType || currentAttState.callType || "incoming",
       history: newHistory,
-      callbackDate: data.callbackDate !== undefined ? data.callbackDate : (currentAttState.callbackDate || null),
+      callbackDate: targetCallbackDate,
+      callbackStatus: targetCallbackStatus,
       objectionReason: data.objectionReason !== undefined ? data.objectionReason : (currentAttState.objectionReason || ""),
       Source: data.Source !== undefined ? data.Source : (currentAttState.Source || ""),
       "Called For": data["Called For"] !== undefined ? data["Called For"] : (currentAttState["Called For"] || ""),
@@ -1635,6 +1674,8 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
 
   if (data.status === "Reg.Done") {
     logPayload.registeredYearMonth = yearMonth;
+    logPayload.callbackDate = null;
+    logPayload.callbackStatus = null;
   }
 
   // Strip out undefined fields
