@@ -1220,7 +1220,7 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
   // If we have an attenderId, put the attenderSpecificUpdates into the attenderStates map
   if (attenderId) {
     // If registeredYearMonth is being set to Reg.Done or removed, we update it here
-    if (attenderSpecificUpdates.status === "Reg.Done") {
+    if (attenderSpecificUpdates.status === "Reg.Done" && previousStatus !== "Reg.Done") {
       const utc = new Date().getTime() + (new Date().getTimezoneOffset() * 60000);
       const istDate = new Date(utc + (3600000 * 5.5));
       const yearMonth = `${istDate.getFullYear()}-${String(istDate.getMonth() + 1).padStart(2, "0")}`;
@@ -1359,10 +1359,13 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     : (logData?.["Called For"] || logData?.calledFor || "");
   const currentCalledFor = updates["Called For"] !== undefined ? updates["Called For"] : (updates.calledFor !== undefined ? updates.calledFor : previousCalledFor);
 
-  if (currentStatus === "Reg.Done") {
+  const programChanged = previousStatus === "Reg.Done" && previousCalledFor && String(previousCalledFor).trim().toLowerCase() !== String(currentCalledFor).trim().toLowerCase();
+  const isNewRegistration = currentStatus === "Reg.Done" && previousStatus !== "Reg.Done";
+
+  if (isNewRegistration || programChanged) {
     try {
       // Solution 1: Clean up orphaned old registrations if program changed
-      if (previousStatus === "Reg.Done" && previousCalledFor && String(previousCalledFor).trim().toLowerCase() !== String(currentCalledFor).trim().toLowerCase()) {
+      if (programChanged) {
         const cleanedPrevCalledFor = String(previousCalledFor).trim().replace(/[^a-zA-Z0-9]/g, "_");
         const prevRegistrationId = `${logId}_${cleanedPrevCalledFor}`;
         await deleteDoc(doc(db, "registrations", prevRegistrationId));
@@ -1375,12 +1378,12 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
       // Solution 3: Indian Standard Time (IST UTC+5:30) Month Generation
       const utc = new Date().getTime() + (new Date().getTimezoneOffset() * 60000);
       const istDate = new Date(utc + (3600000 * 5.5));
-      const yearMonth = `${istDate.getFullYear()}-${String(istDate.getMonth() + 1).padStart(2, "0")}`;
+      const yearMonth = freshData.registeredYearMonth || `${istDate.getFullYear()}-${String(istDate.getMonth() + 1).padStart(2, "0")}`;
 
       const payload = {
         ...freshData,
         registeredYearMonth: yearMonth,
-        registeredAt: serverTimestamp(),
+        registeredAt: freshData.registeredAt || serverTimestamp(),
         conversionSource: freshData.Source || freshData.source || freshData.Sourse || freshData.sourse || "Direct",
         convertedBy: attenderName || freshData.assignedName || freshData.attenderName || "Unknown",
         programName: freshData.programName || updates.programName || "Unknown"
