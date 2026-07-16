@@ -1352,97 +1352,142 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     });
   }
 
-  // Handle "Reg.Done" registrations collection sync
-  const currentStatus = attenderSpecificUpdates.status !== undefined ? attenderSpecificUpdates.status : updates.status;
-  const previousCalledFor = (attenderId && (logData.attenderStates?.[attenderId]?.["Called For"] || logData.attenderStates?.[attenderId]?.calledFor))
-    ? (logData.attenderStates[attenderId]["Called For"] || logData.attenderStates[attenderId].calledFor)
-    : (logData?.["Called For"] || logData?.calledFor || "");
-  const currentCalledFor = updates["Called For"] !== undefined ? updates["Called For"] : (updates.calledFor !== undefined ? updates.calledFor : previousCalledFor);
+  // Handle "Reg.Done" registrations collection sync (highly robust, history-driven)
+  try {
+    const freshSnap = await getDoc(contactRef);
+    const freshData = freshSnap.exists() ? freshSnap.data() : null;
 
-  const programChanged = previousStatus === "Reg.Done" && previousCalledFor && String(previousCalledFor).trim().toLowerCase() !== String(currentCalledFor).trim().toLowerCase();
-  const isNewRegistration = currentStatus === "Reg.Done" && previousStatus !== "Reg.Done";
-
-  if (isNewRegistration || programChanged) {
-    try {
-      // Solution 1: Clean up orphaned old registrations if program changed
-      if (programChanged) {
-        const cleanedPrevCalledFor = String(previousCalledFor).trim().replace(/[^a-zA-Z0-9]/g, "_");
-        const prevRegistrationId = `${logId}_${cleanedPrevCalledFor}`;
-        await deleteDoc(doc(db, "registrations", prevRegistrationId));
-        console.log("🗑️ Deleted old registration due to program change:", prevRegistrationId);
+    if (!freshData || freshData._deleted) {
+      // If contact is deleted, clean up all its registration snapshots
+      const q = query(
+        collection(db, "registrations"),
+        where(documentId(), ">=", logId),
+        where(documentId(), "<=", logId + "\uf8ff")
+      );
+      const existingRegsSnap = await getDocs(q);
+      for (const regDoc of existingRegsSnap.docs) {
+        await deleteDoc(regDoc.ref);
+      }
+    } else {
+      // Gather all historical entries to find all valid Reg.Done programs
+      const allHistory = [];
+      if (Array.isArray(freshData.history)) {
+        allHistory.push(...freshData.history);
+      }
+      if (freshData.attenderStates) {
+        Object.values(freshData.attenderStates).forEach(state => {
+          if (Array.isArray(state.history)) {
+            allHistory.push(...state.history);
+          }
+        });
       }
 
-      const freshSnap = await getDoc(contactRef);
-      const freshData = freshSnap.exists() ? freshSnap.data() : {};
-      
-      // Solution 3: Indian Standard Time (IST UTC+5:30) Month Generation
-      const utc = new Date().getTime() + (new Date().getTimezoneOffset() * 60000);
-      const istDate = new Date(utc + (3600000 * 5.5));
-      const yearMonth = freshData.registeredYearMonth || `${istDate.getFullYear()}-${String(istDate.getMonth() + 1).padStart(2, "0")}`;
-
-      const payload = {
-        ...freshData,
-        registeredYearMonth: yearMonth,
-        registeredAt: freshData.registeredAt || serverTimestamp(),
-        conversionSource: freshData.Source || freshData.source || freshData.Sourse || freshData.sourse || "Direct",
-        convertedBy: attenderName || freshData.assignedName || freshData.attenderName || "Unknown",
-        programName: freshData.programName || updates.programName || "Unknown"
-      };
-
-      Object.keys(payload).forEach(key => {
-        if (payload[key] === undefined) {
-          delete payload[key];
+      // Identify all programs for which this contact has registered (status = "Reg.Done")
+      const registeredPrograms = [];
+      allHistory.forEach(h => {
+        if (h.status === "Reg.Done") {
+          const prog = h.calledFor || h.programName || freshData.programName || "Unknown";
+          const cleanProg = String(prog).trim();
+          if (cleanProg && !registeredPrograms.some(p => p.name.toLowerCase() === cleanProg.toLowerCase())) {
+            registeredPrograms.push({
+              name: cleanProg,
+              timestamp: h.timestamp || null,
+              attenderName: h.attenderName || "Unknown",
+              source: h.source || freshData.Source || freshData.source || "Direct"
+            });
+          }
         }
       });
 
-      const calledForVal = payload["Called For"] || payload.calledFor || "Unknown";
-      const cleanedCalledFor = String(calledForVal).trim().replace(/[^a-zA-Z0-9]/g, "_");
-      const registrationId = `${logId}_${cleanedCalledFor}`;
-
-      await setDoc(doc(db, "registrations", registrationId), payload, { merge: true });
-      await registerRegistrationMonth(yearMonth);
-    } catch (e) {
-      console.error("Registration write failed:", e);
-    }
-  } else if (previousStatus === "Reg.Done" && currentStatus && currentStatus !== "Reg.Done") {
-    try {
-      const targetCalledFor = previousCalledFor || currentCalledFor;
-
-      // Check if any other attender still has active registrations for the same or another program
-      let hasSameProgramRegistration = false;
-      let hasAnyOtherRegistration = false;
-      if (attenderId && logData.attenderStates) {
-        Object.keys(logData.attenderStates).forEach(aId => {
-          if (aId !== attenderId && logData.attenderStates[aId]?.status === "Reg.Done") {
-            hasAnyOtherRegistration = true;
-            const otherCalledFor = logData.attenderStates[aId]?.["Called For"] || logData.attenderStates[aId]?.calledFor || "";
-            if (String(otherCalledFor).trim().toLowerCase() === String(targetCalledFor).trim().toLowerCase()) {
-              hasSameProgramRegistration = true;
+      // Legacy/Fallback: check if current status is Reg.Done
+      const currentProg = freshData["Called For"] || freshData.calledFor || "Unknown";
+      if (freshData.status === "Reg.Done" && currentProg) {
+        const cleanProg = String(currentProg).trim();
+        if (!registeredPrograms.some(p => p.name.toLowerCase() === cleanProg.toLowerCase())) {
+          registeredPrograms.push({
+            name: cleanProg,
+            timestamp: freshData.registeredAt || freshData.updatedAt || null,
+            attenderName: freshData.attenderName || freshData.assignedName || "Unknown",
+            source: freshData.Source || freshData.source || "Direct"
+          });
+        }
+      }
+      if (freshData.attenderStates) {
+        Object.values(freshData.attenderStates).forEach(state => {
+          if (state.status === "Reg.Done") {
+            const stateProg = state["Called For"] || state.calledFor || currentProg || "Unknown";
+            const cleanProg = String(stateProg).trim();
+            if (!registeredPrograms.some(p => p.name.toLowerCase() === cleanProg.toLowerCase())) {
+              registeredPrograms.push({
+                name: cleanProg,
+                timestamp: state.lastCalledAt || state.updatedAt || null,
+                attenderName: state.attenderName || "Unknown",
+                source: state.Source || state.source || freshData.Source || freshData.source || "Direct"
+              });
             }
           }
         });
       }
 
-      // 1. Delete the registration document only if no other attender has registered this lead for this same program
-      if (!hasSameProgramRegistration) {
-        const cleanedCalledFor = String(targetCalledFor).trim().replace(/[^a-zA-Z0-9]/g, "_");
+      // Fetch all existing registration documents for this contact
+      const q = query(
+        collection(db, "registrations"),
+        where(documentId(), ">=", logId),
+        where(documentId(), "<=", logId + "\uf8ff")
+      );
+      const existingRegsSnap = await getDocs(q);
+      const existingRegMap = {};
+      existingRegsSnap.docs.forEach(docSnap => {
+        existingRegMap[docSnap.id] = docSnap.ref;
+      });
+
+      const activeRegIds = new Set();
+
+      // Write or update active registrations
+      for (const rp of registeredPrograms) {
+        const cleanedCalledFor = String(rp.name).trim().replace(/[^a-zA-Z0-9]/g, "_");
         const registrationId = `${logId}_${cleanedCalledFor}`;
-        await deleteDoc(doc(db, "registrations", registrationId));
-        console.log("🗑️ Reverted registration deleted for log:", registrationId);
-      } else {
-        console.log("ℹ️ Registration document kept because another attender registered for the same program.");
+        activeRegIds.add(registrationId);
+
+        // Determine registration month (IST)
+        const regDate = rp.timestamp 
+          ? (typeof rp.timestamp.toDate === "function" ? rp.timestamp.toDate() : new Date(rp.timestamp)) 
+          : new Date();
+        const utc = regDate.getTime() + (regDate.getTimezoneOffset() * 60000);
+        const istDate = new Date(utc + (3600000 * 5.5));
+        const yearMonth = `${istDate.getFullYear()}-${String(istDate.getMonth() + 1).padStart(2, "0")}`;
+
+        const payload = {
+          ...freshData,
+          status: "Reg.Done",
+          registeredYearMonth: yearMonth,
+          registeredAt: rp.timestamp || serverTimestamp(),
+          conversionSource: rp.source || "Direct",
+          convertedBy: rp.attenderName || "Unknown",
+          calledFor: rp.name,
+          programName: freshData.programName || rp.name || "Unknown"
+        };
+
+        Object.keys(payload).forEach(key => {
+          if (payload[key] === undefined) {
+            delete payload[key];
+          }
+        });
+
+        await setDoc(doc(db, "registrations", registrationId), payload, { merge: true });
+        await registerRegistrationMonth(yearMonth);
       }
 
-      // 2. Delete the top-level registeredYearMonth only if no other attender has any active registration left
-      if (!hasAnyOtherRegistration) {
-        await updateDoc(contactRef, { registeredYearMonth: deleteField() });
-        console.log("🗑️ Top-level registeredYearMonth deleted from contact");
-      } else {
-        console.log("ℹ️ Top-level registeredYearMonth kept because another attender registration is active.");
+      // Delete any outdated/orphan registrations for this contact
+      for (const [id, ref] of Object.entries(existingRegMap)) {
+        if (!activeRegIds.has(id)) {
+          await deleteDoc(ref);
+          console.log("🗑️ Deleted unregistered/orphaned registration document:", id);
+        }
       }
-    } catch (e) {
-      console.error("Registration deletion failed on revert:", e);
     }
+  } catch (e) {
+    console.error("Error during registration sync:", e);
   }
   // Sync to callCenterCache
   await updateCacheContacts([logId]);
