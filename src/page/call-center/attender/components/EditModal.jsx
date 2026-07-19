@@ -39,9 +39,10 @@ import DuplicateBanner from "./edit-modal/DuplicateBanner";
 import CallEntryTab from "./edit-modal/CallEntryTab";
 import ProfileDetailsTab from "./edit-modal/ProfileDetailsTab";
 import CallButton from "./CallButton";
+import EditHistoryModal from "./edit-modal/EditHistoryModal";
 
 export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs = [], onSave, onDelete, onClose }) => {
-  const [edited, setEdited] = useState(() => {
+  const getNormalizedRow = () => {
     const normalized = { ...row };
     if (normalized.callType) {
       normalized.callType = String(normalized.callType).toLowerCase();
@@ -97,6 +98,13 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     if (!normalized.Tags && Array.isArray(row.tags) && row.tags.length > 0) {
       normalized.Tags = row.tags.join(", ");
     }
+    if (normalized.attenderStates?.[attenderId]?.history !== undefined) {
+      normalized.history = normalized.attenderStates[attenderId].history || [];
+    } else if (normalized.attenderStates && Object.keys(normalized.attenderStates).length > 0) {
+      normalized.history = [];
+    }
+    if (true) {
+    }
     return {
       ...normalized,
       // Always start with empty remark for a new note — previous remarks are shown in the history timeline
@@ -104,7 +112,10 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       // If status is Query, default queryStatus to Pending for backward compat
       queryStatus: normalized.status === "Query" ? (normalized.queryStatus || "Pending") : normalized.queryStatus,
     };
-  });
+  };
+
+  const [savedRow, setSavedRow] = useState(getNormalizedRow);
+  const [edited, setEdited] = useState(getNormalizedRow);
   const [saving, setSaving] = useState(false);
   const [globalDup, setGlobalDup] = useState(null);
   const [isSearchingCRM, setIsSearchingCRM] = useState(false);
@@ -118,6 +129,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   const [pendingSave, setPendingSave] = useState(false);
   const [showUndoStatusPrompt, setShowUndoStatusPrompt] = useState(false);
   const [activeTab, setActiveTab] = useState(() => (row._isNew ? "profile" : "call"));
+  const [showEditHistory, setShowEditHistory] = useState(false);
 
   useEffect(() => {
     setLocalPrograms(programs);
@@ -151,9 +163,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     };
 
     // 1. Gather from current contact's attenderStates
-    if (row.attenderStates) {
-      Object.keys(row.attenderStates).forEach(attId => {
-        const state = row.attenderStates[attId];
+    if (savedRow.attenderStates) {
+      Object.keys(savedRow.attenderStates).forEach(attId => {
+        const state = savedRow.attenderStates[attId];
         if (state) {
           const name = state.attenderName || (attId === attenderId ? "You" : "Attender");
           const val = extractVal(state, fieldKey);
@@ -172,11 +184,11 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     }
 
     // 2. Gather from current contact's top-level and history
-    const topVal = extractVal(row._rawData || row, fieldKey);
-    const topName = row.lastEditedBy || row.assignedName || row.attenderName || "Original";
+    const topVal = extractVal(savedRow._rawData || savedRow, fieldKey);
+    const topName = savedRow.lastEditedBy || savedRow.assignedName || savedRow.attenderName || "Original";
     addToList(topName, topVal);
 
-    const currentHist = Array.isArray(edited.history) ? edited.history : (Array.isArray(row.history) ? row.history : []);
+    const currentHist = Array.isArray(edited.history) ? edited.history : (Array.isArray(savedRow.history) ? savedRow.history : []);
     currentHist.forEach(h => {
       const hVal = extractVal(h, fieldKey);
       const hName = h.attenderName || topName;
@@ -232,19 +244,19 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
   const getLastEditedBy = () => {
     let latestTime = 0;
-    let latestAttender = row.lastEditedBy || row.assignedName || row.attenderName || "";
+    let latestAttender = savedRow.lastEditedBy || savedRow.assignedName || savedRow.attenderName || "";
     
-    if (row.updatedAt) {
-      const t = row.updatedAt?.toMillis ? row.updatedAt.toMillis() : new Date(row.updatedAt).getTime();
+    if (savedRow.updatedAt) {
+      const t = savedRow.updatedAt?.toMillis ? savedRow.updatedAt.toMillis() : new Date(savedRow.updatedAt).getTime();
       if (t > latestTime) {
         latestTime = t;
       }
     }
 
     // Check attenderStates
-    if (row.attenderStates) {
-      Object.keys(row.attenderStates).forEach(attId => {
-        const state = row.attenderStates[attId];
+    if (savedRow.attenderStates) {
+      Object.keys(savedRow.attenderStates).forEach(attId => {
+        const state = savedRow.attenderStates[attId];
         if (state && state.updatedAt) {
           const t = new Date(state.updatedAt).getTime();
           if (t > latestTime) {
@@ -791,7 +803,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     const list = [];
 
     // 1. Current contact's history entries
-    const currentHist = Array.isArray(edited.history) ? edited.history : (Array.isArray(row.history) ? row.history : []);
+    const currentHist = Array.isArray(edited.history) ? edited.history : (Array.isArray(savedRow.history) ? savedRow.history : []);
     currentHist.forEach((h, idx) => {
       list.push({
         status: h.status || "",
@@ -800,32 +812,33 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         timestamp: h.timestamp || new Date().toISOString(),
         isCurrentDoc: true,
         originalIndex: idx,
-        sourceProgram: row.programName || "This Sheet"
+        sourceProgram: savedRow.programName || "This Sheet"
       });
     });
 
     // 1b. Also include the standalone remark saved before history tracking existed
     //     (i.e., a remark that is NOT already represented in any history entry)
-    if (row.remark && String(row.remark).trim()) {
-      const remarkStr = String(row.remark).trim();
+    if (savedRow.remark && String(savedRow.remark).trim()) {
+      const remarkStr = String(savedRow.remark).trim();
       const alreadyInHistory = list.some(h => h.remark === remarkStr && h.isCurrentDoc);
       if (!alreadyInHistory) {
         list.push({
-          status: row.status || "",
+          status: savedRow.status || "",
           remark: remarkStr,
-          attenderName: row.attenderName || row.assignedName || "Unknown",
-          timestamp: row.updatedAt?.toDate?.()?.toISOString?.() || row.updatedAt || row.createdAt?.toDate?.()?.toISOString?.() || row.createdAt || new Date().toISOString(),
+          attenderName: savedRow.attenderName || savedRow.assignedName || "Unknown",
+          timestamp: savedRow.updatedAt?.toDate?.()?.toISOString?.() || savedRow.updatedAt || savedRow.createdAt?.toDate?.()?.toISOString?.() || savedRow.createdAt || new Date().toISOString(),
           isCurrentDoc: true,
           originalIndex: -1, // sentinel: this is a standalone remark, not editable inline
-          sourceProgram: row.programName || "This Sheet"
+          sourceProgram: savedRow.programName || "This Sheet"
         });
       }
     }
 
     // 2. Iterate over row.attenderStates to collect history of all sessions
-    if (row.attenderStates) {
-      Object.keys(row.attenderStates).forEach(otherAttenderId => {
-        const state = row.attenderStates[otherAttenderId];
+    if (savedRow.attenderStates) {
+      Object.keys(savedRow.attenderStates).forEach(otherAttenderId => {
+        if (otherAttenderId === attenderId) return;
+        const state = savedRow.attenderStates[otherAttenderId];
         if (state) {
           const progName = state.programName || "Other Attender";
           // Add history entries
@@ -966,7 +979,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     });
 
     return uniqueList;
-  }, [row.history, row.remark, row.status, row.programName, row.attenderName, row.assignedName, row.updatedAt, row.createdAt, row.attenderStates, globalDup, edited.history, attenderId]);
+  }, [savedRow.history, savedRow.remark, savedRow.status, savedRow.programName, savedRow.attenderName, savedRow.assignedName, savedRow.updatedAt, savedRow.createdAt, savedRow.attenderStates, globalDup, edited.history, attenderId]);
 
   // Identity helpers
   const getLogName = () => {
@@ -1073,7 +1086,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     return dynamicFields.filter(f => isCampaign(f));
   }, [dynamicFields]);
 
-  const handleSaveAndClose = async (overrideFields = null) => {
+  const handleSaveAndClose = async (overrideFields = null, isFromHistory = false) => {
     if (saving) return; // Prevent double save
 
     const targetEdited = (overrideFields && typeof overrideFields === "object" && !overrideFields.target && !overrideFields.nativeEvent)
@@ -1102,28 +1115,28 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       }
     };
 
-    const oldStatus = String(row.status || "").trim();
+    const oldStatus = String(savedRow.status || "").trim();
     const newStatus = String(targetEdited.status || "").trim();
     const statusChanged = oldStatus !== newStatus;
 
     const newRemarkEntered = String(targetEdited.remark || "").trim() !== "";
     const remarkChanged = newRemarkEntered;
 
-    const oldCallType = String(row.callType || "outgoing").toLowerCase();
+    const oldCallType = String(savedRow.callType || "outgoing").toLowerCase();
     const newCallType = String(targetEdited.callType || "outgoing").toLowerCase();
     const callTypeChanged = oldCallType !== newCallType;
 
-    const oldCallbackTime = getTimestampOrNull(row.callbackDate);
+    const oldCallbackTime = getTimestampOrNull(savedRow.callbackDate);
     const newCallbackTime = getTimestampOrNull(targetEdited.callbackDate);
     const callbackDateChanged = oldCallbackTime !== newCallbackTime;
 
-    const oldObjection = String(row.objectionReason || "").trim();
+    const oldObjection = String(savedRow.objectionReason || "").trim();
     const newObjection = String(targetEdited.objectionReason || "").trim();
     const objectionReasonChanged = oldObjection !== newObjection;
 
     const isCallAttemptUpdated = statusChanged || remarkChanged || callTypeChanged || callbackDateChanged || objectionReasonChanged;
 
-    if (!isNew) {
+    if (!isFromHistory && !isNew) {
       const cleanForCompare = (val) => {
         if (val === undefined || val === null) return "";
         if (val instanceof Date) return val.toISOString().split("T")[0];
@@ -1140,7 +1153,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         if (key === "remark") {
           return String(targetEdited.remark || "").trim() !== "";
         }
-        const val1 = cleanForCompare(row[key]);
+        const val1 = cleanForCompare(savedRow[key]);
         const val2 = cleanForCompare(targetEdited[key]);
         return val1 !== val2;
       });
@@ -1153,7 +1166,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       }
     }
 
-    if (isNew || isCallAttemptUpdated) {
+    if (!isFromHistory && (isNew || isCallAttemptUpdated)) {
       // Compulsory Status Validation
       if (!targetEdited.status || String(targetEdited.status).trim() === "") {
         toast.error("Please select a call status before saving.", { duration: 4000, position: 'top-center' });
@@ -1209,7 +1222,38 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       delete updates.normalizedPhone;
       delete updates.normalizedMobile;
 
-      if (!isNew && !isCallAttemptUpdated) {
+      // Detect if history was altered (e.g., deletion or edit) so we keep it even when not a call attempt.
+      const historyChanged = JSON.stringify(targetEdited.history || []) !== JSON.stringify(savedRow.history || []);
+
+      if (isFromHistory) {
+        if (updates.callbackDate) {
+          if (typeof updates.callbackDate === "string") {
+            updates.callbackDate = new Date(updates.callbackDate);
+          }
+        } else {
+          updates.callbackDate = null;
+        }
+
+        // Clean undefined values out of updates because Firebase will CRASH if any field is undefined.
+        Object.keys(updates).forEach(key => {
+          if (updates[key] === undefined) {
+            delete updates[key];
+          }
+        });
+
+        // Ensure any newly added fields are marked as mapped so they show up in the table/attender view
+        if (addedFields.length > 0) {
+          const currentMapped = Array.isArray(updates._mappedFields) ? [...updates._mappedFields] : [];
+          addedFields.forEach(f => {
+            if (!currentMapped.includes(f)) {
+              currentMapped.push(f);
+            }
+          });
+          updates._mappedFields = currentMapped;
+        }
+
+        updates.history = targetEdited.history || [];
+      } else if (!isNew && !isCallAttemptUpdated && !historyChanged) {
         // Strip all call-specific fields to prevent ghost calls or history additions
         delete updates.status;
         delete updates.remark;
@@ -1248,19 +1292,21 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           updates._mappedFields = currentMapped;
         }
 
-        // Track call timestamp — always record when attender touched this contact
-        updates.lastCalledAt = new Date().toISOString();
-        if (!row.firstCalledAt && !targetEdited.firstCalledAt) {
-          updates.firstCalledAt = new Date().toISOString();
+        // Track call timestamp — only when a call-attempt actually changes or a new entry is created
+        if (isNew || isCallAttemptUpdated) {
+          updates.lastCalledAt = new Date().toISOString();
+          if (!savedRow.firstCalledAt && !targetEdited.firstCalledAt) {
+            updates.firstCalledAt = new Date().toISOString();
+          }
         }
 
         // Maintain a timeline of interactions.
-        let baseHistory = Array.isArray(targetEdited.history) ? targetEdited.history : (Array.isArray(row.history) ? row.history : []);
+        let baseHistory = Array.isArray(targetEdited.history) ? targetEdited.history : (Array.isArray(savedRow.history) ? savedRow.history : []);
 
         // Conditionally update past history entries if correcting a mistake (not protected by a Reg.Done)
-        const oldCalledFor = String(row[calledForField] || row.calledFor || "").trim();
+        const oldCalledFor = String(savedRow[calledForField] || savedRow.calledFor || "").trim();
         const newCalledFor = String(targetEdited[calledForField] || targetEdited.calledFor || "").trim();
-        const oldSource = String(row[sourceField] || row.source || "").trim();
+        const oldSource = String(savedRow[sourceField] || savedRow.source || "").trim();
         const newSource = String(targetEdited[sourceField] || targetEdited.source || "").trim();
         const cleanStr = (s) => s ? String(s).toLowerCase().replace(/[\s_-]/g, "") : "";
 
@@ -1289,7 +1335,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         const isIncomingConvertOnOutgoingProgram = 
           updates.status === "Reg.Done" &&
           String(targetEdited.callType || "outgoing").toLowerCase().startsWith("incoming") &&
-          (targetEdited.programId || row.programId) !== "incoming-calls";
+          (targetEdited.programId || savedRow.programId) !== "incoming-calls";
 
         if (isIncomingConvertOnOutgoingProgram) {
           const safeName = attenderName || "Unknown";
@@ -1400,6 +1446,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       console.error("❌ CRTICAL SAVE ERROR:", err.message || err);
       alert("FIREBASE REFUSED TO SAVE: " + (err.message || "Unknown Error"));
       toast.error("Save failed - Check network & rules.", { duration: 6000, position: 'top-center' });
+      throw err;
     } finally {
       setSaving(false);
     }
@@ -1574,6 +1621,13 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
               {activeTab === "profile" && (
                 <span className={`absolute bottom-[-2px] left-0 right-0 h-0.5 rounded-full ${callTheme.tabLine} animate-pulse`} />
               )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowEditHistory(true)}
+              className="pb-3 text-sm font-black tracking-wider uppercase flex items-center gap-2 border-b-2 border-transparent text-amber-600 hover:text-amber-700 hover:border-amber-250 transition-all ml-auto"
+            >
+              ✏️ Edit Past Logs
             </button>
           </div>
 
@@ -1776,6 +1830,28 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             </div>
           </div>
         </div>
+      )}
+      
+      {showEditHistory && (
+        <EditHistoryModal
+          isOpen={showEditHistory}
+          onClose={() => setShowEditHistory(false)}
+          edited={edited}
+          setEdited={(updater) => {
+            setEdited(prev => {
+              const next = typeof updater === "function" ? updater(prev) : updater;
+              setSavedRow(next);
+              return next;
+            });
+          }}
+          row={row}
+          onSave={onSave}
+          calledForField={calledForField}
+          sourceField={sourceField}
+          attenderId={attenderId}
+          onParentClose={onClose}
+          onSaveAll={handleSaveAndClose}
+        />
       )}
     </div>
   );

@@ -16,5 +16,16 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "callCenterCache",
+      "fieldPath": "contacts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "lockedMonthlyReports",
+      "fieldPath": "contacts",
+      "indexes": []
+    }
+  ]
 }

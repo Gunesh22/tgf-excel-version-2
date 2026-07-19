@@ -96,7 +96,8 @@ export const CONNECTED_STATUSES = [
   "Not possible",
   "Pending",
   "Not interested",
-  "Not Attended"
+  "Not Attended",
+  "Call Log Added"
 ];
 
 export const NOT_CONNECTED_STATUSES = [

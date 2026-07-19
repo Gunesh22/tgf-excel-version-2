@@ -2394,7 +2394,7 @@ export const rebuildCallCenterCache = async () => {
         const testPart = { contacts: { ...currentPartContacts, [id]: contact } };
         const estimatedSize = getByteSize(testPart);
         
-        if (estimatedSize > 850 * 1024) {
+        if (estimatedSize > 850 * 1024 || Object.keys(currentPartContacts).length >= 120) {
           // Commit current part
           batch.set(doc(db, "callCenterCache", `${month}_part${partNum}`), { contacts: currentPartContacts });
           partNum++;
@@ -2443,7 +2443,7 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
       const updatedContacts = { ...data.contacts, [contactId]: prunedContact };
       const newSize = getByteSize({ contacts: updatedContacts });
       
-      if (newSize < 850 * 1024) {
+      if (newSize < 850 * 1024 && Object.keys(updatedContacts).length <= 120) {
         await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
       } else {
         // Exceeds limit! Remove from this part and find another part or create one
@@ -2466,7 +2466,7 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
           const dContacts = d.data().contacts || {};
           const testContacts = { ...dContacts, [contactId]: prunedContact };
           const testSize = getByteSize({ contacts: testContacts });
-          if (testSize < 850 * 1024 && !chosenDoc) {
+          if (testSize < 850 * 1024 && Object.keys(testContacts).length <= 120 && !chosenDoc) {
             chosenDoc = d;
           }
         });
@@ -2505,7 +2505,7 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
       const dContacts = d.data().contacts || {};
       const testContacts = { ...dContacts, [contactId]: prunedContact };
       const testSize = getByteSize({ contacts: testContacts });
-      if (testSize < 850 * 1024 && !chosenDoc) {
+      if (testSize < 850 * 1024 && Object.keys(testContacts).length <= 120 && !chosenDoc) {
         chosenDoc = d;
       }
     });
@@ -2552,7 +2552,7 @@ export const updateContactInLockedReport = async (month, contactId, prunedContac
       const updatedContacts = { ...data.contacts, [contactId]: prunedContact };
       const newSize = getByteSize({ contacts: updatedContacts });
       
-      if (newSize < 850 * 1024) {
+      if (newSize < 850 * 1024 && Object.keys(updatedContacts).length <= 120) {
         await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
       } else {
         // Exceeds limit! Remove from this part and find another
@@ -2573,7 +2573,7 @@ export const updateContactInLockedReport = async (month, contactId, prunedContac
           const dContacts = d.data().contacts || {};
           const testContacts = { ...dContacts, [contactId]: prunedContact };
           const testSize = getByteSize({ contacts: testContacts });
-          if (testSize < 850 * 1024 && !chosenDoc) {
+          if (testSize < 850 * 1024 && Object.keys(testContacts).length <= 120 && !chosenDoc) {
             chosenDoc = d;
           }
         });
@@ -2613,7 +2613,7 @@ export const updateContactInLockedReport = async (month, contactId, prunedContac
       const dContacts = d.data().contacts || {};
       const testContacts = { ...dContacts, [contactId]: prunedContact };
       const testSize = getByteSize({ contacts: testContacts });
-      if (testSize < 850 * 1024 && !chosenDoc) {
+      if (testSize < 850 * 1024 && Object.keys(testContacts).length <= 120 && !chosenDoc) {
         chosenDoc = d;
       }
     });
@@ -3583,7 +3583,7 @@ export const lockAndPurgeMonthlyReport = async (monthStr, adminName = "Admin", p
           };
           const estimatedSize = getByteSize(testPart);
           
-          if (estimatedSize > 850 * 1024) {
+          if (estimatedSize > 850 * 1024 || Object.keys(currentPartContacts).length >= 120) {
             // Commit current part
             const partId = `${monthStr}_part${partNum}`;
             const partRef = doc(db, "lockedMonthlyReports", partId);
