@@ -74,7 +74,7 @@ export default function SettingsTab() {
     }
 
     try {
-      await updateCallCenterOptions(key, updated);
+      await updateCallCenterOptions({ [key]: updated });
       setOptions(prev => ({
         ...prev,
         [key]: updated
