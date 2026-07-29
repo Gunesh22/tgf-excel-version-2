@@ -6,13 +6,132 @@ import { isKhojiField } from "../../../lib/khojiHelper";
 
 export function parseTimestamp(t) {
   if (!t) return null;
-  if (t instanceof Date) return t;
+  if (t instanceof Date) return isNaN(t.getTime()) ? null : t;
   if (typeof t.toDate === "function") return t.toDate();
-  if (typeof t === "object" && t.seconds !== undefined) {
-    return new Date(t.seconds * 1000 + Math.round((t.nanoseconds || 0) / 1000000));
+  if (typeof t.toMillis === "function") return new Date(t.toMillis());
+  if (typeof t === "object" && (t.seconds !== undefined || t._seconds !== undefined)) {
+    const sec = t.seconds !== undefined ? t.seconds : t._seconds;
+    const nsec = t.nanoseconds !== undefined ? t.nanoseconds : (t._nanoseconds || 0);
+    return new Date(sec * 1000 + Math.round(nsec / 1000000));
   }
-  return new Date(t);
+  if (typeof t === "number") return new Date(t);
+  if (typeof t === "string") {
+    const parsed = new Date(t);
+    if (!isNaN(parsed.getTime())) return parsed;
+    const cleaned = t.replace(/-/g, "/");
+    const parsedCleaned = new Date(cleaned);
+    if (!isNaN(parsedCleaned.getTime())) return parsedCleaned;
+  }
+  return null;
 }
+
+export const getContactPhone = (log, attempt) => {
+  if (attempt?.contactPhone && String(attempt.contactPhone).trim()) return String(attempt.contactPhone).trim();
+  if (attempt?.phone && String(attempt.phone).trim()) return String(attempt.phone).trim();
+  if (attempt?.mobile && String(attempt.mobile).trim()) return String(attempt.mobile).trim();
+
+  if (!log || typeof log !== "object") return "";
+
+  const directCandidates = [
+    log.Phone, log.Mobile, log.phone, log.mobile, log.contactPhone,
+    log.normalizedPhone, log.normalizedMobile, log["Mobile Number"],
+    log["Phone Number"], log["Whatsapp Number"], log["WhatsApp Number"],
+    log["Contact Number"], log["Contact No"], log["Phone No"], log["Mobile No"],
+    log.contact_no, log.whatsapp, log.number
+  ];
+
+  for (const c of directCandidates) {
+    if (c !== undefined && c !== null && String(c).trim() !== "") {
+      return String(c).trim();
+    }
+  }
+
+  const keys = Object.keys(log);
+  const phoneKey = keys.find(k => {
+    const lk = k.toLowerCase();
+    return lk.includes("phone") || lk.includes("mobile") || lk.includes("whatsapp") || lk.includes("contact") || lk.includes("number");
+  });
+
+  return (phoneKey && log[phoneKey]) ? String(log[phoneKey]).trim() : "";
+};
+
+export const getContactName = (log, attempt) => {
+  if (attempt?.contactName && String(attempt.contactName).trim()) return String(attempt.contactName).trim();
+  if (attempt?.name && String(attempt.name).trim()) return String(attempt.name).trim();
+
+  if (!log || typeof log !== "object") return "Unknown";
+
+  const directCandidates = [
+    log.Name, log.name, log.leadName, log["Lead Name"], log["Full Name"],
+    log.caller, log["Caller Name"], log["Name of Caller"], log.fullName
+  ];
+
+  for (const c of directCandidates) {
+    if (c !== undefined && c !== null && String(c).trim() !== "") {
+      return String(c).trim();
+    }
+  }
+
+  const keys = Object.keys(log);
+  const nameKey = keys.find(k => {
+    const lk = k.toLowerCase();
+    return lk.includes("name") || lk.includes("caller") || lk.includes("lead");
+  });
+
+  return (nameKey && log[nameKey]) ? String(log[nameKey]).trim() : "Unknown";
+};
+
+export const getContactCity = (log, attempt) => {
+  if (attempt?.contactCity && String(attempt.contactCity).trim()) return String(attempt.contactCity).trim();
+  if (attempt?.city && String(attempt.city).trim()) return String(attempt.city).trim();
+
+  if (!log || typeof log !== "object") return "";
+
+  const directCandidates = [
+    log.City, log.city, log.location, log.Location, log["Khoji City"],
+    log["City Name"], log.place, log.town, log.district, log.address
+  ];
+
+  for (const c of directCandidates) {
+    if (c !== undefined && c !== null && String(c).trim() !== "") {
+      return String(c).trim();
+    }
+  }
+
+  const keys = Object.keys(log);
+  const cityKey = keys.find(k => {
+    const lk = k.toLowerCase();
+    return lk.includes("city") || lk.includes("location") || lk.includes("place") || lk.includes("town");
+  });
+
+  return (cityKey && log[cityKey]) ? String(log[cityKey]).trim() : "";
+};
+
+export const getContactKhoji = (log, attempt) => {
+  if (attempt?.Khoji && String(attempt.Khoji).trim()) return String(attempt.Khoji).trim();
+  if (attempt?.khoji && String(attempt.khoji).trim()) return String(attempt.khoji).trim();
+
+  if (!log || typeof log !== "object") return "";
+
+  const directCandidates = [
+    log.Khoji, log.khoji, log["Khoji Type"], log["Khoji Yes or No"],
+    log["Have you done Maha Asmani"], log["Maha Asmani"], log["Mahaasmani"], log["Khoji Status"]
+  ];
+
+  for (const c of directCandidates) {
+    if (c !== undefined && c !== null && String(c).trim() !== "") {
+      return String(c).trim();
+    }
+  }
+
+  const keys = Object.keys(log);
+  const khojiKey = keys.find(k => {
+    const lk = k.toLowerCase();
+    return lk.includes("khoji") || lk.includes("asmani");
+  });
+
+  return (khojiKey && log[khojiKey]) ? String(log[khojiKey]).trim() : "";
+};
 
 export const COLORS = ["#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"];
 

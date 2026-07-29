@@ -5,7 +5,7 @@ import {
   Download, ChevronRight, ChevronDown, Calendar, TrendingUp, UserCheck, Smile, Info, Search, X, Check
 } from "lucide-react";
 import { subscribeToAllCallLogs } from "../../../../lib/db";
-import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp, getCanonicalStatus } from "../utils.jsx";
+import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp, getCanonicalStatus, getContactPhone, getContactName, getContactCity, getContactKhoji } from "../utils.jsx";
 import { isKhojiAffirmative, isKhojiNegative } from "../../attender/utils.js";
 
 function MonthlySection({ title, children, defaultOpen = true }) {
@@ -306,15 +306,99 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       const feedbackKey = Object.keys(log).find(k => ["prog. feedback", "feedback", "user feedback", "program feedback"].includes(k.toLowerCase()));
       const feedbackVal = feedbackKey ? String(log[feedbackKey] || "").trim() : "";
 
-      const nameKey = Object.keys(log).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase()));
-      const contactName = nameKey ? log[nameKey] : "Unknown";
-      const phoneKey = Object.keys(log).find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"].includes(k.toLowerCase()));
-      const contactPhone = phoneKey ? log[phoneKey] : "";
+      const contactName = getContactName(log);
+      const contactPhone = getContactPhone(log);
+      const contactCity = getContactCity(log);
+      const khojiVal = getContactKhoji(log);
       const contactTags = Array.isArray(log.tags) ? log.tags : [];
       const programName = log.programName || "Unknown";
 
-      const khojiKey = Object.keys(log).find(k => ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"].includes(k.toLowerCase()));
-      const khojiVal = log.Khoji || (khojiKey ? String(log[khojiKey] || "").trim() : "");
+      const rawAttempts = [];
+
+      // A. Collect from attenderStates
+      if (log.attenderStates && typeof log.attenderStates === "object") {
+        Object.entries(log.attenderStates).forEach(([attId, state]) => {
+          if (state.history && Array.isArray(state.history) && state.history.length > 0) {
+            state.history.forEach(h => {
+              rawAttempts.push({
+                timestamp: parseTimestamp(h.timestamp) || parseTimestamp(h.date) || parseTimestamp(state.lastCalledAt || state.updatedAt),
+                attenderId: attId,
+                attenderName: h.attenderName || state.attenderName || "Unknown",
+                status: h.status || state.status || "Pending",
+                remark: h.remark || "",
+                callType: h.callType || state.callType || "outgoing",
+                calledFor: h.calledFor || state["Called For"] || state.calledFor || "",
+                source: h.source || state.Source || state.source || ""
+              });
+            });
+          }
+          if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
+            const dateVal = state.lastCalledAt || state.updatedAt;
+            const ts = parseTimestamp(dateVal);
+            const existsInStateHistory = Array.isArray(state.history) && state.history.some(h => {
+              const hTs = parseTimestamp(h.timestamp);
+              return hTs && ts && Math.abs(hTs.getTime() - ts.getTime()) < 1000 && (h.status === state.status || h.remark === state.remark);
+            });
+            if (!existsInStateHistory) {
+              rawAttempts.push({
+                timestamp: ts || parseTimestamp(log.updatedAt || log.createdAt),
+                attenderId: attId,
+                attenderName: state.attenderName || "Unknown",
+                status: state.status || "Pending",
+                remark: state.remark || "",
+                callType: state.callType || "outgoing",
+                calledFor: state["Called For"] || state.calledFor || "",
+                source: state.Source || state.source || ""
+              });
+            }
+          }
+        });
+      }
+
+      // B. Collect from top-level log.history
+      if (log.history && Array.isArray(log.history) && log.history.length > 0) {
+        log.history.forEach(h => {
+          const ts = parseTimestamp(h.timestamp) || parseTimestamp(h.date) || parseTimestamp(log.lastCalledAt || log.updatedAt);
+          const alreadyAdded = rawAttempts.some(ra => {
+            return ra.timestamp && ts && Math.abs(ra.timestamp.getTime() - ts.getTime()) < 1000 && ra.status === (h.status || "Pending") && ra.remark === (h.remark || "");
+          });
+          if (!alreadyAdded) {
+            rawAttempts.push({
+              timestamp: ts,
+              attenderId: h.attenderId || log.attenderId || "legacy",
+              attenderName: h.attenderName || log.attenderName || "Unknown",
+              status: h.status || "Pending",
+              remark: h.remark || "",
+              callType: h.callType || log.callType || "outgoing",
+              calledFor: h.calledFor || "",
+              source: h.source || ""
+            });
+          }
+        });
+      }
+
+      // C. Collect top-level log standalone call if not in history
+      if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
+        const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
+        const ts = parseTimestamp(dateVal);
+        const alreadyAdded = rawAttempts.some(ra => {
+          return ra.timestamp && ts && Math.abs(ra.timestamp.getTime() - ts.getTime()) < 1000 && ra.status === (log.status || "Pending") && ra.remark === (log.remark || "");
+        });
+        if (!alreadyAdded) {
+          rawAttempts.push({
+            timestamp: ts,
+            attenderId: log.attenderId || "legacy",
+            attenderName: log.attenderName || "Legacy Attender",
+            status: log.status || "Pending",
+            remark: log.remark || "",
+            callType: log.callType || "outgoing",
+            calledFor: log["Called For"] || log.calledFor || "",
+            source: log.Source || log.source || ""
+          });
+        }
+      }
+
+      const totalContactCalls = rawAttempts.length;
 
       const processAttempt = (att) => {
         const status = getCanonicalStatus(att.status || "Pending");
@@ -326,86 +410,33 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         if (selectedCalledFors.length > 0 && !attemptCalledFors.some(cf => selectedCalledFors.includes(cf))) {
           return null;
         }
+
+        const finalPhone = getContactPhone(log, att);
+        const finalName = getContactName(log, att);
+        const finalCity = getContactCity(log, att);
+        const finalKhoji = getContactKhoji(log, att);
+
         return {
           ...att,
           status,
-          contactName,
-          contactPhone,
+          contactName: finalName,
+          contactPhone: finalPhone,
+          contactCity: finalCity,
           contactTags,
           programName,
           contactId: log.id,
           source: att.source || sourceVal,
           calledFor: finalCalledFor,
           feedback: feedbackVal,
-          Khoji: khojiVal
+          Khoji: finalKhoji,
+          totalContactCalls: totalContactCalls || 1
         };
       };
 
-      // 1. Loop over attenderStates
-      if (log.attenderStates && Object.keys(log.attenderStates).length > 0) {
-        Object.entries(log.attenderStates).forEach(([attId, state]) => {
-          if (state.history && Array.isArray(state.history) && state.history.length > 0) {
-            state.history.forEach(h => {
-              const att = processAttempt({
-                timestamp: parseTimestamp(h.timestamp),
-                attenderId: attId,
-                attenderName: h.attenderName || state.attenderName || "Unknown",
-                status: h.status || "Pending",
-                remark: h.remark || "",
-                callType: h.callType || state.callType || "outgoing",
-                calledFor: h.calledFor || "",
-                source: h.source || ""
-              });
-              if (att) attempts.push(att);
-            });
-          } else if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
-            const dateVal = state.lastCalledAt || state.updatedAt;
-            const att = processAttempt({
-              timestamp: parseTimestamp(dateVal),
-              attenderId: attId,
-              attenderName: state.attenderName || "Unknown",
-              status: state.status || "Pending",
-              remark: state.remark || "",
-              callType: state.callType || "outgoing",
-              calledFor: state["Called For"] || state.calledFor || "",
-              source: state.Source || state.source || ""
-            });
-            if (att) attempts.push(att);
-          }
-        });
-      } else {
-        // 2. Legacy fallback
-        if (log.history && Array.isArray(log.history) && log.history.length > 0) {
-          log.history.forEach(h => {
-            const att = processAttempt({
-              timestamp: parseTimestamp(h.timestamp),
-              attenderId: h.attenderId || log.attenderId || "legacy",
-              attenderName: h.attenderName || log.attenderName || "Unknown",
-              status: h.status || "Pending",
-              remark: h.remark || "",
-              callType: h.callType || log.callType || "outgoing",
-              calledFor: h.calledFor || "",
-              source: h.source || ""
-            });
-            if (att) attempts.push(att);
-          });
-        } else {
-          if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
-            const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
-            const att = processAttempt({
-              timestamp: parseTimestamp(dateVal),
-              attenderId: log.attenderId || "legacy",
-              attenderName: log.attenderName || "Legacy Attender",
-              status: log.status || "Pending",
-              remark: log.remark || "",
-              callType: log.callType || "outgoing",
-              calledFor: log["Called For"] || log.calledFor || "",
-              source: log.Source || log.source || ""
-            });
-            if (att) attempts.push(att);
-          }
-        }
-      }
+      rawAttempts.forEach(item => {
+        const att = processAttempt(item);
+        if (att) attempts.push(att);
+      });
     });
     return attempts;
   }, [callLogs, selectedProgramIds, selectedSources, selectedCalledFors, selectedStatuses, programs]);
@@ -1259,6 +1290,34 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     // 9. Source vs Called For Breakdown
     const wsSourceVsCalledFor = XLSX.utils.json_to_sheet(cleanRows([...sourceVsCalledForBreakdown, sourceVsCalledForBreakdownTotals]));
     XLSX.utils.book_append_sheet(wb, wsSourceVsCalledFor, "Source vs Called For");
+
+    // 10. Detailed Call Logs (Grouped by Mobile Number: consecutive rows per number, chronological history)
+    const detailedLogs = [...allAttempts]
+      .sort((a, b) => {
+        const phoneA = (a.contactPhone || "").trim();
+        const phoneB = (b.contactPhone || "").trim();
+        if (phoneA !== phoneB) {
+          return phoneA.localeCompare(phoneB);
+        }
+        return (a.timestamp?.getTime() || 0) - (b.timestamp?.getTime() || 0);
+      })
+      .map(att => ({
+        "Date": att.timestamp ? att.timestamp.toISOString().split("T")[0] : "",
+        "Time": att.timestamp ? att.timestamp.toLocaleTimeString("en-IN") : "",
+        "Name": att.contactName || "",
+        "Mobile Number": att.contactPhone || "",
+        "City": att.contactCity || "",
+        "Khoji Type": att.Khoji || "",
+        "Called For": att.calledFor || "",
+        "Source": att.source || "",
+        "Status": att.status || "",
+        "Calls Done": att.totalContactCalls || 1,
+        "Attender": att.attenderName || "",
+        "Call Type": att.callType || "",
+        "Remark": att.remark || ""
+      }));
+    const wsDetailedLogs = XLSX.utils.json_to_sheet(detailedLogs);
+    XLSX.utils.book_append_sheet(wb, wsDetailedLogs, "Detailed Call Logs");
 
 
 

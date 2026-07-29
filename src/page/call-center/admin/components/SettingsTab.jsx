@@ -53,7 +53,7 @@ export default function SettingsTab() {
     }
   };
 
-  const handleOptionChange = async (type, action, val) => {
+  const handleOptionChange = async (type, action, val, newVal) => {
     const key = type === "status" ? "statusOptions" : type === "source" ? "sourceOptions" : "calledForOptions";
     const current = options[key] || [];
     
@@ -64,6 +64,22 @@ export default function SettingsTab() {
         return;
       }
       updated = current.filter(x => x !== val);
+    } else if (action === "rename") {
+      if (!newVal || !newVal.trim()) {
+        toast.error("Option name cannot be empty!");
+        return;
+      }
+      const trimmedNew = newVal.trim();
+      if (val === trimmedNew) return;
+      if (current.includes(trimmedNew)) {
+        toast.error("Option name already exists!");
+        return;
+      }
+      if (type === "status" && ["Reg.Done", "NA"].includes(val)) {
+        toast.error(`Cannot rename required status: ${val}`);
+        return;
+      }
+      updated = current.map(x => (x === val ? trimmedNew : x));
     } else {
       if (!val || !val.trim()) return;
       if (current.includes(val.trim())) {
@@ -79,7 +95,13 @@ export default function SettingsTab() {
         ...prev,
         [key]: updated
       }));
-      toast.success("Option updated successfully!");
+      toast.success(
+        action === "rename"
+          ? "Option renamed successfully!"
+          : action === "delete"
+          ? "Option deleted successfully!"
+          : "Option added successfully!"
+      );
     } catch (err) {
       console.error(err);
       toast.error("Failed to update option: " + err.message);
@@ -146,6 +168,7 @@ export default function SettingsTab() {
           options={options?.statusOptions || []}
           onAdd={(val) => handleOptionChange("status", "add", val)}
           onDelete={(val) => handleOptionChange("status", "delete", val)}
+          onRename={(oldVal, newVal) => handleOptionChange("status", "rename", oldVal, newVal)}
         />
         <OptionsManagerCard
           title="Source Options"
@@ -153,6 +176,7 @@ export default function SettingsTab() {
           options={options?.sourceOptions || []}
           onAdd={(val) => handleOptionChange("source", "add", val)}
           onDelete={(val) => handleOptionChange("source", "delete", val)}
+          onRename={(oldVal, newVal) => handleOptionChange("source", "rename", oldVal, newVal)}
         />
         <OptionsManagerCard
           title="Called For Options"
@@ -160,6 +184,7 @@ export default function SettingsTab() {
           options={options?.calledForOptions || []}
           onAdd={(val) => handleOptionChange("calledFor", "add", val)}
           onDelete={(val) => handleOptionChange("calledFor", "delete", val)}
+          onRename={(oldVal, newVal) => handleOptionChange("calledFor", "rename", oldVal, newVal)}
         />
       </div>
 

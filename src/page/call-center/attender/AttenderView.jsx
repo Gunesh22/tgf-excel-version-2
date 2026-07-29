@@ -186,7 +186,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   const handleGetNumbers = async () => {
     if (!selectedProgramId) { toast.error("Select a tag first."); return; }
 
-    const currentTagCount = tagFilteredLogs.length;
+    const currentTagCount = callLogs.filter(l => !l._deleted && (l.programId === selectedProgramId || l.tags?.includes?.(selectedProgramId) || l.Tags?.includes?.(selectedProgramId))).length;
     if (currentTagCount > 0) {
       if (!window.confirm(`You already have ${currentTagCount} entries with tag #${selectedProgramId}.\nGet ${requestCount} more contacts?`)) return;
     }

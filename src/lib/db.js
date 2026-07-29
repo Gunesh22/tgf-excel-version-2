@@ -826,13 +826,6 @@ export const importContacts = async (param1, param2, param3, param4 = null) => {
 };
 
 export const getProgramContactStats = async (tag) => {
-  const progSnap = await getDoc(doc(db, "programs", tag));
-  let total = 0;
-  if (progSnap.exists()) {
-    total = progSnap.data().contactCount || 0;
-  }
-
-  // Fetch all contacts containing this tag to compute stats
   const q = query(
     collection(db, "contacts"),
     where("tags", "array-contains", tag)
@@ -841,10 +834,25 @@ export const getProgramContactStats = async (tag) => {
   const docs = snap.docs.map(d => d.data()).filter(d => !d._deleted);
   const totalCount = docs.length;
 
-  const stats = { total: total || totalCount, available: 0, assigned: 0, done: 0, callback_scheduled: 0, pending: 0 };
+  const stats = {
+    programName: tag,
+    total: totalCount,
+    available: 0,
+    assigned: 0,
+    done: 0,
+    callback_scheduled: 0,
+    pending: 0,
+    called: 0,
+    converted: 0
+  };
+
   let poolAssignedCount = 0;
 
   docs.forEach(data => {
+    const s = data.status ? String(data.status).trim() : "";
+    if (s !== "" && s.toLowerCase() !== "pending") stats.called++;
+    if (s === "Reg.Done") stats.converted++;
+
     if (data.isAssigned) {
       const isFromPool = data.callType !== "incoming" && data.callType !== "incoming f";
       if (isFromPool) poolAssignedCount++;
@@ -1014,7 +1022,7 @@ export const assignContactsToAttender = async (tag, programName, attenderId, att
     }
 
     // 2. Perform all writes next
-    let localAssigned = 0;
+    const assignedIds = [];
     for (const freshSnap of freshSnaps) {
       if (!freshSnap.exists()) continue;
       const freshData = freshSnap.data();
@@ -1044,15 +1052,15 @@ export const assignContactsToAttender = async (tag, programName, attenderId, att
           updatedAt: serverTimestamp(),
           attenderStates: freshStates
         });
-        localAssigned++;
+        assignedIds.push(freshSnap.id);
       }
     }
-    return localAssigned;
+    return assignedIds;
   });
 
-  totalAssigned = txResult || 0;
+  const assignedIds = txResult || [];
+  totalAssigned = assignedIds.length;
   if (totalAssigned > 0) {
-    const assignedIds = targetContacts.slice(0, totalAssigned).map(c => c.id);
     await updateCacheContacts(assignedIds);
   }
   return totalAssigned;
