@@ -92,21 +92,26 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
   const hasFilterApplied = selected.length > 0 && selected.length < options.length;
 
   return (
-    <div className="relative w-full" ref={ref}>
+    <div className="relative flex-1 min-w-[150px] sm:min-w-[165px] max-w-[250px]" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen(p => !p)}
-        className={`flex items-center justify-between gap-2 px-4 py-2.5 border rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full whitespace-nowrap overflow-hidden transition-all ${
+        className={`flex items-center justify-between gap-2 px-4 py-2.5 border rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full whitespace-nowrap overflow-hidden transition-all duration-200 cursor-pointer ${
           hasFilterApplied
-            ? "bg-indigo-50/50 border-indigo-300 text-indigo-900 font-extrabold"
-            : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50/50"
+            ? "bg-indigo-50/80 border-indigo-300 text-indigo-900 font-extrabold shadow-sm shadow-indigo-100"
+            : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50/90 hover:border-gray-300"
         }`}
       >
-        <span className="truncate flex-1 text-left">{label}</span>
-        <ChevronDown size={14} className={`shrink-0 transition-colors ${hasFilterApplied ? "text-indigo-600" : "text-gray-400"}`} />
+        <span className="truncate flex-1 text-left font-bold">{label}</span>
+        {hasFilterApplied && (
+          <span className="w-4.5 h-4.5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center shrink-0">
+            {selected.length}
+          </span>
+        )}
+        <ChevronDown size={16} className={`shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""} ${hasFilterApplied ? "text-indigo-600" : "text-gray-400"}`} />
       </button>
       {open && (
-        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl w-full min-w-[200px] overflow-hidden right-0">
+        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl w-full min-w-[230px] overflow-hidden right-0">
           <div className="p-2 border-b border-gray-100 flex items-center gap-2">
             <Search size={13} className="text-gray-400 shrink-0" />
             <input
@@ -1348,7 +1353,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       {/* Filter Bar */}
       <div className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm space-y-4">
         {/* Row 1: Dropdowns grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           <MultiSelect
             options={programOptions}
             selected={selectedProgramIds}
@@ -1407,24 +1412,22 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         </div>
 
         {/* Row 2: Controls & Export */}
-        <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-gray-100">
+        <div className="flex flex-wrap items-center justify-between gap-4 pt-3.5 border-t border-gray-100/80">
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">From:</span>
+            <div className="flex items-center gap-2 bg-gray-50/80 p-1.5 rounded-2xl border border-gray-100">
+              <span className="text-[11px] font-extrabold text-gray-400 uppercase tracking-wider pl-2">From:</span>
               <input
                 type="date"
                 value={startDate}
                 onChange={e => setStartDate(e.target.value)}
-                className="px-4 py-2 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="px-3 py-1.5 bg-white border border-gray-200/80 rounded-xl font-bold text-xs text-slate-700 shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
               />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">To:</span>
+              <span className="text-[11px] font-extrabold text-gray-400 uppercase tracking-wider px-1">To:</span>
               <input
                 type="date"
                 value={endDate}
                 onChange={e => setEndDate(e.target.value)}
-                className="px-4 py-2 bg-white border border-gray-200 rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="px-3 py-1.5 bg-white border border-gray-200/80 rounded-xl font-bold text-xs text-slate-700 shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
               />
             </div>
             {(() => {
@@ -1440,16 +1443,16 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
               const isThisMonthSelected = startDate === firstDayStr && endDate === lastDayStr;
 
               return (
-                <>
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => {
                       setStartDate(todayStr);
                       setEndDate(todayStr);
                     }}
-                    className={`px-4 py-2 rounded-2xl text-xs font-black border transition-all duration-200 ${
+                    className={`px-3.5 py-2 rounded-2xl text-xs font-black border transition-all duration-200 cursor-pointer ${
                       isTodaySelected
-                        ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-600/20 scale-[1.03]"
-                        : "bg-emerald-50 text-emerald-600 border-emerald-100 hover:bg-emerald-100/80 hover:scale-[1.01]"
+                        ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-600/20 scale-[1.02]"
+                        : "bg-emerald-50/80 text-emerald-700 border-emerald-100 hover:bg-emerald-100 hover:scale-[1.01]"
                     }`}
                   >
                     📅 Today
@@ -1459,15 +1462,15 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                       setStartDate(firstDayStr);
                       setEndDate(lastDayStr);
                     }}
-                    className={`px-4 py-2 rounded-2xl text-xs font-black border transition-all duration-200 ${
+                    className={`px-3.5 py-2 rounded-2xl text-xs font-black border transition-all duration-200 cursor-pointer ${
                       isThisMonthSelected
-                        ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-600/20 scale-[1.03]"
-                        : "bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-100/80 hover:scale-[1.01]"
+                        ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-600/20 scale-[1.02]"
+                        : "bg-indigo-50/80 text-indigo-700 border-indigo-100 hover:bg-indigo-100 hover:scale-[1.01]"
                     }`}
                   >
                     📅 This Month
                   </button>
-                </>
+                </div>
               );
             })()}
           </div>
@@ -1484,7 +1487,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                   setSelectedCallTypes([]);
                   setSelectedKhojiStatuses([]);
                 }}
-                className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-black hover:bg-red-100 transition animate-fade-in"
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-black hover:bg-red-100 transition animate-fade-in cursor-pointer"
               >
                 <X size={12} /> Clear filters
                 <span className="bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">{activeFilters}</span>
@@ -1492,8 +1495,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             )}
 
             <button onClick={handleExport} disabled={!monthFiltered.length}
-              className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-sm transition-all disabled:opacity-50">
-              <Download size={18} /> Export Excel Workbook
+              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-black text-xs rounded-2xl shadow-md shadow-indigo-500/20 hover:shadow-indigo-500/30 transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer">
+              <Download size={16} /> Export Excel Workbook
             </button>
           </div>
         </div>

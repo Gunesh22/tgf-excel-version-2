@@ -70,21 +70,26 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
   const hasFilterApplied = selected.length > 0 && selected.length < options.length;
 
   return (
-    <div className="relative w-full" ref={ref}>
+    <div className="relative flex-1 min-w-[150px] sm:min-w-[165px] max-w-[250px]" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen(p => !p)}
-        className={`flex items-center justify-between gap-2 px-4 py-2.5 border rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full whitespace-nowrap overflow-hidden transition-all ${
+        className={`flex items-center justify-between gap-2 px-4 py-2.5 border rounded-2xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full whitespace-nowrap overflow-hidden transition-all duration-200 cursor-pointer ${
           hasFilterApplied
-            ? "bg-indigo-50/50 border-indigo-300 text-indigo-900 font-extrabold"
-            : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50/50"
+            ? "bg-indigo-50/80 border-indigo-300 text-indigo-900 font-extrabold shadow-sm shadow-indigo-100"
+            : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50/90 hover:border-gray-300"
         }`}
       >
-        <span className="truncate flex-1 text-left">{label}</span>
-        <ChevronDown size={14} className={`shrink-0 transition-colors ${hasFilterApplied ? "text-indigo-600" : "text-gray-400"}`} />
+        <span className="truncate flex-1 text-left font-bold">{label}</span>
+        {hasFilterApplied && (
+          <span className="w-4.5 h-4.5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center shrink-0">
+            {selected.length}
+          </span>
+        )}
+        <ChevronDown size={16} className={`shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""} ${hasFilterApplied ? "text-indigo-600" : "text-gray-400"}`} />
       </button>
       {open && (
-        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl w-full min-w-[200px] overflow-hidden">
+        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl w-full min-w-[230px] overflow-hidden right-0">
           <div className="p-2 border-b border-gray-100 flex items-center gap-2">
             <Search size={13} className="text-gray-400 shrink-0" />
             <input
@@ -582,9 +587,9 @@ export default function AbhivyaktiTab({
       {/* Filter Bar */}
       <div className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm space-y-4">
         {/* Row 1: Dropdowns grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* Month Scope Dropdown */}
-          <div className="relative w-full">
+          <div className="relative flex-1 min-w-[150px] sm:min-w-[165px] max-w-[250px]">
             <select
               value={selectedMonth}
               onChange={e => setSelectedMonth(e.target.value)}
