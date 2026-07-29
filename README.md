@@ -15,3 +15,5 @@ This React-based web app enables users to:
 - Drag and drop or browse to upload Excel files
 - Automatic parsing and conversion to JSON
 - Dynamic and responsive chart rendering
+
+<!-- Production Build Sync: 2026-07-30 -->
