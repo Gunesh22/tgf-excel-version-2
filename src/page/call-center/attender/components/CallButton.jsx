@@ -59,10 +59,10 @@ export const CallButton = ({ phone, variant = "default" }) => {
   return (
     <a
       href={`tel:${formattedPhone}`}
-      className="inline-flex items-center justify-center px-4 py-2 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 text-emerald-700 rounded-xl text-xs font-black transition-all border border-emerald-200 shadow-sm hover:shadow-md cursor-pointer"
+      className="inline-flex items-center justify-center px-2.5 py-2 shrink-0 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 text-emerald-700 rounded-xl text-xs font-black transition-all border border-emerald-200 shadow-sm hover:shadow-md cursor-pointer"
       title={`Call ${formattedPhone}`}
     >
-      <Phone size={13} className="stroke-[2.5] mr-1.5" />
+      <Phone size={13} className="stroke-[2.5] mr-1" />
       Call
     </a>
   );

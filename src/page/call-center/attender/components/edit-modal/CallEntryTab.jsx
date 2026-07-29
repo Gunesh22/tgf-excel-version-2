@@ -87,7 +87,7 @@ export const CallEntryTab = ({
         {/* Searchable Dropdown: Source */}
         <div className="space-y-2">
           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-            <Tag size={13} className="text-amber-500" /> Source
+            <Tag size={13} className="text-amber-500" /> Source <span className="text-red-500 font-bold ml-0.5">*</span>
           </label>
           <SearchableDropdown
             options={SOURCE_OPTIONS}

@@ -3,7 +3,6 @@ import {
   User, Phone, Hash, MapPin, CheckCircle2, Tag, Plus, MessageSquare, Loader, Clock
 } from "lucide-react";
 import { formatContactName } from "../../utils";
-import CallButton from "../CallButton";
 
 export const ProfileDetailsTab = ({
   edited,
@@ -45,9 +44,9 @@ export const ProfileDetailsTab = ({
   return (
     <div className="space-y-6 p-6 rounded-3xl border border-gray-100 bg-gray-50/30">
       {/* Primary Contact Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Name */}
-        <div className="space-y-1">
+        <div className="space-y-1 min-w-0">
           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
             <User size={11} className="text-emerald-500" /> Name
           </label>
@@ -56,7 +55,7 @@ export const ProfileDetailsTab = ({
             onChange={e => handleChange("Name", e.target.value)}
             onBlur={e => handleChange("Name", formatContactName(e.target.value))}
             readOnly={!getEditable("Name")}
-            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+            className={`w-full px-3 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
               !getEditable("Name")
                 ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
                 : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
@@ -65,51 +64,45 @@ export const ProfileDetailsTab = ({
         </div>
 
         {/* Phone */}
-        <div className="space-y-1">
-          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-            <Phone size={11} className="text-blue-500" /> Phone
-            {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1" />}
-            {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1" />}
+        <div className="space-y-1 min-w-0">
+          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1 truncate">
+            <Phone size={11} className="text-blue-500 shrink-0" /> Phone
+            {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1 shrink-0" />}
+            {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1 shrink-0" />}
           </label>
-          <div className="flex gap-2">
-            <input
-              value={edited.Phone || ""}
-              onChange={e => handleChange("Phone", e.target.value)}
-              readOnly={!getEditable("Phone")}
-              className={`flex-1 px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                !getEditable("Phone")
-                  ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                  : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
-              }`}
-            />
-            <CallButton phone={edited.Phone} />
-          </div>
+          <input
+            value={edited.Phone || ""}
+            onChange={e => handleChange("Phone", e.target.value)}
+            readOnly={!getEditable("Phone")}
+            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+              !getEditable("Phone")
+                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+            }`}
+          />
         </div>
 
         {/* Mobile */}
-        <div className="space-y-1">
-          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-            <Phone size={11} className="text-cyan-500" /> Mobile
-            {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1" />}
-            {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1" />}
+        <div className="space-y-1 min-w-0">
+          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1 truncate">
+            <Phone size={11} className="text-cyan-500 shrink-0" /> Mobile
+            {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1 shrink-0" />}
+            {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1 shrink-0" />}
           </label>
-          <div className="flex gap-2">
-            <input
-              value={edited.Mobile || ""}
-              onChange={e => handleChange("Mobile", e.target.value)}
-              readOnly={!getEditable("Mobile")}
-              className={`flex-1 px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
-                !getEditable("Mobile")
-                  ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                  : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
-              }`}
-            />
-            <CallButton phone={edited.Mobile} />
-          </div>
+          <input
+            value={edited.Mobile || ""}
+            onChange={e => handleChange("Mobile", e.target.value)}
+            readOnly={!getEditable("Mobile")}
+            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+              !getEditable("Mobile")
+                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
+                : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+            }`}
+          />
         </div>
 
         {/* Email */}
-        <div className="space-y-1">
+        <div className="space-y-1 min-w-0">
           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
             <Hash size={11} className="text-purple-500" /> Email
           </label>
@@ -117,7 +110,7 @@ export const ProfileDetailsTab = ({
             value={edited.Email || ""}
             onChange={e => handleChange("Email", e.target.value)}
             readOnly={!getEditable("Email")}
-            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+            className={`w-full px-3 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
               !getEditable("Email")
                 ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
                 : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
@@ -126,7 +119,7 @@ export const ProfileDetailsTab = ({
         </div>
 
         {/* City */}
-        <div className="space-y-1">
+        <div className="space-y-1 min-w-0">
           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
             <MapPin size={11} className="text-red-500" /> City
           </label>
@@ -134,7 +127,7 @@ export const ProfileDetailsTab = ({
             value={edited.City || ""}
             onChange={e => handleChange("City", e.target.value)}
             readOnly={!getEditable("City")}
-            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+            className={`w-full px-3 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
               !getEditable("City")
                 ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
                 : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
@@ -143,7 +136,7 @@ export const ProfileDetailsTab = ({
         </div>
 
         {/* State */}
-        <div className="space-y-1">
+        <div className="space-y-1 min-w-0">
           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
             <MapPin size={11} className="text-orange-500" /> State
           </label>
@@ -151,7 +144,7 @@ export const ProfileDetailsTab = ({
             value={edited.State || ""}
             onChange={e => handleChange("State", e.target.value)}
             readOnly={!getEditable("State")}
-            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+            className={`w-full px-3 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
               !getEditable("State")
                 ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
                 : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"

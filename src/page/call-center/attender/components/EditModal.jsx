@@ -1180,6 +1180,13 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         return;
       }
 
+      // Compulsory Source Validation
+      const sourceVal = String(targetEdited[sourceField] || "").trim();
+      if (!sourceVal) {
+        toast.error("Please select a 'Source' before saving.", { duration: 4000, position: 'top-center' });
+        return;
+      }
+
       // Objection Tracker Validation
       if ((targetEdited.status === "Not interested" || targetEdited.status === "Not possible") && !targetEdited.objectionReason) {
         toast.error(`Please select a reason for "${targetEdited.status}" before saving.`, { duration: 4000, position: 'top-center' });
