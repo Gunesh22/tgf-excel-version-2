@@ -143,11 +143,18 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
   }, [callLogs, settingsOptions]);
 
   const calledForOptions = useMemo(() => {
-    const values = new Set(settingsOptions?.calledForOptions || []);
+    const values = new Set();
+    (settingsOptions?.calledForOptions || []).forEach(opt => {
+      if (opt) {
+        String(opt).split(",").map(s => s.trim()).filter(Boolean).forEach(v => values.add(v));
+      }
+    });
     callLogs.forEach(log => {
       const key = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
       const val = key ? String(log[key] || "").trim() : "";
-      if (val) values.add(val);
+      if (val) {
+        val.split(",").map(s => s.trim()).filter(Boolean).forEach(v => values.add(v));
+      }
     });
     return Array.from(values).sort().map(s => ({ value: s, label: s }));
   }, [callLogs, settingsOptions]);
@@ -354,7 +361,10 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       if (selectedSources.length > 0 && !selectedSources.includes(log.source || "")) return false;
 
       // Called For filter
-      if (selectedCalledFors.length > 0 && !selectedCalledFors.includes(log.calledFor || "")) return false;
+      if (selectedCalledFors.length > 0) {
+        const logCalledFors = String(log.calledFor || "").split(",").map(x => x.trim()).filter(Boolean);
+        if (!logCalledFors.some(cf => selectedCalledFors.includes(cf))) return false;
+      }
 
       // Status filter
       if (selectedStatuses.length > 0 && !selectedStatuses.includes(log.status || "Pending")) return false;

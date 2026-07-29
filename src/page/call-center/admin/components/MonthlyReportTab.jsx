@@ -230,7 +230,12 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
   }, [callLogs, settingsOptions]);
 
   const calledForOptions = React.useMemo(() => {
-    const values = new Set(settingsOptions?.calledForOptions || []);
+    const values = new Set();
+    (settingsOptions?.calledForOptions || []).forEach(opt => {
+      if (opt) {
+        String(opt).split(",").map(s => s.trim()).filter(Boolean).forEach(v => values.add(v));
+      }
+    });
     callLogs.forEach(log => {
       const key = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
       const val = key ? String(log[key] || "").trim() : "";

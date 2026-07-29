@@ -3342,6 +3342,17 @@ const DEFAULT_CALLED_FOR_OPTIONS = [
   "Spine Avd"
 ];
 
+export const DEFAULT_CONNECTED_STATUSES = [
+  "Info given", "Interested", "Reg.Done", "reminder", "Query", 
+  "Already Reg.d", "Next time", "Shivir done", "Not possible", 
+  "Pending", "Not interested", "Not Attended", "Call Log Added"
+];
+
+export const DEFAULT_NOT_CONNECTED_STATUSES = [
+  "NA", "Busy", "Call Cut", "switched off", "Invalid No", 
+  "Called by mistake", "No Network", "wrong no.", "no answer"
+];
+
 export const getSettingsOptions = async () => {
   const docRef = doc(db, "settings", "call_center_options");
   const snap = await getDoc(docRef);
@@ -3350,7 +3361,9 @@ export const getSettingsOptions = async () => {
     return {
       statusOptions: data.statusOptions || DEFAULT_STATUS_OPTIONS,
       sourceOptions: data.sourceOptions || DEFAULT_SOURCE_OPTIONS,
-      calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS
+      calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS,
+      connectedStatuses: data.connectedStatuses || DEFAULT_CONNECTED_STATUSES,
+      notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES
     };
   }
   
@@ -3358,7 +3371,9 @@ export const getSettingsOptions = async () => {
   const defaults = {
     statusOptions: DEFAULT_STATUS_OPTIONS,
     sourceOptions: DEFAULT_SOURCE_OPTIONS,
-    calledForOptions: DEFAULT_CALLED_FOR_OPTIONS
+    calledForOptions: DEFAULT_CALLED_FOR_OPTIONS,
+    connectedStatuses: DEFAULT_CONNECTED_STATUSES,
+    notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES
   };
   await setDoc(docRef, defaults, { merge: true });
   return defaults;
@@ -3377,14 +3392,18 @@ export const subscribeToCallCenterOptions = (onUpdate) => {
       onUpdate({
         statusOptions: data.statusOptions || DEFAULT_STATUS_OPTIONS,
         sourceOptions: data.sourceOptions || DEFAULT_SOURCE_OPTIONS,
-        calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS
+        calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS,
+        connectedStatuses: data.connectedStatuses || DEFAULT_CONNECTED_STATUSES,
+        notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES
       });
     } else {
       // Initialize with defaults if it doesn't exist yet
       const defaults = {
         statusOptions: DEFAULT_STATUS_OPTIONS,
         sourceOptions: DEFAULT_SOURCE_OPTIONS,
-        calledForOptions: DEFAULT_CALLED_FOR_OPTIONS
+        calledForOptions: DEFAULT_CALLED_FOR_OPTIONS,
+        connectedStatuses: DEFAULT_CONNECTED_STATUSES,
+        notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES
       };
       setDoc(docRef, defaults, { merge: true }).then(() => {
         onUpdate(defaults);
