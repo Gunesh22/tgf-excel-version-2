@@ -2670,13 +2670,19 @@ export const updateCacheContacts = async (contactIds) => {
   if (!contactIds || contactIds.length === 0) return;
   
   try {
-    // 1. Fetch updated contacts in parallel (no transaction needed)
-    const contactPromises = contactIds.map(async (id) => {
-      const contactRef = doc(db, "contacts", id);
-      const snap = await getDoc(contactRef);
-      return { id, snap };
-    });
-    const contactSnaps = await Promise.all(contactPromises);
+    // 1. Fetch updated contacts in chunks of 50 (prevents network throttling on large bulk operations)
+    const BATCH_SIZE = 50;
+    const contactSnaps = [];
+    for (let i = 0; i < contactIds.length; i += BATCH_SIZE) {
+      const batchIds = contactIds.slice(i, i + BATCH_SIZE);
+      const batchPromises = batchIds.map(async (id) => {
+        const contactRef = doc(db, "contacts", id);
+        const snap = await getDoc(contactRef);
+        return { id, snap };
+      });
+      const batchResults = await Promise.all(batchPromises);
+      contactSnaps.push(...batchResults);
+    }
 
     const currentMonth = getMonthStr(new Date());
 
@@ -3280,7 +3286,22 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
   // 1. Immediately emit cached registrations from IndexedDB if available (0 storage quota limit)
   getIDBCache(cacheKey).then(cachedDocs => {
     if (Array.isArray(cachedDocs) && cachedDocs.length > 0) {
-      finalCallback(cachedDocs);
+      // Hydrate timestamps on cached docs so methods like .toMillis() and .toDate() work seamlessly
+      const hydrated = cachedDocs.map(doc => {
+        if (!doc) return doc;
+        const copy = { ...doc };
+        if (copy.registeredAt && typeof copy.registeredAt === "object" && !copy.registeredAt.toMillis) {
+          const sec = copy.registeredAt.seconds || 0;
+          const nano = copy.registeredAt.nanoseconds || 0;
+          copy.registeredAt = {
+            ...copy.registeredAt,
+            toDate: () => new Date(sec * 1000 + nano / 1e6),
+            toMillis: () => sec * 1000 + Math.floor(nano / 1e6)
+          };
+        }
+        return copy;
+      });
+      finalCallback(hydrated);
     }
   }).catch(err => {
     console.warn("Failed to load registrations from IndexedDB cache:", err);
