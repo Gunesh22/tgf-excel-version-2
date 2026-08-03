@@ -1012,58 +1012,66 @@ export const assignContactsToAttender = async (tag, programName, attenderId, att
   const targetContacts = candidates.slice(0, count);
   if (targetContacts.length === 0) return 0;
 
-  let totalAssigned = 0;
+  const allAssignedIds = [];
+  const CHUNK_SIZE = 200; // max 200 contacts (200 reads + 200 writes = 400 ops, safely under 500 limit)
 
-  // Perform updates inside a transaction for thread-safety
-  const txResult = await runTransaction(db, async (transaction) => {
-    // 1. Perform all reads first
-    const freshSnaps = [];
-    for (const contact of targetContacts) {
-      const freshSnap = await transaction.get(contact.ref);
-      freshSnaps.push(freshSnap);
-    }
-
-    // 2. Perform all writes next
-    const assignedIds = [];
-    for (const freshSnap of freshSnaps) {
-      if (!freshSnap.exists()) continue;
-      const freshData = freshSnap.data();
-      if (freshData.isAssigned === false) {
-        const freshStates = freshData.attenderStates || {};
-        freshStates[attenderId] = {
-          status: "",
-          remark: "",
-          callType: "outgoing",
-          history: [],
-          callbackDate: null,
-          objectionReason: "",
-          lastCalledAt: null,
-          firstCalledAt: null,
-          attenderName: attenderName,
-          updatedAt: new Date().toISOString()
-        };
-
-        transaction.update(freshSnap.ref, {
-          isAssigned: true,
-          assignedTo: [attenderId],
-          assignedName: attenderName,
-          attenderId: attenderId, // for compatibility
-          attenderName: attenderName, // for compatibility
-          callType: "outgoing",
-          assignedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          attenderStates: freshStates
-        });
-        assignedIds.push(freshSnap.id);
+  for (let i = 0; i < targetContacts.length; i += CHUNK_SIZE) {
+    const chunk = targetContacts.slice(i, i + CHUNK_SIZE);
+    
+    // Perform updates inside a transaction for thread-safety
+    const txResult = await runTransaction(db, async (transaction) => {
+      // 1. Perform all reads first for this chunk
+      const freshSnaps = [];
+      for (const contact of chunk) {
+        const freshSnap = await transaction.get(contact.ref);
+        freshSnaps.push(freshSnap);
       }
-    }
-    return assignedIds;
-  });
 
-  const assignedIds = txResult || [];
-  totalAssigned = assignedIds.length;
+      // 2. Perform all writes next for this chunk
+      const assignedIds = [];
+      for (const freshSnap of freshSnaps) {
+        if (!freshSnap.exists()) continue;
+        const freshData = freshSnap.data();
+        if (freshData.isAssigned === false) {
+          const freshStates = freshData.attenderStates || {};
+          freshStates[attenderId] = {
+            status: "",
+            remark: "",
+            callType: "outgoing",
+            history: [],
+            callbackDate: null,
+            objectionReason: "",
+            lastCalledAt: null,
+            firstCalledAt: null,
+            attenderName: attenderName,
+            updatedAt: new Date().toISOString()
+          };
+
+          transaction.update(freshSnap.ref, {
+            isAssigned: true,
+            assignedTo: [attenderId],
+            assignedName: attenderName,
+            attenderId: attenderId, // for compatibility
+            attenderName: attenderName, // for compatibility
+            callType: "outgoing",
+            assignedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            attenderStates: freshStates
+          });
+          assignedIds.push(freshSnap.id);
+        }
+      }
+      return assignedIds;
+    });
+
+    if (Array.isArray(txResult)) {
+      allAssignedIds.push(...txResult);
+    }
+  }
+
+  const totalAssigned = allAssignedIds.length;
   if (totalAssigned > 0) {
-    await updateCacheContacts(assignedIds);
+    await updateCacheContacts(allAssignedIds);
   }
   return totalAssigned;
 };
@@ -1133,11 +1141,21 @@ export const subscribeToCallLogs = (...args) => {
     const rest = [];
     logs.forEach(log => {
       if (log.callbackDate) {
-        const cbDate = log.callbackDate.toDate ? log.callbackDate.toDate() : new Date(log.callbackDate);
-        cbDate.setHours(0, 0, 0, 0);
-        if (cbDate <= today) {
-          overdue.push({ ...log, _callbackDue: true });
-          return;
+        let cbDate = null;
+        if (typeof log.callbackDate.toDate === "function") {
+          cbDate = log.callbackDate.toDate();
+        } else if (log.callbackDate.seconds !== undefined) {
+          cbDate = new Date(log.callbackDate.seconds * 1000);
+        } else {
+          cbDate = new Date(log.callbackDate);
+        }
+
+        if (cbDate && !isNaN(cbDate.getTime())) {
+          cbDate.setHours(0, 0, 0, 0);
+          if (cbDate <= today) {
+            overdue.push({ ...log, _callbackDue: true });
+            return;
+          }
         }
       }
       rest.push(log);
