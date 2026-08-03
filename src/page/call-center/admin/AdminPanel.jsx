@@ -68,9 +68,9 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
     loadMonths();
   }, []);
 
-  // Hoisted subscription to registrations
+  // Hoisted subscription to registrations - lazy subscribe only when Abhivyakti tab is active
   useEffect(() => {
-    if (!selectedMonth) return;
+    if (!selectedMonth || activeTab !== "abhivyakti") return;
     setRegistrationsLoading(true);
     const unsubRegs = subscribeToRegistrations(selectedMonth, (data) => {
       setRegistrations(data);
@@ -79,7 +79,7 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
     return () => {
       if (unsubRegs) unsubRegs();
     };
-  }, [selectedMonth]);
+  }, [selectedMonth, activeTab]);
 
   const loadAll = async () => {
     setIsLoading(true);

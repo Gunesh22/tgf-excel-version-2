@@ -1,6 +1,6 @@
 import {
   collection, addDoc, getDocs, getDoc, doc, setDoc,
-  updateDoc, deleteDoc, query, where, or,
+  updateDoc, deleteDoc, query, where, or, and,
   serverTimestamp, writeBatch, onSnapshot,
   limit, Timestamp, runTransaction, arrayUnion, arrayRemove, orderBy,
   deleteField, increment, startAfter, documentId
@@ -945,11 +945,13 @@ export const deleteAttender = async (id) => {
 export const getAttenderContactCount = async (attenderId) => {
   const q = query(
     collection(db, "contacts"),
-    or(
-      where("assignedTo", "==", attenderId),
-      where("assignedTo", "array-contains", attenderId)
-    ),
-    where("isAssigned", "==", true)
+    and(
+      where("isAssigned", "==", true),
+      or(
+        where("assignedTo", "==", attenderId),
+        where("assignedTo", "array-contains", attenderId)
+      )
+    )
   );
   const snap = await getDocs(q);
   return snap.docs.filter(d => !d.data()._deleted).length;
@@ -1086,6 +1088,7 @@ export const subscribeToCallLogs = (...args) => {
       where("assignedTo", "array-contains", attenderId)
     )
   );
+
   return onSnapshot(q, snap => {
     let logs = snap.docs
       .map(d => {
@@ -3198,6 +3201,21 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
     targetOption = getMonthStr(new Date());
   }
 
+  const cacheKey = `tgf_cache_registrations_${targetOption}`;
+
+  // 1. Immediately emit cached registrations if available
+  try {
+    const cachedStr = localStorage.getItem(cacheKey);
+    if (cachedStr) {
+      const cachedDocs = JSON.parse(cachedStr);
+      if (Array.isArray(cachedDocs) && cachedDocs.length > 0) {
+        finalCallback(cachedDocs);
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to load registrations from local cache:", err);
+  }
+
   const { startMonth, endMonth } = getMonthRange(targetOption);
 
   // Query registrations by registeredYearMonth range to optimize performance
@@ -3211,10 +3229,18 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
     const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     // Sort descending by registeredAt client-side
     docs.sort((a, b) => {
-      const ta = a.registeredAt?.toMillis ? a.registeredAt.toMillis() : 0;
-      const tb = b.registeredAt?.toMillis ? b.registeredAt.toMillis() : 0;
+      const ta = a.registeredAt?.toMillis ? a.registeredAt.toMillis() : (a.registeredAt?.seconds ? a.registeredAt.seconds * 1000 : 0);
+      const tb = b.registeredAt?.toMillis ? b.registeredAt.toMillis() : (b.registeredAt?.seconds ? b.registeredAt.seconds * 1000 : 0);
       return tb - ta;
     });
+
+    // Update local cache
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify(docs));
+    } catch (err) {
+      // Storage quota safety fallback
+    }
+
     finalCallback(docs);
   }, err => console.error("subscribeToRegistrations error:", err));
 };
