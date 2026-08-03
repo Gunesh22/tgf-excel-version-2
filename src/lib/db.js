@@ -3191,6 +3191,62 @@ export const getRegistrationMonths = async () => {
   }
 };
 
+// ─────────────────────────────────────────────
+// INDEXEDDB ASYNC STORAGE (5MB+ Large Cache Support)
+// ─────────────────────────────────────────────
+const IDB_NAME = "TGF_AppCache";
+const IDB_STORE = "registrations_cache";
+
+const openIDB = () => {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined" || !window.indexedDB) {
+      reject("IndexedDB unavailable");
+      return;
+    }
+    const req = window.indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+};
+
+export const getIDBCache = async (key) => {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch (e) {
+    console.warn("IndexedDB read error:", e);
+    return null;
+  }
+};
+
+export const setIDBCache = async (key, data) => {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.put(data, key);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => resolve(false);
+    });
+  } catch (e) {
+    console.warn("IndexedDB write error:", e);
+    return false;
+  }
+};
+
 export const subscribeToRegistrations = (scopeOption, callback) => {
   let targetOption = scopeOption;
   let finalCallback = callback;
@@ -3203,18 +3259,14 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
 
   const cacheKey = `tgf_cache_registrations_${targetOption}`;
 
-  // 1. Immediately emit cached registrations if available
-  try {
-    const cachedStr = localStorage.getItem(cacheKey);
-    if (cachedStr) {
-      const cachedDocs = JSON.parse(cachedStr);
-      if (Array.isArray(cachedDocs) && cachedDocs.length > 0) {
-        finalCallback(cachedDocs);
-      }
+  // 1. Immediately emit cached registrations from IndexedDB if available (0 storage quota limit)
+  getIDBCache(cacheKey).then(cachedDocs => {
+    if (Array.isArray(cachedDocs) && cachedDocs.length > 0) {
+      finalCallback(cachedDocs);
     }
-  } catch (err) {
-    console.warn("Failed to load registrations from local cache:", err);
-  }
+  }).catch(err => {
+    console.warn("Failed to load registrations from IndexedDB cache:", err);
+  });
 
   const { startMonth, endMonth } = getMonthRange(targetOption);
 
@@ -3234,12 +3286,10 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
       return tb - ta;
     });
 
-    // Update local cache
-    try {
-      localStorage.setItem(cacheKey, JSON.stringify(docs));
-    } catch (err) {
-      // Storage quota safety fallback
-    }
+    // Update IndexedDB cache asynchronously
+    setIDBCache(cacheKey, docs).catch(err => {
+      console.warn("Failed to write registrations to IndexedDB:", err);
+    });
 
     finalCallback(docs);
   }, err => console.error("subscribeToRegistrations error:", err));
