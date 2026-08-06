@@ -1166,7 +1166,21 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       }
     }
 
-    if (!isFromHistory && (isNew || isCallAttemptUpdated)) {
+    if (!isFromHistory) {
+      // Compulsory Phone / Mobile Validation
+      const phoneVal = String(targetEdited.Phone || targetEdited.Mobile || targetEdited.phone || targetEdited.mobile || "").trim();
+      if (!phoneVal) {
+        toast.error("Please enter a Phone or Mobile number before saving.", { duration: 4000, position: 'top-center' });
+        return;
+      }
+
+      // Compulsory Khoji Validation
+      const khojiVal = String(targetEdited.Khoji || targetEdited.khoji || "").trim();
+      if (!khojiVal) {
+        toast.error("Please select Khoji status (Yes / Dew drop khoji / No) before saving.", { duration: 4000, position: 'top-center' });
+        return;
+      }
+
       // Compulsory Status Validation
       if (!targetEdited.status || String(targetEdited.status).trim() === "") {
         toast.error("Please select a call status before saving.", { duration: 4000, position: 'top-center' });

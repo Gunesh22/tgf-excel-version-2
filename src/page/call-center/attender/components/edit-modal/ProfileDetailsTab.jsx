@@ -3,6 +3,7 @@ import {
   User, Phone, Hash, MapPin, CheckCircle2, Tag, Plus, MessageSquare, Loader, Clock
 } from "lucide-react";
 import { formatContactName } from "../../utils";
+import CityAutofillInput from "./CityAutofillInput";
 
 export const ProfileDetailsTab = ({
   edited,
@@ -66,7 +67,7 @@ export const ProfileDetailsTab = ({
         {/* Phone */}
         <div className="space-y-1 min-w-0">
           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1 truncate">
-            <Phone size={11} className="text-blue-500 shrink-0" /> Phone
+            <Phone size={11} className="text-blue-500 shrink-0" /> Phone <span className="text-red-500 font-bold ml-0.5">*</span>
             {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1 shrink-0" />}
             {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1 shrink-0" />}
           </label>
@@ -123,9 +124,11 @@ export const ProfileDetailsTab = ({
           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
             <MapPin size={11} className="text-red-500" /> City
           </label>
-          <input
-            value={edited.City || ""}
-            onChange={e => handleChange("City", e.target.value)}
+          <CityAutofillInput
+            cityValue={edited.City || ""}
+            stateValue={edited.State || ""}
+            onChangeCity={val => handleChange("City", val)}
+            onChangeState={val => handleChange("State", val)}
             readOnly={!getEditable("City")}
             className={`w-full px-3 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
               !getEditable("City")
@@ -155,7 +158,7 @@ export const ProfileDetailsTab = ({
         {/* Khoji */}
         <div className="space-y-1 col-span-1 md:col-span-2">
           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-            <CheckCircle2 size={11} className="text-pink-500" /> Khoji
+            <CheckCircle2 size={11} className="text-pink-500" /> Khoji <span className="text-red-500 font-bold ml-0.5">*</span>
           </label>
           <div className="flex items-center gap-2 h-[38px]">
             {(() => {
