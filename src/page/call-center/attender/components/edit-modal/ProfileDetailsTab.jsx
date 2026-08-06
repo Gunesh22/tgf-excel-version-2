@@ -122,7 +122,7 @@ export const ProfileDetailsTab = ({
         {/* City */}
         <div className="space-y-1 min-w-0">
           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-            <MapPin size={11} className="text-red-500" /> City
+            <MapPin size={11} className="text-red-500" /> City <span className="text-red-500 font-bold ml-0.5">*</span>
           </label>
           <CityAutofillInput
             cityValue={edited.City || ""}
@@ -162,15 +162,17 @@ export const ProfileDetailsTab = ({
           </label>
           <div className="flex items-center gap-2 h-[38px]">
             {(() => {
-              const isDew = edited.Khoji === "Dew drop khoji";
-              const isYes = edited.Khoji === "Yes" || isDew;
+              const kVal = String(edited.Khoji || "").toLowerCase().trim();
+              const isDew = kVal === "dew drop khoji";
+              const isYes = kVal === "yes" || isDew;
+              const isNo = kVal === "no";
               const editable = getEditable("Khoji");
               return (
                 <>
                   <button
                     type="button"
                     disabled={!editable}
-                    onClick={() => handleChange("Khoji", isYes ? "No" : "Yes")}
+                    onClick={() => handleChange("Khoji", isYes ? "" : "Yes")}
                     className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition ${
                       isYes
                         ? "bg-emerald-500 border-emerald-500 text-white shadow-sm"
@@ -182,9 +184,9 @@ export const ProfileDetailsTab = ({
                   <button
                     type="button"
                     disabled={!editable}
-                    onClick={() => handleChange("Khoji", isYes ? "No" : "Yes")}
+                    onClick={() => handleChange("Khoji", isNo ? "" : "No")}
                     className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition ${
-                      !isYes
+                      isNo
                         ? "bg-red-500 border-red-500 text-white shadow-sm"
                         : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
                     }`}

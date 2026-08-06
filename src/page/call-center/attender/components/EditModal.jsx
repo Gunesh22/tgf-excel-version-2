@@ -1064,7 +1064,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     if (isIncoming) return true;
     if (addedFields.includes(field)) return true;
     const fLower = field.toLowerCase();
-    return ["source", "called for", "khoji"].includes(fLower) || 
+    return ["source", "called for", "khoji", "city", "state"].includes(fLower) || 
       fLower.includes("asmani") || 
       fLower.includes("aasmani") || 
       fLower.includes("आसमानी") || 
@@ -1178,6 +1178,13 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       const khojiVal = String(targetEdited.Khoji || targetEdited.khoji || "").trim();
       if (!khojiVal) {
         toast.error("Please select Khoji status (Yes / Dew drop khoji / No) before saving.", { duration: 4000, position: 'top-center' });
+        return;
+      }
+
+      // Compulsory City Validation
+      const cityVal = String(targetEdited.City || targetEdited.city || "").trim();
+      if (!cityVal) {
+        toast.error("Please enter a City before saving.", { duration: 4000, position: 'top-center' });
         return;
       }
 
