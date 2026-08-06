@@ -14,12 +14,15 @@ export const CityAutofillInput = ({
   const [suggestions, setSuggestions] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [isFocused, setIsFocused] = useState(false);
+  const isUserTypingRef = useRef(false);
   const containerRef = useRef(null);
   const abortControllerRef = useRef(null);
 
   // Dynamic API search effect with debouncing & cancelation
   useEffect(() => {
-    if (!cityValue || readOnly || cityValue.trim().length < 2) {
+    // Only search API if the input is focused, the user actually typed, and it's not readOnly
+    if (!cityValue || readOnly || !isFocused || !isUserTypingRef.current || cityValue.trim().length < 2) {
       setSuggestions([]);
       setIsOpen(false);
       setIsLoading(false);
@@ -57,13 +60,14 @@ export const CityAutofillInput = ({
         abortControllerRef.current.abort();
       }
     };
-  }, [cityValue, readOnly]);
+  }, [cityValue, readOnly, isFocused]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (containerRef.current && !containerRef.current.contains(e.target)) {
         setIsOpen(false);
+        setIsFocused(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -71,6 +75,7 @@ export const CityAutofillInput = ({
   }, []);
 
   const handleSelect = (item) => {
+    isUserTypingRef.current = false;
     onChangeCity(item.city);
     if (item.state && onChangeState) {
       onChangeState(item.state);
@@ -79,13 +84,16 @@ export const CityAutofillInput = ({
   };
 
   const handleBlur = async () => {
-    // Auto-populate state if city matches an API result and state is empty or different
-    if (cityValue && onChangeState && !stateValue) {
+    // Auto-populate state if user typed a city and state is empty
+    if (isUserTypingRef.current && cityValue && onChangeState && !stateValue) {
       const knownState = await getStateForCity(cityValue);
       if (knownState) {
         onChangeState(knownState);
       }
     }
+    isUserTypingRef.current = false;
+    setIsFocused(false);
+    setIsOpen(false);
   };
 
   const handleKeyDown = (e) => {
@@ -114,10 +122,14 @@ export const CityAutofillInput = ({
           type="text"
           value={cityValue}
           onChange={(e) => {
+            isUserTypingRef.current = true;
             onChangeCity(e.target.value);
           }}
           onFocus={() => {
-            if (cityValue && suggestions.length > 0) setIsOpen(true);
+            setIsFocused(true);
+            if (isUserTypingRef.current && cityValue && suggestions.length > 0) {
+              setIsOpen(true);
+            }
           }}
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
@@ -132,7 +144,7 @@ export const CityAutofillInput = ({
         )}
       </div>
 
-      {isOpen && suggestions.length > 0 && !readOnly && (
+      {isOpen && suggestions.length > 0 && !readOnly && isFocused && (
         <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-2xl shadow-xl max-h-60 overflow-y-auto py-1 animate-in fade-in slide-in-from-top-1 duration-150">
           <div className="px-3 py-1.5 text-[10px] font-black text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-100">
             <span className="flex items-center gap-1">
@@ -170,3 +182,4 @@ export const CityAutofillInput = ({
 };
 
 export default CityAutofillInput;
+
