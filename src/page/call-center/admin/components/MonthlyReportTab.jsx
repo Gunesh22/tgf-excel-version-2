@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { toast } from "react-hot-toast";
 import * as XLSX from "xlsx";
 import {
@@ -8,16 +8,130 @@ import { subscribeToAllCallLogs } from "../../../../lib/db";
 import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp, getCanonicalStatus, getContactPhone, getContactName, getContactCity, getContactKhoji } from "../utils.jsx";
 import { isKhojiAffirmative, isKhojiNegative } from "../../attender/utils.js";
 
-function MonthlySection({ title, children, defaultOpen = true }) {
+function MonthlySection({ title, subtitle, action, children, defaultOpen = true }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
     <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden transition-all duration-300">
-      <button onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-6 py-5 flex items-center justify-between hover:bg-gray-50/50 transition-colors">
-        <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">{title}</h3>
-        {isOpen ? <ChevronDown size={20} className="text-gray-400" /> : <ChevronRight size={20} className="text-gray-400" />}
-      </button>
+      <div className="w-full px-6 py-5 flex items-center justify-between hover:bg-gray-50/50 transition-colors cursor-pointer select-none">
+        <div onClick={() => setIsOpen(!isOpen)} className="flex-1">
+          <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">{title}</h3>
+          {subtitle && <p className="text-xs text-gray-400 mt-0.5 font-semibold">{subtitle}</p>}
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          {action}
+          <button type="button" onClick={() => setIsOpen(!isOpen)} className="p-1 text-gray-400 hover:text-gray-600">
+            {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+          </button>
+        </div>
+      </div>
       {isOpen && <div className="p-6 border-t border-gray-50 bg-white">{children}</div>}
+    </div>
+  );
+}
+
+// ── Formula Info Popover Component ───────────────────────────────────────────
+const HEADER_FORMULAS = {
+  "Percentage (%)": {
+    title: "Percentage Formula",
+    formulas: [
+      { label: "Percentage (%)", formula: "(Category Count ÷ Total Section Calls) × 100" }
+    ]
+  },
+  "Conversion Rate (%)": {
+    title: "Conversion Rate Formula",
+    formulas: [
+      {
+        label: "Conversion Rate (%)",
+        formula: "(Reg.Done Conversions ÷ Valid Responded Attempts*) × 100",
+        note: "*Valid Responded Attempts = Reg.Done + Info Given + Interested + Next Time + Not Interested"
+      }
+    ]
+  },
+  "Incoming Conversion Rate (%)": {
+    title: "Incoming Conversion Rate Formula",
+    formulas: [
+      {
+        label: "Incoming Conversion Rate (%)",
+        formula: "(Incoming Conversions ÷ Incoming Valid Responded Attempts*) × 100",
+        note: "*Valid Responded Attempts = Reg.Done + Info Given + Interested + Next Time + Not Interested"
+      }
+    ]
+  },
+  "Outgoing Conversion Rate (%)": {
+    title: "Outgoing Conversion Rate Formula",
+    formulas: [
+      {
+        label: "Outgoing Conversion Rate (%)",
+        formula: "(Outgoing Conversions ÷ Outgoing Valid Responded Attempts*) × 100",
+        note: "*Valid Responded Attempts = Reg.Done + Info Given + Interested + Next Time + Not Interested"
+      }
+    ]
+  }
+};
+
+function FormulaInfoPopover({ title = "Formula Info", formulas = [], iconOnly = false }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const popoverRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative inline-block text-left font-normal normal-case" ref={popoverRef}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen(!isOpen);
+        }}
+        className={
+          iconOnly
+            ? "p-1 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-full transition-all inline-flex items-center justify-center cursor-pointer shadow-2xs"
+            : "px-2.5 py-1 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-full transition-all inline-flex items-center gap-1.5 text-xs font-bold shadow-xs cursor-pointer"
+        }
+        title={iconOnly ? `View ${title}` : "View Formula Information"}
+      >
+        <Info size={iconOnly ? 13 : 14} className="text-indigo-600" />
+        {!iconOnly && <span>Formula Info</span>}
+      </button>
+
+      {isOpen && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-0 mt-2 w-80 p-4 bg-slate-900 text-white rounded-2xl shadow-xl z-50 border border-slate-700 text-xs normal-case font-normal"
+        >
+          <div className="flex justify-between items-center mb-3 pb-2 border-b border-slate-800">
+            <span className="font-extrabold text-indigo-300 text-sm flex items-center gap-1.5">
+              <Info size={16} className="text-indigo-400" /> {title}
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="text-slate-400 hover:text-white p-1 rounded cursor-pointer"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <div className="space-y-3">
+            {formulas.map((item, idx) => (
+              <div key={idx}>
+                {item.label && <div className="text-indigo-300 font-bold mb-1">{item.label}</div>}
+                <div className="bg-slate-800/90 p-2 rounded-xl text-slate-200 font-mono text-[11px] border border-slate-700/60 leading-relaxed">
+                  {item.formula}
+                </div>
+                {item.note && <div className="text-[10px] text-slate-400 mt-1 italic">{item.note}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -28,7 +142,42 @@ function MonthlyTable({ headers, rows, totals, formatValue }) {
       <table className="w-full text-sm text-left">
         <thead className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-100">
           <tr>
-            {headers.map(h => <th key={h} className="px-6 py-3">{h}</th>)}
+            {headers.map(h => {
+              const formulaInfo = HEADER_FORMULAS[h];
+              let firstLine = h;
+              let secondLine = "";
+              if (h.startsWith("Incoming ")) {
+                firstLine = "Incoming";
+                secondLine = h.replace("Incoming ", "");
+              } else if (h.startsWith("Outgoing ")) {
+                firstLine = "Outgoing";
+                secondLine = h.replace("Outgoing ", "");
+              } else if (h.startsWith("Total ") && h !== "Total Calls") {
+                firstLine = "Total";
+                secondLine = h.replace("Total ", "");
+              } else if (h.startsWith("Overall ")) {
+                firstLine = "Overall";
+                secondLine = h.replace("Overall ", "");
+              }
+
+              return (
+                <th key={h} className="px-6 py-3 whitespace-nowrap">
+                  <div className="flex items-center gap-1.5">
+                    <span>
+                      {firstLine}
+                      {secondLine && <><br />{secondLine}</>}
+                    </span>
+                    {formulaInfo && (
+                      <FormulaInfoPopover
+                        title={formulaInfo.title}
+                        formulas={formulaInfo.formulas}
+                        iconOnly={true}
+                      />
+                    )}
+                  </div>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
@@ -525,6 +674,10 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totalConversions: 0,
       incomingCalls: 0,
       outgoingCalls: 0,
+      incomingConnectedCalls: 0,
+      incomingNotConnectedCalls: 0,
+      outgoingConnectedCalls: 0,
+      outgoingNotConnectedCalls: 0,
       incomingConversions: 0,
       outgoingConversions: 0,
       queryCalls: 0,
@@ -532,13 +685,27 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
     allAttempts.forEach(c => {
       stats.totalCalls++;
-      if (CONNECTED_STATUSES.includes(c.status)) {
-        stats.connectedCalls++;
-      } else if (NOT_CONNECTED_STATUSES.includes(c.status)) {
-        stats.notConnectedCalls++;
-      }
+      const isConnected = CONNECTED_STATUSES.includes(c.status);
+      const isNotConnected = NOT_CONNECTED_STATUSES.includes(c.status);
       const type = (c.callType || "").toLowerCase();
       const isIncoming = type.startsWith("incoming");
+
+      if (isConnected) {
+        stats.connectedCalls++;
+        if (isIncoming) {
+          stats.incomingConnectedCalls++;
+        } else {
+          stats.outgoingConnectedCalls++;
+        }
+      } else if (isNotConnected) {
+        stats.notConnectedCalls++;
+        if (isIncoming) {
+          stats.incomingNotConnectedCalls++;
+        } else {
+          stats.outgoingNotConnectedCalls++;
+        }
+      }
+
       if (c.status === "Reg.Done") {
         stats.totalConversions++;
         if (isIncoming) {
@@ -581,7 +748,11 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       { metric: "Connected Calls", value: metrics.connectedCalls },
       { metric: "Not Connected Calls", value: metrics.notConnectedCalls },
       { metric: "Incoming Calls", value: metrics.incomingCalls },
+      { metric: "Incoming Connected Calls", value: metrics.incomingConnectedCalls },
+      { metric: "Incoming Not Connected Calls", value: metrics.incomingNotConnectedCalls },
       { metric: "Outgoing Calls", value: metrics.outgoingCalls },
+      { metric: "Outgoing Connected Calls", value: metrics.outgoingConnectedCalls },
+      { metric: "Outgoing Not Connected Calls", value: metrics.outgoingNotConnectedCalls },
       { metric: "Query Calls", value: metrics.queryCalls },
       { metric: "Direct Registrations / Conversions (Reg.Done)", value: metrics.totalConversions },
       { metric: "Incoming Conversions (Reg.Done)", value: metrics.incomingConversions },
@@ -1080,7 +1251,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     return totals;
   }, [sourceBreakdown]);
 
-  const sourceVsCalledForBreakdown = React.useMemo(() => {
+  const calledForVsSourceBreakdown = React.useMemo(() => {
     const map = {};
     allAttempts.forEach(c => {
       const src = String(c.source || "").trim() || "Unknown";
@@ -1092,11 +1263,11 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         if (selectedCalledFors.length > 0 && !selectedCalledFors.includes(prog)) {
           return;
         }
-        const key = `${src} &&& ${prog}`;
+        const key = `${prog} &&& ${src}`;
         if (!map[key]) {
           map[key] = { 
-            source: src, 
             calledFor: prog, 
+            source: src, 
             total: 0, 
             incoming: 0, 
             outgoing: 0, 
@@ -1137,11 +1308,11 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       });
     });
 
-    const sourceTotals = {};
+    const calledForTotals = {};
     const rows = Object.values(map).map(a => {
       const row = {
-        "Source": a.source,
         "Called For": a.calledFor,
+        "Source": a.source,
         "Total Calls": a.total,
         "Incoming Calls": a.incoming,
         "Outgoing Calls": a.outgoing,
@@ -1150,53 +1321,53 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         "Outgoing Conversions": a.outgoingConversions,
         "Incoming Denominator": a.incomingDenominator,
         "Outgoing Denominator": a.outgoingDenominator,
-        "Incoming Conv. Rate (%)": a.incomingDenominator ? `${((a.incomingConversions / a.incomingDenominator) * 100).toFixed(1)}%` : "0.0%",
-        "Outgoing Conv. Rate (%)": a.outgoingDenominator ? `${((a.outgoingConversions / a.outgoingDenominator) * 100).toFixed(1)}%` : "0.0%"
+        "Incoming Conversion Rate (%)": a.incomingDenominator ? `${((a.incomingConversions / a.incomingDenominator) * 100).toFixed(1)}%` : "0.0%",
+        "Outgoing Conversion Rate (%)": a.outgoingDenominator ? `${((a.outgoingConversions / a.outgoingDenominator) * 100).toFixed(1)}%` : "0.0%"
       };
-      const src = row["Source"];
-      sourceTotals[src] = (sourceTotals[src] || 0) + row["Total Calls"];
+      const prog = row["Called For"];
+      calledForTotals[prog] = (calledForTotals[prog] || 0) + row["Total Calls"];
       return row;
     });
 
     return rows.sort((a, b) => {
-      const aSrc = a["Source"];
-      const bSrc = b["Source"];
+      const aProg = a["Called For"];
+      const bProg = b["Called For"];
       
-      const aEnd = shouldGoToEnd(aSrc);
-      const bEnd = shouldGoToEnd(bSrc);
+      const aEnd = shouldGoToEnd(aProg);
+      const bEnd = shouldGoToEnd(bProg);
       
       if (aEnd && !bEnd) return 1;
       if (!aEnd && bEnd) return -1;
       
-      if (aSrc !== bSrc) {
-        const aVol = sourceTotals[aSrc] || 0;
-        const bVol = sourceTotals[bSrc] || 0;
+      if (aProg !== bProg) {
+        const aVol = calledForTotals[aProg] || 0;
+        const bVol = calledForTotals[bProg] || 0;
         if (bVol !== aVol) {
           return bVol - aVol;
         }
-        return aSrc.localeCompare(bSrc);
+        return aProg.localeCompare(bProg);
       }
       
       return b["Total Calls"] - a["Total Calls"];
     });
   }, [allAttempts, selectedCalledFors]);
 
-  const sourceVsCalledForBreakdownTotals = React.useMemo(() => {
+  const calledForVsSourceBreakdownTotals = React.useMemo(() => {
     const totals = { 
-      "Source": "Total", 
-      "Called For": "-", 
+      "Called For": "Total", 
+      "Source": "-", 
       "Total Calls": 0, 
       "Incoming Calls": 0, 
       "Outgoing Calls": 0, 
       "Total Conversions": 0, 
       "Incoming Conversions": 0,
       "Outgoing Conversions": 0,
-      "Incoming Conv. Rate (%)": "0.0%", 
-      "Outgoing Conv. Rate (%)": "0.0%" 
+      "Incoming Conversion Rate (%)": "0.0%", 
+      "Outgoing Conversion Rate (%)": "0.0%" 
     };
     let totalIncomingDenominator = 0;
     let totalOutgoingDenominator = 0;
-    sourceVsCalledForBreakdown.forEach(row => {
+    calledForVsSourceBreakdown.forEach(row => {
       totals["Total Calls"] += row["Total Calls"];
       totals["Incoming Calls"] += row["Incoming Calls"];
       totals["Outgoing Calls"] += row["Outgoing Calls"];
@@ -1206,10 +1377,10 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       totalIncomingDenominator += row["Incoming Denominator"] || 0;
       totalOutgoingDenominator += row["Outgoing Denominator"] || 0;
     });
-    totals["Incoming Conv. Rate (%)"] = totalIncomingDenominator ? `${((totals["Incoming Conversions"] / totalIncomingDenominator) * 100).toFixed(1)}%` : "0.0%";
-    totals["Outgoing Conv. Rate (%)"] = totalOutgoingDenominator ? `${((totals["Outgoing Conversions"] / totalOutgoingDenominator) * 100).toFixed(1)}%` : "0.0%";
+    totals["Incoming Conversion Rate (%)"] = totalIncomingDenominator ? `${((totals["Incoming Conversions"] / totalIncomingDenominator) * 100).toFixed(1)}%` : "0.0%";
+    totals["Outgoing Conversion Rate (%)"] = totalOutgoingDenominator ? `${((totals["Outgoing Conversions"] / totalOutgoingDenominator) * 100).toFixed(1)}%` : "0.0%";
     return totals;
-  }, [sourceVsCalledForBreakdown]);
+  }, [calledForVsSourceBreakdown]);
 
 
 
@@ -1297,9 +1468,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
     const wsSource = XLSX.utils.json_to_sheet(cleanRows([...sourceBreakdown, sourceBreakdownTotals]));
     XLSX.utils.book_append_sheet(wb, wsSource, "Source Breakdowns");
 
-    // 9. Source vs Called For Breakdown
-    const wsSourceVsCalledFor = XLSX.utils.json_to_sheet(cleanRows([...sourceVsCalledForBreakdown, sourceVsCalledForBreakdownTotals]));
-    XLSX.utils.book_append_sheet(wb, wsSourceVsCalledFor, "Source vs Called For");
+    // 9. Called For vs Source Breakdown
+    const wsCalledForVsSource = XLSX.utils.json_to_sheet(cleanRows([...calledForVsSourceBreakdown, calledForVsSourceBreakdownTotals]));
+    XLSX.utils.book_append_sheet(wb, wsCalledForVsSource, "Called For vs Source");
 
     // 10. Detailed Call Logs (Grouped by Mobile Number: consecutive rows per number, chronological history)
     const detailedLogs = [...allAttempts]
@@ -1549,14 +1720,44 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
           </div>
 
           {/* Collapsible Sections */}
-          <MonthlySection title="Section 1: General KPIs Summary">
+          <MonthlySection
+            title="Section 1: General KPIs Summary"
+            action={
+              <FormulaInfoPopover
+                title="KPI Summary Information"
+                formulas={[
+                  {
+                    label: "Connected Calls",
+                    formula: "Calls with status: Info Given, Interested, Next Time, Reg.Done, Query, Not Interested, etc."
+                  },
+                  {
+                    label: "Not Connected Calls",
+                    formula: "Calls with status: Busy, Switched Off, Not Reachable, No Answer, Invalid Number, Wrong Number, etc."
+                  }
+                ]}
+              />
+            }
+          >
             <MonthlyTable
               headers={["metric", "value"]}
               rows={section1}
             />
           </MonthlySection>
 
-          <MonthlySection title="Section 2: Connected Calls Status Breakdowns">
+          <MonthlySection
+            title="Section 2: Connected Calls Status Breakdowns"
+            action={
+              <FormulaInfoPopover
+                title="Connected Outcome Formula"
+                formulas={[
+                  {
+                    label: "Percentage (%)",
+                    formula: "(Status Calls Count ÷ Total Connected Calls) × 100"
+                  }
+                ]}
+              />
+            }
+          >
             <div className="flex items-center gap-2 mb-4 p-4 bg-emerald-50 text-emerald-800 text-xs font-bold rounded-2xl">
               <Info size={16} />
               <span>These are calls where an attender was able to speak to the contact (e.g. Info given, Interested, Next time).</span>
@@ -1567,7 +1768,20 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             />
           </MonthlySection>
 
-          <MonthlySection title="Section 3: Not Connected Calls Breakdowns">
+          <MonthlySection
+            title="Section 3: Not Connected Calls Breakdowns"
+            action={
+              <FormulaInfoPopover
+                title="Not Connected Outcome Formula"
+                formulas={[
+                  {
+                    label: "Percentage (%)",
+                    formula: "(Status Calls Count ÷ Total Not Connected Calls) × 100"
+                  }
+                ]}
+              />
+            }
+          >
             <div className="flex items-center gap-2 mb-4 p-4 bg-amber-50 text-amber-800 text-xs font-bold rounded-2xl">
               <Info size={16} />
               <span>These are attempts where no direct communication happened (e.g. Busy, Switched Off, Called by mistake).</span>
@@ -1578,7 +1792,21 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             />
           </MonthlySection>
 
-          <MonthlySection title="Section 4: Called For Program Breakdowns">
+          <MonthlySection
+            title="Section 4: Called For Program Breakdowns"
+            action={
+              <FormulaInfoPopover
+                title="Program Conversion Rate Formula"
+                formulas={[
+                  {
+                    label: "Conversion Rate (%)",
+                    formula: "(Reg.Done Conversions ÷ Valid Responded Attempts*) × 100",
+                    note: "*Valid Responded Attempts include: Reg.Done, Info Given, Interested, Next Time, Not Interested."
+                  }
+                ]}
+              />
+            }
+          >
             <MonthlyTable
               headers={["Called For", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Query Calls", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
               rows={calledForBreakdown}
@@ -1586,7 +1814,21 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             />
           </MonthlySection>
 
-          <MonthlySection title="Section 5: Source-wise Breakdowns & Conversions">
+          <MonthlySection
+            title="Section 5: Source-wise Breakdowns & Conversions"
+            action={
+              <FormulaInfoPopover
+                title="Source Conversion Rate Formula"
+                formulas={[
+                  {
+                    label: "Conversion Rate (%)",
+                    formula: "(Reg.Done Conversions ÷ Valid Responded Attempts*) × 100",
+                    note: "*Valid Responded Attempts include: Reg.Done, Info Given, Interested, Next Time, Not Interested."
+                  }
+                ]}
+              />
+            }
+          >
             <MonthlyTable
               headers={["Source", "Total Calls", "Connected", "Not Connected", "Incoming", "Outgoing", "Query Calls", "Reg.Done (Conversions)", "Incoming Conversions", "Outgoing Conversions", "Conversion Rate (%)"]}
               rows={sourceBreakdown}
@@ -1594,16 +1836,48 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             />
           </MonthlySection>
 
-          <MonthlySection title="Section 6: Source vs Called For Incoming & Outgoing Breakdown">
+          <MonthlySection
+            title="Section 6: Called For vs Source Incoming & Outgoing Breakdown"
+            action={
+              <FormulaInfoPopover
+                title="Called For vs Source Conversion Rate Formulas"
+                formulas={[
+                  {
+                    label: "Incoming Conversion Rate (%)",
+                    formula: "(Incoming Conversions ÷ Incoming Valid Responded Attempts*) × 100"
+                  },
+                  {
+                    label: "Outgoing Conversion Rate (%)",
+                    formula: "(Outgoing Conversions ÷ Outgoing Valid Responded Attempts*) × 100",
+                    note: "*Valid Responded Attempts include: Reg.Done, Info Given, Interested, Next Time, Not Interested."
+                  }
+                ]}
+              />
+            }
+          >
             <MonthlyTable
-              headers={["Source", "Called For", "Total Calls", "Incoming Calls", "Outgoing Calls", "Total Conversions", "Incoming Conversions", "Outgoing Conversions", "Incoming Conv. Rate (%)", "Outgoing Conv. Rate (%)"]}
-              rows={sourceVsCalledForBreakdown}
-              totals={sourceVsCalledForBreakdownTotals}
+              headers={["Called For", "Source", "Total Calls", "Incoming Calls", "Outgoing Calls", "Total Conversions", "Incoming Conversions", "Outgoing Conversions", "Incoming Conversion Rate (%)", "Outgoing Conversion Rate (%)"]}
+              rows={calledForVsSourceBreakdown}
+              totals={calledForVsSourceBreakdownTotals}
             />
           </MonthlySection>
 
 
-          <MonthlySection title="🏆 Attender Productivity Leaderboard">
+          <MonthlySection
+            title="🏆 Attender Productivity Leaderboard"
+            action={
+              <FormulaInfoPopover
+                title="Attender Conversion Rate Formula"
+                formulas={[
+                  {
+                    label: "Conversion Rate (%)",
+                    formula: "(Reg.Done Conversions ÷ Attender Valid Responded Attempts*) × 100",
+                    note: "*Valid Responded Attempts include: Reg.Done, Info Given, Interested, Next Time, Not Interested."
+                  }
+                ]}
+              />
+            }
+          >
             {attenderPerformance.length === 0 ? (
               <div className="text-center py-6 text-slate-400 font-bold text-sm">No attender history logs found for this period.</div>
             ) : (

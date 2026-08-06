@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from "react";
-import { User, PhoneCall, CheckCircle2, TrendingUp, Clock, Sun, AlertCircle, ChevronDown } from "lucide-react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
+import { User, PhoneCall, CheckCircle2, TrendingUp, Clock, Sun, AlertCircle, ChevronDown, Info, X } from "lucide-react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, getCanonicalStatus } from "../utils";
 
@@ -238,6 +238,73 @@ function filterAttemptsByDate(attempts, range, customStart, customEnd) {
   });
 }
 
+function FormulaInfoPopover({ title = "Formula Info", formulas = [], iconOnly = false }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const popoverRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative inline-block text-left font-normal normal-case" ref={popoverRef}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen(!isOpen);
+        }}
+        className={
+          iconOnly
+            ? "p-1 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-full transition-all inline-flex items-center justify-center cursor-pointer shadow-2xs"
+            : "px-2.5 py-1 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-full transition-all inline-flex items-center gap-1.5 text-xs font-bold shadow-xs cursor-pointer"
+        }
+        title={iconOnly ? `View ${title}` : "View Formula Information"}
+      >
+        <Info size={iconOnly ? 13 : 14} className="text-indigo-600" />
+        {!iconOnly && <span>Formula Info</span>}
+      </button>
+
+      {isOpen && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-0 mt-2 w-80 p-4 bg-slate-900 text-white rounded-2xl shadow-xl z-50 border border-slate-700 text-xs normal-case font-normal"
+        >
+          <div className="flex justify-between items-center mb-3 pb-2 border-b border-slate-800">
+            <span className="font-extrabold text-indigo-300 text-sm flex items-center gap-1.5">
+              <Info size={16} className="text-indigo-400" /> {title}
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="text-slate-400 hover:text-white p-1 rounded cursor-pointer"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <div className="space-y-3">
+            {formulas.map((item, idx) => (
+              <div key={idx}>
+                {item.label && <div className="text-indigo-300 font-bold mb-1">{item.label}</div>}
+                <div className="bg-slate-800/90 p-2 rounded-xl text-slate-200 font-mono text-[11px] border border-slate-700/60 leading-relaxed">
+                  {item.formula}
+                </div>
+                {item.note && <div className="text-[10px] text-slate-400 mt-1 italic">{item.note}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Small stat number block ──────────────────────────────────────────────────
 const Stat = ({ label, value, accent = "text-slate-800", sub }) => (
   <div className="flex flex-col">
@@ -414,7 +481,14 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
       {/* ── Row 2: Rates + Today + Callbacks ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col gap-0.5">
-          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Connection Rate</span>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Connection Rate</span>
+            <FormulaInfoPopover
+              title="Connection Rate Formula"
+              formulas={[{ label: "Connection Rate (%)", formula: "(Total Connected Calls ÷ Total Called Attempts) × 100" }]}
+              iconOnly={true}
+            />
+          </div>
           <span className="text-3xl font-black text-slate-800">{stats.connectionRate}%</span>
           <div className="w-full bg-gray-100 h-1.5 rounded-full mt-2">
             <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: `${stats.connectionRate}%` }} />
@@ -422,7 +496,20 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
         </div>
 
         <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col gap-0.5">
-          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Conversion Rate</span>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Conversion Rate</span>
+            <FormulaInfoPopover
+              title="Conversion Rate Formula"
+              formulas={[
+                {
+                  label: "Conversion Rate (%)",
+                  formula: "(Reg.Done Conversions ÷ Valid Responded Attempts*) × 100",
+                  note: "*Valid Responded Attempts = Reg.Done + Info Given + Interested + Next Time + Not Interested"
+                }
+              ]}
+              iconOnly={true}
+            />
+          </div>
           <span className="text-3xl font-black text-slate-800">{stats.conversionRate}%</span>
           <div className="w-full bg-gray-100 h-1.5 rounded-full mt-2">
             <div className="bg-indigo-500 h-full rounded-full transition-all" style={{ width: `${stats.conversionRate}%` }} />

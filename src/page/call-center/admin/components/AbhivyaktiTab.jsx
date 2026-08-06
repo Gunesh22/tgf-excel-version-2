@@ -5,17 +5,14 @@ import {
   Download, Calendar, TrendingUp, UserCheck, Smile, Info, Search, X, ChevronDown, Check, ChevronRight
 } from "lucide-react";
 import { subscribeToRegistrations, getRegistrationMonths } from "../../../../lib/db";
+import { CONNECTED_STATUSES, getContactKhoji } from "../utils.jsx";
 
-function ReportSection({ title, subtitle, badge, children, defaultOpen = true }) {
+function ReportSection({ title, subtitle, badge, action, children, defaultOpen = true }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
     <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden transition-all duration-300">
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full p-6 text-left flex items-center justify-between hover:bg-gray-50/50 transition-colors cursor-pointer"
-      >
-        <div>
+      <div className="w-full p-6 text-left flex items-center justify-between hover:bg-gray-50/50 transition-colors cursor-pointer select-none">
+        <div onClick={() => setIsOpen(!isOpen)} className="flex-1">
           <div className="flex items-center gap-3">
             <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">{title}</h3>
             {badge && (
@@ -26,9 +23,82 @@ function ReportSection({ title, subtitle, badge, children, defaultOpen = true })
           </div>
           {subtitle && <p className="text-xs text-gray-400 mt-0.5 font-semibold">{subtitle}</p>}
         </div>
-        {isOpen ? <ChevronDown size={20} className="text-gray-400 shrink-0" /> : <ChevronRight size={20} className="text-gray-400 shrink-0" />}
-      </button>
+        <div className="flex items-center gap-3 shrink-0">
+          {action}
+          <button type="button" onClick={() => setIsOpen(!isOpen)} className="p-1 text-gray-400 hover:text-gray-600">
+            {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+          </button>
+        </div>
+      </div>
       {isOpen && <div className="px-6 pb-6 pt-2 border-t border-gray-100 bg-white">{children}</div>}
+    </div>
+  );
+}
+
+// ── Formula Info Popover ──────────────────────────────────────────────────────
+function FormulaInfoPopover({ title = "Formula Info", formulas = [], iconOnly = false }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const popoverRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative inline-block text-left font-normal normal-case" ref={popoverRef}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen(!isOpen);
+        }}
+        className={
+          iconOnly
+            ? "p-1 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-full transition-all inline-flex items-center justify-center cursor-pointer shadow-2xs"
+            : "px-2.5 py-1 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-full transition-all inline-flex items-center gap-1.5 text-xs font-bold shadow-xs cursor-pointer"
+        }
+        title={iconOnly ? `View ${title}` : "View Formula Information"}
+      >
+        <Info size={iconOnly ? 13 : 14} className="text-indigo-600" />
+        {!iconOnly && <span>Formula Info</span>}
+      </button>
+
+      {isOpen && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-0 mt-2 w-80 p-4 bg-slate-900 text-white rounded-2xl shadow-xl z-50 border border-slate-700 text-xs normal-case font-normal"
+        >
+          <div className="flex justify-between items-center mb-3 pb-2 border-b border-slate-800">
+            <span className="font-extrabold text-indigo-300 text-sm flex items-center gap-1.5">
+              <Info size={16} className="text-indigo-400" /> {title}
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="text-slate-400 hover:text-white p-1 rounded cursor-pointer"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <div className="space-y-3">
+            {formulas.map((item, idx) => (
+              <div key={idx}>
+                {item.label && <div className="text-indigo-300 font-bold mb-1">{item.label}</div>}
+                <div className="bg-slate-800/90 p-2 rounded-xl text-slate-200 font-mono text-[11px] border border-slate-700/60 leading-relaxed">
+                  {item.formula}
+                </div>
+                {item.note && <div className="text-[10px] text-slate-400 mt-1 italic">{item.note}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -410,41 +480,112 @@ export default function AbhivyaktiTab({
       const name = r.convertedBy || r.attenderName;
       if (!name || name === "Unknown") return;
       if (!map[name]) {
-        map[name] = { name, incoming: 0, outgoing: 0, count: 0 };
+        map[name] = {
+          name,
+          incomingConversions: 0,
+          outgoingConversions: 0,
+          count: 0,
+          incomingConnected: 0,
+          outgoingConnected: 0
+        };
       }
       const callType = (r.callType || "").toLowerCase();
-      if (callType === "incoming") {
-        map[name].incoming++;
-      } else if (callType === "outgoing") {
-        map[name].outgoing++;
+      const isIncoming = callType.startsWith("incoming");
+
+      if (isIncoming) {
+        map[name].incomingConversions++;
+      } else {
+        map[name].outgoingConversions++;
       }
       map[name].count++;
+
+      const rStatus = r.status || r.callStatus || "Reg.Done";
+      const isRConnected = CONNECTED_STATUSES.includes(rStatus);
+
+      let historyIncConn = 0;
+      let historyOutConn = 0;
+      if (Array.isArray(r.history) && r.history.length > 0) {
+        r.history.forEach(h => {
+          const hType = (h.callType || h.type || callType).toLowerCase();
+          const hStatus = h.status || h.callStatus || rStatus;
+          if (CONNECTED_STATUSES.includes(hStatus)) {
+            if (hType.startsWith("incoming")) historyIncConn++;
+            else historyOutConn++;
+          }
+        });
+      }
+
+      if (historyIncConn === 0 && isIncoming && isRConnected) historyIncConn = 1;
+      if (historyOutConn === 0 && !isIncoming && isRConnected) historyOutConn = 1;
+
+      map[name].incomingConnected += Math.max(historyIncConn, isIncoming ? 1 : 0);
+      map[name].outgoingConnected += Math.max(historyOutConn, !isIncoming ? 1 : 0);
     });
 
-    return Object.values(map).map(a => ({
-      "Attender Name": a.name,
-      "Incoming Conversions": a.incoming,
-      "Outgoing Conversions": a.outgoing,
-      "Total Conversions": a.count
-    })).sort((a, b) => b["Total Conversions"] - a["Total Conversions"]);
+    return Object.values(map).map(a => {
+      const incConn = a.incomingConnected;
+      const outConn = a.outgoingConnected;
+      const totalConn = incConn + outConn;
+
+      const incRateNum = incConn > 0 ? (a.incomingConversions / incConn) * 100 : 0;
+      const outRateNum = outConn > 0 ? (a.outgoingConversions / outConn) * 100 : 0;
+      const totalRateNum = totalConn > 0 ? (a.count / totalConn) * 100 : 0;
+
+      return {
+        "Attender Name": a.name,
+        "Incoming Conversions": a.incomingConversions,
+        "Incoming Connected": incConn,
+        "Incoming Conversion Rate (%)": `${incRateNum.toFixed(1)}%`,
+        "Outgoing Conversions": a.outgoingConversions,
+        "Outgoing Connected": outConn,
+        "Outgoing Conversion Rate (%)": `${outRateNum.toFixed(1)}%`,
+        "Total Conversions": a.count,
+        "Total Connected": totalConn,
+        "Overall Conversion Rate (%)": `${totalRateNum.toFixed(1)}%`
+      };
+    }).sort((a, b) => b["Total Conversions"] - a["Total Conversions"]);
   }, [filteredRegistrations]);
 
   const attenderPerformanceTotals = useMemo(() => {
     const totals = {
       "Attender Name": "Total Assisted",
       "Incoming Conversions": 0,
+      "Incoming Connected": 0,
+      "Incoming Conversion Rate (%)": "0.0%",
       "Outgoing Conversions": 0,
-      "Total Conversions": 0
+      "Outgoing Connected": 0,
+      "Outgoing Conversion Rate (%)": "0.0%",
+      "Total Conversions": 0,
+      "Total Connected": 0,
+      "Overall Conversion Rate (%)": "0.0%"
     };
     attenderPerformance.forEach(row => {
       totals["Incoming Conversions"] += row["Incoming Conversions"];
+      totals["Incoming Connected"] += row["Incoming Connected"];
       totals["Outgoing Conversions"] += row["Outgoing Conversions"];
+      totals["Outgoing Connected"] += row["Outgoing Connected"];
       totals["Total Conversions"] += row["Total Conversions"];
+      totals["Total Connected"] += row["Total Connected"];
     });
+
+    const incRate = totals["Incoming Connected"] > 0
+      ? ((totals["Incoming Conversions"] / totals["Incoming Connected"]) * 100).toFixed(1)
+      : "0.0";
+    const outRate = totals["Outgoing Connected"] > 0
+      ? ((totals["Outgoing Conversions"] / totals["Outgoing Connected"]) * 100).toFixed(1)
+      : "0.0";
+    const totalRate = totals["Total Connected"] > 0
+      ? ((totals["Total Conversions"] / totals["Total Connected"]) * 100).toFixed(1)
+      : "0.0";
+
+    totals["Incoming Conversion Rate (%)"] = `${incRate}%`;
+    totals["Outgoing Conversion Rate (%)"] = `${outRate}%`;
+    totals["Overall Conversion Rate (%)"] = `${totalRate}%`;
+
     return totals;
   }, [attenderPerformance]);
 
-  // Breakdown table for Called For + Attender Name + Call Type (Incoming/Outgoing) + Conversions Count
+  // Breakdown table for Called For + Attender Name + Khoji Type + Call Type (Incoming/Outgoing) + Conversions Count
   const calledForAttenderBreakdown = useMemo(() => {
     const map = {};
     filteredRegistrations.forEach(r => {
@@ -455,25 +596,29 @@ export default function AbhivyaktiTab({
       if (calledForTags.length === 0) calledForTags.push("Unspecified");
 
       const attender = r.convertedBy || r.attenderName || "Direct / Online";
+      const khoji = getContactKhoji(r) || "No";
       const callType = (r.callType || "").toLowerCase();
+      const isIncoming = callType.startsWith("incoming");
 
       calledForTags.forEach(tag => {
-        const key = `${tag}___${attender}`;
+        const key = `${attender}___${tag}___${khoji}`;
         if (!map[key]) {
           map[key] = {
             calledFor: tag,
             attenderName: attender,
-            incoming: 0,
-            outgoing: 0,
+            khojiType: khoji,
+            incomingConversions: 0,
+            outgoingConversions: 0,
             total: 0
           };
         }
-        if (callType === "incoming") {
-          map[key].incoming++;
-        } else if (callType === "outgoing") {
-          map[key].outgoing++;
+        const item = map[key];
+        if (isIncoming) {
+          item.incomingConversions++;
+        } else {
+          item.outgoingConversions++;
         }
-        map[key].total++;
+        item.total++;
       });
     });
 
@@ -481,8 +626,9 @@ export default function AbhivyaktiTab({
       .map(item => ({
         "Converted By (Attender)": item.attenderName,
         "Called For": item.calledFor,
-        "Incoming Conversions": item.incoming,
-        "Outgoing Conversions": item.outgoing,
+        "Khoji Type": item.khojiType,
+        "Incoming Conversions": item.incomingConversions,
+        "Outgoing Conversions": item.outgoingConversions,
         "Total Conversions": item.total
       }))
       .sort((a, b) => {
@@ -490,14 +636,17 @@ export default function AbhivyaktiTab({
         if (attenderComp !== 0) return attenderComp;
         const cfComp = a["Called For"].localeCompare(b["Called For"]);
         if (cfComp !== 0) return cfComp;
+        const khojiComp = a["Khoji Type"].localeCompare(b["Khoji Type"]);
+        if (khojiComp !== 0) return khojiComp;
         return b["Total Conversions"] - a["Total Conversions"];
       });
   }, [filteredRegistrations]);
 
   const calledForAttenderTotals = useMemo(() => {
     const totals = {
-      "Called For": "Total",
-      "Converted By (Attender)": "-",
+      "Converted By (Attender)": "Total",
+      "Called For": "-",
+      "Khoji Type": "-",
       "Incoming Conversions": 0,
       "Outgoing Conversions": 0,
       "Total Conversions": 0
@@ -526,6 +675,7 @@ export default function AbhivyaktiTab({
       const convertedByVal = r.convertedBy || "Direct / Online";
       const callsDoneVal = r.callCount !== undefined ? r.callCount : (r.history ? r.history.length : 0);
       const calledForVal = r.calledFor || r["Called For"] || "";
+      const khojiVal = getContactKhoji(r) || "No";
       const sourceVal = r.conversionSource || r.Source || r.source || "";
       const callTypeVal = r.callType || "";
 
@@ -537,6 +687,7 @@ export default function AbhivyaktiTab({
         "Converted By": convertedByVal,
         "Calls Done": callsDoneVal,
         "Called For": calledForVal,
+        "Khoji Type": khojiVal,
         "Source": sourceVal,
         "Call Type": callTypeVal
       };
@@ -765,7 +916,20 @@ export default function AbhivyaktiTab({
           </div>
 
           {/* Source breakdown */}
-          <ReportSection title="Registration Channels Distribution">
+          <ReportSection
+            title="Registration Channels Distribution"
+            action={
+              <FormulaInfoPopover
+                title="Registration Percentage Formula"
+                formulas={[
+                  {
+                    label: "Channel Registration Percentage (%)",
+                    formula: "(Source Registration Count ÷ Total Registrations) × 100"
+                  }
+                ]}
+              />
+            }
+          >
                 <div className="overflow-x-auto rounded-2xl border border-gray-100">
                   <table className="w-full text-sm text-left">
                     <thead className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-100">
@@ -790,47 +954,122 @@ export default function AbhivyaktiTab({
 
               {/* Attender Productivity */}
               {attenderPerformance.length > 0 && (
-                <ReportSection title="Attender Assisted Conversions">
-                  <div className="overflow-x-auto rounded-2xl border border-gray-100 max-h-[350px] overflow-y-auto">
+                <ReportSection
+                  title="Attender Assisted Conversions"
+                  subtitle="Conversion volume and conversion rates calculated from connected incoming & outgoing calls"
+                  action={
+                    <FormulaInfoPopover
+                      title="Attender Conversion Rate Formulas"
+                      formulas={[
+                        {
+                          label: "Incoming Conversion Rate (%)",
+                          formula: "(Incoming Conversions ÷ Total Incoming Connected Calls) × 100"
+                        },
+                        {
+                          label: "Outgoing Conversion Rate (%)",
+                          formula: "(Outgoing Conversions ÷ Total Outgoing Connected Calls) × 100"
+                        },
+                        {
+                          label: "Overall Conversion Rate (%)",
+                          formula: "(Total Conversions ÷ Total Connected Calls) × 100"
+                        }
+                      ]}
+                    />
+                  }
+                >
+                  <div className="overflow-x-auto rounded-2xl border border-gray-100 max-h-[400px] overflow-y-auto">
                     <table className="w-full text-sm text-left">
                       <thead className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-100 sticky top-0">
                         <tr>
                           <th className="px-6 py-3 bg-gray-50">Attender Name</th>
-                          <th className="px-6 py-3 bg-gray-50 text-right">Incoming</th>
-                          <th className="px-6 py-3 bg-gray-50 text-right">Outgoing</th>
-                          <th className="px-6 py-3 bg-gray-50 text-right">Total Conversions</th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">Incoming<br />Conversions</th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">Incoming<br />Connected Calls</th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <span>Incoming<br />Conversion Rate (%)</span>
+                              <FormulaInfoPopover
+                                title="Incoming Conversion Rate"
+                                formulas={[{ label: "Incoming Conversion Rate (%)", formula: "(Incoming Conversions ÷ Total Incoming Connected Calls) × 100" }]}
+                                iconOnly={true}
+                              />
+                            </div>
+                          </th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">Outgoing<br />Conversions</th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">Outgoing<br />Connected Calls</th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <span>Outgoing<br />Conversion Rate (%)</span>
+                              <FormulaInfoPopover
+                                title="Outgoing Conversion Rate"
+                                formulas={[{ label: "Outgoing Conversion Rate (%)", formula: "(Outgoing Conversions ÷ Total Outgoing Connected Calls) × 100" }]}
+                                iconOnly={true}
+                              />
+                            </div>
+                          </th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">Total<br />Conversions</th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">Total<br />Connected Calls</th>
+                          <th className="px-6 py-3 bg-gray-50 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <span>Overall<br />Conversion Rate (%)</span>
+                              <FormulaInfoPopover
+                                title="Overall Conversion Rate"
+                                formulas={[{ label: "Overall Conversion Rate (%)", formula: "(Total Conversions ÷ Total Connected Calls) × 100" }]}
+                                iconOnly={true}
+                              />
+                            </div>
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50 font-semibold text-gray-600">
                         {attenderPerformance.map((r, i) => (
                           <tr key={i} className="hover:bg-gray-50/50 transition-colors">
                             <td className="px-6 py-3.5 font-bold text-gray-800">{r["Attender Name"]}</td>
-                            <td className="px-6 py-3.5 text-right font-black">
-                              {r["Incoming Conversions"] > 0 ? (
-                                <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold">
-                                  {r["Incoming Conversions"]}
-                                </span>
-                              ) : (
-                                <span className="text-gray-300">0</span>
-                              )}
+                            <td className="px-4 py-3.5 text-right font-black text-emerald-700">
+                              {r["Incoming Conversions"]}
                             </td>
-                            <td className="px-6 py-3.5 text-right font-black">
-                              {r["Outgoing Conversions"] > 0 ? (
-                                <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-bold">
-                                  {r["Outgoing Conversions"]}
-                                </span>
-                              ) : (
-                                <span className="text-gray-300">0</span>
-                              )}
+                            <td className="px-4 py-3.5 text-right font-bold text-gray-600">
+                              {r["Incoming Connected"]}
                             </td>
-                            <td className="px-6 py-3.5 text-right font-black text-indigo-600">{r["Total Conversions"]}</td>
+                            <td className="px-4 py-3.5 text-right font-bold">
+                              <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold">
+                                {r["Incoming Conversion Rate (%)"]}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-black text-blue-700">
+                              {r["Outgoing Conversions"]}
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-bold text-gray-600">
+                              {r["Outgoing Connected"]}
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-bold">
+                              <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-bold">
+                                {r["Outgoing Conversion Rate (%)"]}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-black text-indigo-600">
+                              {r["Total Conversions"]}
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-bold text-gray-700">
+                              {r["Total Connected"]}
+                            </td>
+                            <td className="px-6 py-3.5 text-right font-bold">
+                              <span className="px-2.5 py-1 bg-indigo-100 text-indigo-800 rounded-full text-xs font-black">
+                                {r["Overall Conversion Rate (%)"]}
+                              </span>
+                            </td>
                           </tr>
                         ))}
                         <tr className="bg-gray-50/70 border-t border-gray-100 font-bold text-gray-900 sticky bottom-0">
-                          <td className="px-6 py-4 bg-gray-50">Total Assisted</td>
-                          <td className="px-6 py-4 bg-gray-50 text-right text-emerald-700 font-extrabold">{attenderPerformanceTotals["Incoming Conversions"]}</td>
-                          <td className="px-6 py-4 bg-gray-50 text-right text-blue-700 font-extrabold">{attenderPerformanceTotals["Outgoing Conversions"]}</td>
-                          <td className="px-6 py-4 bg-gray-50 text-right text-indigo-700 font-extrabold">{attenderPerformanceTotals["Total Conversions"]}</td>
+                          <td className="px-6 py-4 bg-gray-50 font-black">Total Assisted</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-emerald-700 font-extrabold">{attenderPerformanceTotals["Incoming Conversions"]}</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-gray-700 font-extrabold">{attenderPerformanceTotals["Incoming Connected"]}</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-emerald-800 font-extrabold">{attenderPerformanceTotals["Incoming Conversion Rate (%)"]}</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-blue-700 font-extrabold">{attenderPerformanceTotals["Outgoing Conversions"]}</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-gray-700 font-extrabold">{attenderPerformanceTotals["Outgoing Connected"]}</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-blue-800 font-extrabold">{attenderPerformanceTotals["Outgoing Conversion Rate (%)"]}</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-indigo-700 font-extrabold">{attenderPerformanceTotals["Total Conversions"]}</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-gray-800 font-extrabold">{attenderPerformanceTotals["Total Connected"]}</td>
+                          <td className="px-6 py-4 bg-gray-50 text-right text-indigo-900 font-black">{attenderPerformanceTotals["Overall Conversion Rate (%)"]}</td>
                         </tr>
                       </tbody>
                     </table>
@@ -842,7 +1081,18 @@ export default function AbhivyaktiTab({
               {calledForAttenderBreakdown.length > 0 && (
                 <ReportSection
                   title="Conversions by Called For & Attender"
-                  subtitle="Breakdown of conversions by Called For category, Attender name, and Call Type"
+                  subtitle="Breakdown of conversions by Attender, Called For category, Khoji Type, and Call Type"
+                  action={
+                    <FormulaInfoPopover
+                      title="Conversions Breakdown Information"
+                      formulas={[
+                        {
+                          label: "Conversions Count",
+                          formula: "Count of registrations attributed to each Attender, Called For program, and Khoji Type."
+                        }
+                      ]}
+                    />
+                  }
                 >
                   <div className="overflow-x-auto rounded-2xl border border-gray-100">
                     <table className="w-full text-sm text-left">
@@ -850,8 +1100,9 @@ export default function AbhivyaktiTab({
                         <tr>
                           <th className="px-6 py-3 bg-gray-50">Converted By (Attender)</th>
                           <th className="px-6 py-3 bg-gray-50">Called For</th>
-                          <th className="px-6 py-3 bg-gray-50 text-right">Incoming Calls</th>
-                          <th className="px-6 py-3 bg-gray-50 text-right">Outgoing Calls</th>
+                          <th className="px-6 py-3 bg-gray-50">Khoji Type</th>
+                          <th className="px-6 py-3 bg-gray-50 text-right">Incoming Conversions</th>
+                          <th className="px-6 py-3 bg-gray-50 text-right">Outgoing Conversions</th>
                           <th className="px-6 py-3 bg-gray-50 text-right">Total Conversions</th>
                         </tr>
                       </thead>
@@ -860,6 +1111,7 @@ export default function AbhivyaktiTab({
                           <tr key={i} className="hover:bg-gray-50/50 transition-colors">
                             <td className="px-6 py-3.5 font-bold text-indigo-900">{r["Converted By (Attender)"]}</td>
                             <td className="px-6 py-3.5 font-bold text-gray-800">{r["Called For"]}</td>
+                            <td className="px-6 py-3.5 font-medium text-purple-700">{r["Khoji Type"]}</td>
                             <td className="px-6 py-3.5 text-right font-black">
                               {r["Incoming Conversions"] > 0 ? (
                                 <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold">
@@ -882,7 +1134,7 @@ export default function AbhivyaktiTab({
                           </tr>
                         ))}
                         <tr className="bg-gray-50/70 border-t border-gray-100 font-bold text-gray-900">
-                          <td className="px-6 py-4 bg-gray-50" colSpan={2}>Total Conversions</td>
+                          <td className="px-6 py-4 bg-gray-50" colSpan={3}>Total Conversions</td>
                           <td className="px-6 py-4 bg-gray-50 text-right text-emerald-700 font-extrabold">{calledForAttenderTotals["Incoming Conversions"]}</td>
                           <td className="px-6 py-4 bg-gray-50 text-right text-blue-700 font-extrabold">{calledForAttenderTotals["Outgoing Conversions"]}</td>
                           <td className="px-6 py-4 bg-gray-50 text-right text-indigo-700 font-extrabold">{calledForAttenderTotals["Total Conversions"]}</td>
@@ -909,6 +1161,7 @@ export default function AbhivyaktiTab({
                     <th className="px-6 py-3 bg-gray-50">Converted By</th>
                     <th className="px-6 py-3 bg-gray-50 text-center">Calls Done</th>
                     <th className="px-6 py-3 bg-gray-50">Called For</th>
+                    <th className="px-6 py-3 bg-gray-50">Khoji Type</th>
                     <th className="px-6 py-3 bg-gray-50">Source</th>
                     <th className="px-6 py-3 bg-gray-50">Call Type</th>
                   </tr>
@@ -922,6 +1175,7 @@ export default function AbhivyaktiTab({
                     const convertedByVal = r.convertedBy || "Direct / Online";
                     const callsDoneVal = r.callCount !== undefined ? r.callCount : (r.history ? r.history.length : 0);
                     const calledForVal = r.calledFor || r["Called For"] || "N/A";
+                    const khojiVal = getContactKhoji(r) || "No";
                     const sourceVal = r.conversionSource || r.Source || r.source || "N/A";
                     const callTypeVal = r.callType || "N/A";
 
@@ -934,6 +1188,7 @@ export default function AbhivyaktiTab({
                         <td className="px-6 py-3.5 text-emerald-600">{convertedByVal}</td>
                         <td className="px-6 py-3.5 text-center font-black text-indigo-600">{callsDoneVal}</td>
                         <td className="px-6 py-3.5 font-bold">{calledForVal}</td>
+                        <td className="px-6 py-3.5 text-xs text-purple-700 font-bold">{khojiVal}</td>
                         <td className="px-6 py-3.5 text-xs">{sourceVal}</td>
                         <td className="px-6 py-3.5 text-xs uppercase">{callTypeVal}</td>
                       </tr>

@@ -3033,22 +3033,39 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
   );
 
   const unsubCache = onSnapshot(cacheQuery, async (snap) => {
-    if (snap.empty) {
-      console.log(`No cache documents exist for range ${startMonth} to ${endMonth}, checking rebuild...`);
-      const currentMonth = getMonthStr(new Date());
-      if (endMonth === currentMonth) {
-        try {
-          await rebuildCallCenterCache();
-        } catch (err) {
-          console.error("Rebuild cache failed:", err);
+    if (snap.empty && lockedDocs.length === 0) {
+      console.log(`No cache documents exist for range ${startMonth} to ${endMonth}, fetching directly from Firebase contacts collection...`);
+      try {
+        const fallbackQ = query(collection(db, "contacts"), where("isAssigned", "==", true));
+        const liveSnap = await getDocs(fallbackQ);
+        let logs = liveSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c._deleted);
+        if (tag && tag !== "ALL") {
+          logs = logs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
         }
+        logs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        finalCallback(logs);
+      } catch (err) {
+        console.error("Firebase contacts fallback fetch error:", err);
       }
       return;
     }
     
     cacheSnap = snap;
     triggerCallback();
-  }, err => console.error("subscribeToAllCallLogs cache error:", err));
+  }, async err => {
+    console.error("subscribeToAllCallLogs cache error, falling back to Firebase contacts:", err);
+    try {
+      const fallbackQ = query(collection(db, "contacts"), where("isAssigned", "==", true));
+      const liveSnap = await getDocs(fallbackQ);
+      let logs = liveSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c._deleted);
+      if (tag && tag !== "ALL") {
+        logs = logs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
+      }
+      finalCallback(logs);
+    } catch (e) {
+      console.error("Firebase contacts fallback error:", e);
+    }
+  });
 
   return () => {
     unsubCache();

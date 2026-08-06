@@ -10,6 +10,7 @@ import ProgramsTab from "./components/ProgramsTab";
 import AttendersTab from "./components/AttendersTab";
 import AbhivyaktiTab from "./components/AbhivyaktiTab";
 import SettingsTab from "./components/SettingsTab";
+import AllAttendersSheetTab from "./components/AllAttendersSheetTab";
 
 export default function AdminPanel({ onExit, onAttendersChange }) {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -159,6 +160,18 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
                 ) : (
                   <DashboardTab programs={programs} attenders={attenders} settingsOptions={settingsOptions} callLogs={callLogs} />
                 )
+              )}
+              {activeTab === "all-attenders" && (
+                <AllAttendersSheetTab
+                  callLogs={callLogs}
+                  attenders={attenders}
+                  programs={programs}
+                  selectedMonth={selectedMonth}
+                  setSelectedMonth={setSelectedMonth}
+                  monthOptions={monthOptions}
+                  settingsOptions={settingsOptions}
+                  callLogsLoading={callLogsLoading}
+                />
               )}
               {activeTab === "monthly" && (
                 callLogsLoading ? (

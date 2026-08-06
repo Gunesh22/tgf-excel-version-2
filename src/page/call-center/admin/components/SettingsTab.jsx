@@ -398,7 +398,7 @@ export default function SettingsTab() {
                       title="Move to Not Connected"
                       className="px-2 py-0.5 text-[10px] font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-md transition-colors cursor-pointer"
                     >
-                      → Not Conn.
+                      → Not Connected
                     </button>
                     <button
                       onClick={() => handleMoveStatus(st, "connected", "unassigned")}
@@ -478,7 +478,7 @@ export default function SettingsTab() {
                       title="Move to Connected"
                       className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-md transition-colors cursor-pointer"
                     >
-                      → Conn.
+                      → Connected
                     </button>
                     <button
                       onClick={() => handleMoveStatus(st, "notConnected", "unassigned")}
@@ -558,14 +558,14 @@ export default function SettingsTab() {
                       title="Move to Connected"
                       className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-md transition-colors cursor-pointer"
                     >
-                      → Conn.
+                      → Connected
                     </button>
                     <button
                       onClick={() => handleMoveStatus(st, "unassigned", "notConnected")}
                       title="Move to Not Connected"
                       className="px-2 py-0.5 text-[10px] font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-md transition-colors cursor-pointer"
                     >
-                      → Not Conn.
+                      → Not Connected
                     </button>
                   </div>
                 </div>

@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  BarChart3, FolderOpen, Upload, Users, ClipboardCheck, FileText, Settings
+  BarChart3, FolderOpen, Upload, Users, ClipboardCheck, FileText, Settings, FileSpreadsheet
 } from "lucide-react";
 import { isKhojiField } from "../../../lib/khojiHelper";
 
@@ -137,6 +137,7 @@ export const COLORS = ["#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#
 
 export const TAB_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: <BarChart3 size={18} /> },
+  { id: "all-attenders", label: "All Attenders Sheet", icon: <FileSpreadsheet size={18} /> },
   { id: "monthly", label: "Report", icon: <FileText size={18} /> },
   { id: "programs", label: "Programs", icon: <FolderOpen size={18} /> },
   { id: "import", label: "Lead Distribution 📂", icon: <Upload size={18} /> },
@@ -279,4 +280,122 @@ export function getCanonicalStatus(status) {
   if (sLower === "wrong no" || sLower === "wrong no.") return "wrong no.";
   return status;
 }
+
+export const getAllCallEntries = (log) => {
+  if (!log || typeof log !== "object") return [];
+
+  const calls = [];
+  const seenKeys = new Set();
+
+  const addCall = (timestamp, status, remark, attenderName, callType) => {
+    const rTrim = String(remark || "").trim();
+    const sTrim = String(status || "").trim();
+    if (!sTrim && !rTrim) return;
+
+    const d = parseTimestamp(timestamp);
+    const timeMs = d && !isNaN(d.getTime()) ? d.getTime() : 0;
+    const dateStr = d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "";
+
+    const key = `${timeMs}_${sTrim.toLowerCase()}_${rTrim.toLowerCase()}_${String(attenderName || "").toLowerCase()}`;
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+
+    calls.push({
+      timestamp: d,
+      timeMs,
+      dateStr,
+      status: sTrim || log.status || "Pending",
+      remark: rTrim,
+      attenderName: attenderName || log.attenderName || "Unassigned",
+      callType: callType || log.callType || "outgoing"
+    });
+  };
+
+  // 1. Array history on log
+  if (Array.isArray(log.history)) {
+    log.history.forEach(h => {
+      addCall(
+        h.timestamp || h.date || h.createdAt || h.updatedAt,
+        h.status,
+        h.remark,
+        h.attenderName,
+        h.callType
+      );
+    });
+  }
+
+  // 2. attenderStates
+  if (log.attenderStates && typeof log.attenderStates === "object") {
+    Object.keys(log.attenderStates).forEach(attId => {
+      const state = log.attenderStates[attId];
+      if (!state) return;
+      if (Array.isArray(state.history)) {
+        state.history.forEach(h => {
+          addCall(
+            h.timestamp || h.date || h.createdAt || h.updatedAt,
+            h.status,
+            h.remark,
+            h.attenderName || state.attenderName,
+            h.callType
+          );
+        });
+      }
+      if (state.remark || state.status) {
+        addCall(
+          state.updatedAt || state.lastCalledAt || state.createdAt,
+          state.status,
+          state.remark,
+          state.attenderName,
+          state.callType
+        );
+      }
+    });
+  }
+
+  // 3. Standalone log.remark or log.status
+  if (log.remark || (log.status && log.status !== "Pending")) {
+    addCall(
+      log.lastCalledAt || log.updatedAt || log.createdAt,
+      log.status,
+      log.remark,
+      log.attenderName,
+      log.callType
+    );
+  }
+
+  // Sort calls chronologically (ascending: earliest call to latest call)
+  calls.sort((a, b) => a.timeMs - b.timeMs);
+
+  // If no call history entries found at all, return default entry
+  if (calls.length === 0) {
+    const d = parseTimestamp(log.createdAt || log.date_added);
+    calls.push({
+      timestamp: d,
+      timeMs: d ? d.getTime() : 0,
+      dateStr: d && !isNaN(d.getTime()) ? d.toLocaleString("en-IN") : "",
+      status: log.status || "Pending",
+      remark: log.remark || "",
+      attenderName: log.attenderName || "Unassigned",
+      callType: log.callType || "outgoing"
+    });
+  }
+
+  return calls;
+};
+
+export const getCallsDoneCount = (log) => {
+  if (!log) return 0;
+  const calls = getAllCallEntries(log);
+  if (
+    calls.length === 1 &&
+    calls[0].status === "Pending" &&
+    !calls[0].remark &&
+    (!log.history || log.history.length === 0) &&
+    !log.lastCalledAt
+  ) {
+    return 0;
+  }
+  return calls.length;
+};
+
 
