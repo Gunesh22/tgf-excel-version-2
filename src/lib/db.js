@@ -3485,6 +3485,27 @@ export const DEFAULT_NOT_CONNECTED_STATUSES = [
   "Called by mistake", "No Network", "wrong no.", "no answer"
 ];
 
+export const DEFAULT_WHATSAPP_TEMPLATES = [
+  {
+    id: "tpl_1",
+    title: "Happy Thoughts Greeting",
+    emoji: "✨",
+    text: "Happy Thoughts {Name} ji! Greetings from Tej Gyan Foundation."
+  },
+  {
+    id: "tpl_2",
+    title: "Shivir Information",
+    emoji: "🌸",
+    text: "Happy Thoughts {Name} ji! Greetings from Tej Gyan Foundation. Please let us know if you need any information regarding our upcoming Shivirs and meditation retreats."
+  },
+  {
+    id: "tpl_3",
+    title: "Registration Follow-up",
+    emoji: "📝",
+    text: "Happy Thoughts {Name} ji! Thank you for your interest in the Tej Gyan Foundation Shivir. Please complete your registration process at your earliest convenience."
+  }
+];
+
 export const getSettingsOptions = async () => {
   const docRef = doc(db, "settings", "call_center_options");
   const snap = await getDoc(docRef);
@@ -3495,7 +3516,8 @@ export const getSettingsOptions = async () => {
       sourceOptions: data.sourceOptions || DEFAULT_SOURCE_OPTIONS,
       calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS,
       connectedStatuses: data.connectedStatuses || DEFAULT_CONNECTED_STATUSES,
-      notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES
+      notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
+      whatsappTemplates: data.whatsappTemplates || DEFAULT_WHATSAPP_TEMPLATES
     };
   }
   
@@ -3505,7 +3527,8 @@ export const getSettingsOptions = async () => {
     sourceOptions: DEFAULT_SOURCE_OPTIONS,
     calledForOptions: DEFAULT_CALLED_FOR_OPTIONS,
     connectedStatuses: DEFAULT_CONNECTED_STATUSES,
-    notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES
+    notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
+    whatsappTemplates: DEFAULT_WHATSAPP_TEMPLATES
   };
   await setDoc(docRef, defaults, { merge: true });
   return defaults;
@@ -3526,7 +3549,8 @@ export const subscribeToCallCenterOptions = (onUpdate) => {
         sourceOptions: data.sourceOptions || DEFAULT_SOURCE_OPTIONS,
         calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS,
         connectedStatuses: data.connectedStatuses || DEFAULT_CONNECTED_STATUSES,
-        notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES
+        notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
+        whatsappTemplates: data.whatsappTemplates || DEFAULT_WHATSAPP_TEMPLATES
       });
     } else {
       // Initialize with defaults if it doesn't exist yet
@@ -3535,7 +3559,8 @@ export const subscribeToCallCenterOptions = (onUpdate) => {
         sourceOptions: DEFAULT_SOURCE_OPTIONS,
         calledForOptions: DEFAULT_CALLED_FOR_OPTIONS,
         connectedStatuses: DEFAULT_CONNECTED_STATUSES,
-        notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES
+        notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
+        whatsappTemplates: DEFAULT_WHATSAPP_TEMPLATES
       };
       setDoc(docRef, defaults, { merge: true }).then(() => {
         onUpdate(defaults);

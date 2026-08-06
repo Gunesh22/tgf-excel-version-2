@@ -39,6 +39,7 @@ import DuplicateBanner from "./edit-modal/DuplicateBanner";
 import CallEntryTab from "./edit-modal/CallEntryTab";
 import ProfileDetailsTab from "./edit-modal/ProfileDetailsTab";
 import CallButton from "./CallButton";
+import WhatsAppButton from "./WhatsAppButton";
 import EditHistoryModal from "./edit-modal/EditHistoryModal";
 
 export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs = [], onSave, onDelete, onClose }) => {
@@ -1556,6 +1557,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
               <div className="flex items-center gap-3">
                 <h3 className="text-white font-black text-xl leading-none">{getLogName() || "Unknown Entry"}</h3>
                 <CallButton phone={edited.Phone || edited.Mobile} variant="header" />
+                <WhatsAppButton phone={edited.Phone || edited.Mobile} name={getLogName()} variant="header" />
               </div>
               <div className="flex items-center gap-3 mt-1">
                 {edited.createdAt && (

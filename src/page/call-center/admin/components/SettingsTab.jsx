@@ -6,6 +6,7 @@ import {
   GripVertical, Search, X
 } from "lucide-react";
 import { OptionsManagerCard } from "./OptionsManagerCard";
+import { WhatsAppTemplatesCard } from "./WhatsAppTemplatesCard";
 import { 
   getSettingsOptions, 
   updateCallCenterOptions, 
@@ -14,7 +15,8 @@ import {
   getActiveCacheMonths,
   getLockedMonthlyReports,
   DEFAULT_CONNECTED_STATUSES,
-  DEFAULT_NOT_CONNECTED_STATUSES
+  DEFAULT_NOT_CONNECTED_STATUSES,
+  DEFAULT_WHATSAPP_TEMPLATES
 } from "../../../../lib/db";
 
 export default function SettingsTab() {
@@ -275,6 +277,19 @@ export default function SettingsTab() {
   const displayNotConnectedList = notConnectedList.filter(s => s.toLowerCase().includes(searchLower));
   const displayUnassignedList = unassignedList.filter(s => s.toLowerCase().includes(searchLower));
 
+  const handleSaveWhatsappTemplates = async (updatedTemplates) => {
+    try {
+      await updateCallCenterOptions({ whatsappTemplates: updatedTemplates });
+      setOptions((prev) => ({
+        ...prev,
+        whatsappTemplates: updatedTemplates
+      }));
+    } catch (err) {
+      console.error(err);
+      throw err;
+    }
+  };
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
       <div>
@@ -308,6 +323,12 @@ export default function SettingsTab() {
           onRename={(oldVal, newVal) => handleOptionChange("calledFor", "rename", oldVal, newVal)}
         />
       </div>
+
+      {/* WhatsApp Message Templates Manager */}
+      <WhatsAppTemplatesCard
+        templates={options?.whatsappTemplates || DEFAULT_WHATSAPP_TEMPLATES}
+        onSaveTemplates={handleSaveWhatsappTemplates}
+      />
 
       {/* Drag & Drop Status Classification Tables */}
       <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm space-y-6">
