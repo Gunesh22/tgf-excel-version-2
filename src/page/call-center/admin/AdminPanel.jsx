@@ -22,7 +22,7 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
   const [callLogs, setCallLogs] = useState([]);
   const [callLogsLoading, setCallLogsLoading] = useState(true);
 
-  const [selectedMonth, setSelectedMonth] = useState("last-6-months");
+  const [selectedMonth, setSelectedMonth] = useState("ALL");
   const [registrations, setRegistrations] = useState([]);
   const [registrationsLoading, setRegistrationsLoading] = useState(false);
   const [monthOptions, setMonthOptions] = useState([]);
@@ -58,7 +58,7 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
       try {
         const months = await getRegistrationMonths();
         setMonthOptions(months);
-        const rangeOptions = ["last-3-months", "last-6-months", "ALL"];
+        const rangeOptions = ["ALL"];
         if (months.length > 0 && !months.includes(selectedMonth) && !rangeOptions.includes(selectedMonth)) {
           setSelectedMonth(months[0]);
         }
@@ -69,18 +69,18 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
     loadMonths();
   }, []);
 
-  // Hoisted subscription to registrations - lazy subscribe only when Abhivyakti tab is active
+  // Hoisted subscription to registrations - always subscribe to ALL registrations for Abhivyakti tab
   useEffect(() => {
-    if (!selectedMonth || activeTab !== "abhivyakti") return;
+    if (activeTab !== "abhivyakti") return;
     setRegistrationsLoading(true);
-    const unsubRegs = subscribeToRegistrations(selectedMonth, (data) => {
+    const unsubRegs = subscribeToRegistrations("ALL", (data) => {
       setRegistrations(data);
       setRegistrationsLoading(false);
     });
     return () => {
       if (unsubRegs) unsubRegs();
     };
-  }, [selectedMonth, activeTab]);
+  }, [activeTab]);
 
   const loadAll = async () => {
     setIsLoading(true);
@@ -188,11 +188,8 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
               {activeTab === "attenders" && <AttendersTab attenders={attenders} programs={programs} onReloadAttenders={refreshAll} />}
               {activeTab === "abhivyakti" && (
                 <AbhivyaktiTab
-                  selectedMonth={selectedMonth}
-                  setSelectedMonth={setSelectedMonth}
                   registrations={registrations}
                   loading={registrationsLoading}
-                  monthOptions={monthOptions}
                 />
               )}
               {activeTab === "settings" && <SettingsTab />}

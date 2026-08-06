@@ -4,7 +4,6 @@ import * as XLSX from "xlsx";
 import {
   Download, Calendar, TrendingUp, UserCheck, Smile, Info, Search, X, ChevronDown, Check, ChevronRight
 } from "lucide-react";
-import { subscribeToRegistrations, getRegistrationMonths } from "../../../../lib/db";
 import { CONNECTED_STATUSES, getContactKhoji } from "../utils.jsx";
 
 function ReportSection({ title, subtitle, badge, action, children, defaultOpen = true }) {
@@ -203,22 +202,36 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
   );
 }
 
-// Helper to parse dates in a robust way (handling Firestore Timestamps, ISO strings, Date objects, etc.)
+// Helper to parse dates in a robust way (handling Firestore Timestamps, ISO strings, Date objects, string formats, etc.)
 const parseDate = (val) => {
   if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
   if (typeof val.toDate === "function") return val.toDate();
   if (val.seconds !== undefined) return new Date(val.seconds * 1000);
-  const d = new Date(val);
-  return isNaN(d.getTime()) ? null : d;
+  if (typeof val === "number") {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (!trimmed) return null;
+    if (trimmed.includes("/")) {
+      const parts = trimmed.split(/[/ :]/);
+      if (parts.length >= 3) {
+        const [d, m, y] = parts.map(Number);
+        if (y && m && d) return new Date(y, m - 1, d);
+      }
+    }
+    const d = new Date(trimmed);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
 };
 
 // ── Main AbhivyaktiTab Component ──────────────────────────────────────────────
 export default function AbhivyaktiTab({
-  selectedMonth,
-  setSelectedMonth,
   registrations = [],
-  loading = false,
-  monthOptions = []
+  loading = false
 }) {
   // Local filter states
   const [selectedCallTypes, setSelectedCallTypes] = useState([]);
@@ -227,35 +240,6 @@ export default function AbhivyaktiTab({
   const [selectedAttenders, setSelectedAttenders] = useState([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-
-  // Default date boundaries based on loaded registrations
-  useEffect(() => {
-    if (registrations.length > 0) {
-      let minDate = null;
-      let maxDate = null;
-      registrations.forEach(r => {
-        const d = parseDate(r.registeredAt) || parseDate(r.createdAt);
-        
-        if (d && !isNaN(d.getTime())) {
-          if (!minDate || d < minDate) minDate = d;
-          if (!maxDate || d > maxDate) maxDate = d;
-        }
-      });
-      if (minDate && maxDate) {
-        const formatDateForInput = (date) => {
-          const y = date.getFullYear();
-          const m = String(date.getMonth() + 1).padStart(2, "0");
-          const d = String(date.getDate()).padStart(2, "0");
-          return `${y}-${m}-${d}`;
-        };
-        setDateFrom(formatDateForInput(minDate));
-        setDateTo(formatDateForInput(maxDate));
-      }
-    } else {
-      setDateFrom("");
-      setDateTo("");
-    }
-  }, [registrations, selectedMonth]);
 
   // Derived filter options from registrations data
   const callTypeOptions = useMemo(() => {
@@ -328,17 +312,16 @@ export default function AbhivyaktiTab({
       }
 
       // 5. Date Range Filter
-      const d = parseDate(r.registeredAt) || parseDate(r.createdAt);
-      
-      if (d && !isNaN(d.getTime())) {
+      if (dateFrom || dateTo) {
+        const d = parseDate(r.registeredAt) || parseDate(r.createdAt);
+        if (!d || isNaN(d.getTime())) return false;
+        
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, "0");
         const day = String(d.getDate()).padStart(2, "0");
         const dStr = `${y}-${m}-${day}`;
         if (dateFrom && dStr < dateFrom) return false;
         if (dateTo && dStr > dateTo) return false;
-      } else {
-        if (dateFrom || dateTo) return false;
       }
 
       return true;
@@ -346,7 +329,7 @@ export default function AbhivyaktiTab({
   }, [registrations, selectedCallTypes, selectedCalledFors, selectedSources, selectedAttenders, dateFrom, dateTo]);
 
   // Active filters count
-  const activeFilters = selectedCallTypes.length + selectedCalledFors.length + selectedSources.length + selectedAttenders.length;
+  const activeFilters = selectedCallTypes.length + selectedCalledFors.length + selectedSources.length + selectedAttenders.length + (dateFrom ? 1 : 0) + (dateTo ? 1 : 0);
 
   const metrics = useMemo(() => {
     const stats = {
@@ -419,50 +402,27 @@ export default function AbhivyaktiTab({
       else map[dStr].direct++;
     });
 
+    const allDates = Array.from(new Set(filteredRegistrations.map(r => {
+      const d = parseDate(r.registeredAt) || parseDate(r.createdAt);
+      return d ? d.toLocaleDateString("en-IN") : null;
+    }).filter(Boolean))).sort((a, b) => {
+      const [da, ma, ya] = a.split("/").map(Number);
+      const [db, mb, yb] = b.split("/").map(Number);
+      return new Date(ya, ma - 1, da) - new Date(yb, mb - 1, db);
+    });
+
     const list = [];
-    if (selectedMonth && selectedMonth.includes("-")) {
-      const [year, month] = selectedMonth.split("-").map(Number);
-      const parsedMonth = new Date(year, month - 1, 1);
-      const daysInMonth = new Date(parsedMonth.getFullYear(), parsedMonth.getMonth() + 1, 0).getDate();
-      for (let day = 1; day <= daysInMonth; day++) {
-        const checkDate = new Date(parsedMonth.getFullYear(), parsedMonth.getMonth(), day);
-        const dStr = checkDate.toLocaleDateString("en-IN");
-        
-        // Only push date to list if it fits inside dateFrom and dateTo filters (if present)
-        const checkDateInputFormat = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, "0")}-${String(checkDate.getDate()).padStart(2, "0")}`;
-        if (dateFrom && checkDateInputFormat < dateFrom) continue;
-        if (dateTo && checkDateInputFormat > dateTo) continue;
-
-        const data = map[dStr] || { date: dStr, total: 0, assisted: 0, direct: 0 };
-        list.push({
-          "Date": dStr,
-          "Total Registrations": data.total,
-          "Attender Assisted": data.assisted,
-          "Direct Online": data.direct
-        });
-      }
-    } else {
-      const allDates = Array.from(new Set(filteredRegistrations.map(r => {
-        const d = parseDate(r.registeredAt) || parseDate(r.createdAt);
-        return d ? d.toLocaleDateString("en-IN") : null;
-      }).filter(Boolean))).sort((a, b) => {
-        const [da, ma, ya] = a.split("/").map(Number);
-        const [db, mb, yb] = b.split("/").map(Number);
-        return new Date(ya, ma - 1, da) - new Date(yb, mb - 1, db);
+    allDates.forEach(dStr => {
+      const data = map[dStr] || { date: dStr, total: 0, assisted: 0, direct: 0 };
+      list.push({
+        "Date": dStr,
+        "Total Registrations": data.total,
+        "Attender Assisted": data.assisted,
+        "Direct Online": data.direct
       });
-
-      allDates.forEach(dStr => {
-        const data = map[dStr] || { date: dStr, total: 0, assisted: 0, direct: 0 };
-        list.push({
-          "Date": dStr,
-          "Total Registrations": data.total,
-          "Attender Assisted": data.assisted,
-          "Direct Online": data.direct
-        });
-      });
-    }
+    });
     return list;
-  }, [filteredRegistrations, selectedMonth, dateFrom, dateTo]);
+  }, [filteredRegistrations]);
 
   const dayWiseTotals = useMemo(() => {
     const totals = { "Date": "Total", "Total Registrations": 0, "Attender Assisted": 0, "Direct Online": 0 };
@@ -715,7 +675,7 @@ export default function AbhivyaktiTab({
     const wsCalledForAttenders = XLSX.utils.json_to_sheet([...calledForAttenderBreakdown, calledForAttenderTotals]);
     XLSX.utils.book_append_sheet(wb, wsCalledForAttenders, "CalledFor & Attenders");
 
-    XLSX.writeFile(wb, `Abhivyakti_RegistrationsReport_${selectedMonth}.xlsx`);
+    XLSX.writeFile(wb, `Abhivyakti_RegistrationsReport_${new Date().toISOString().slice(0, 10)}.xlsx`);
     toast.success("Abhivyakti report downloaded successfully!");
   };
 
@@ -739,22 +699,6 @@ export default function AbhivyaktiTab({
       <div className="bg-white border border-gray-100 rounded-3xl p-5 shadow-sm space-y-4">
         {/* Row 1: Dropdowns grid */}
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Month Scope Dropdown */}
-          <div className="relative flex-1 min-w-[150px] sm:min-w-[165px] max-w-[250px]">
-            <select
-              value={selectedMonth}
-              onChange={e => setSelectedMonth(e.target.value)}
-              className="px-4 py-2.5 bg-white border border-gray-200 rounded-2xl text-sm font-bold text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
-            >
-              <option value="last-3-months">Last 3 Months</option>
-              <option value="last-6-months">Last 6 Months</option>
-              <option value="ALL">All Time</option>
-              {monthOptions.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </div>
-
           {/* Call Type Dropdown */}
           <MultiSelect
             options={callTypeOptions}
@@ -802,6 +746,19 @@ export default function AbhivyaktiTab({
             <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
               className="px-3 py-2 bg-white border border-gray-200 rounded-2xl text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => {
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+                className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-2xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                title="Reset date range filter"
+              >
+                <X size={12} /> Reset Dates
+              </button>
+            )}
+
             {(() => {
               const todayObj = new Date();
               const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, "0")}-${String(todayObj.getDate()).padStart(2, "0")}`;
@@ -821,7 +778,7 @@ export default function AbhivyaktiTab({
                       setDateFrom(todayStr);
                       setDateTo(todayStr);
                     }}
-                    className={`px-3 py-1.5 rounded-2xl text-xs font-black border transition-all duration-200 ${
+                    className={`px-3 py-1.5 rounded-2xl text-xs font-black border transition-all duration-200 cursor-pointer ${
                       isTodaySelected
                         ? "bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-600/20 scale-[1.03]"
                         : "bg-emerald-50 text-emerald-600 border-emerald-100 hover:bg-emerald-100/80 hover:scale-[1.01]"
@@ -834,7 +791,7 @@ export default function AbhivyaktiTab({
                       setDateFrom(firstDayStr);
                       setDateTo(lastDayStr);
                     }}
-                    className={`px-3 py-1.5 rounded-2xl text-xs font-black border transition-all duration-200 ${
+                    className={`px-3 py-1.5 rounded-2xl text-xs font-black border transition-all duration-200 cursor-pointer ${
                       isThisMonthSelected
                         ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-600/20 scale-[1.03]"
                         : "bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-100/80 hover:scale-[1.01]"
@@ -858,8 +815,10 @@ export default function AbhivyaktiTab({
                   setSelectedCalledFors([]);
                   setSelectedSources([]);
                   setSelectedAttenders([]);
+                  setDateFrom("");
+                  setDateTo("");
                 }}
-                className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-black hover:bg-red-100 transition"
+                className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-xs font-black hover:bg-red-100 transition cursor-pointer"
               >
                 <X size={12} /> Clear filters
                 <span className="bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">{activeFilters}</span>
