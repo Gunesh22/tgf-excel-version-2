@@ -95,6 +95,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     standardFields.forEach(col => {
       normalized[col] = standardVals[col];
     });
+    if (row._isNew && !normalized.Khoji) {
+      normalized.Khoji = "No";
+    }
     // Normalize Tags: if only a `tags` array exists (no `Tags` string), convert to comma string for display
     if (!normalized.Tags && Array.isArray(row.tags) && row.tags.length > 0) {
       normalized.Tags = row.tags.join(", ");
