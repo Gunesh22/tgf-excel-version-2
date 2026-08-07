@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { OptionsManagerCard } from "./OptionsManagerCard";
 import { WhatsAppTemplatesCard } from "./WhatsAppTemplatesCard";
+import CompulsoryFieldBypassCard from "./CompulsoryFieldBypassCard";
 import { 
   getSettingsOptions, 
   updateCallCenterOptions, 
@@ -18,6 +19,7 @@ import {
   DEFAULT_NOT_CONNECTED_STATUSES,
   DEFAULT_WHATSAPP_TEMPLATES
 } from "../../../../lib/db";
+import { updateDynamicOptions } from "../../attender/utils";
 
 export default function SettingsTab() {
   const [options, setOptions] = useState(null);
@@ -43,6 +45,7 @@ export default function SettingsTab() {
     try {
       const data = await getSettingsOptions();
       setOptions(data);
+      updateDynamicOptions(data);
     } catch (err) {
       console.error(err);
       toast.error("Failed to load settings: " + err.message);
@@ -111,14 +114,17 @@ export default function SettingsTab() {
     if (type === "status") {
       const currentConn = options?.connectedStatuses || DEFAULT_CONNECTED_STATUSES;
       const currentNotConn = options?.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES;
+      const currentOptComp = options?.optionalCompulsoryStatuses || currentNotConn;
 
       if (action === "delete") {
         updatePayload.connectedStatuses = currentConn.filter(s => s !== val);
         updatePayload.notConnectedStatuses = currentNotConn.filter(s => s !== val);
+        updatePayload.optionalCompulsoryStatuses = currentOptComp.filter(s => s !== val);
       } else if (action === "rename") {
         const trimmedNew = newVal.trim();
         updatePayload.connectedStatuses = currentConn.map(s => (s === val ? trimmedNew : s));
         updatePayload.notConnectedStatuses = currentNotConn.map(s => (s === val ? trimmedNew : s));
+        updatePayload.optionalCompulsoryStatuses = currentOptComp.map(s => (s === val ? trimmedNew : s));
       }
     }
 
@@ -128,6 +134,7 @@ export default function SettingsTab() {
         ...prev,
         ...updatePayload
       }));
+      updateDynamicOptions(updatePayload);
       toast.success(
         action === "rename"
           ? "Option renamed successfully!"
@@ -160,8 +167,10 @@ export default function SettingsTab() {
       categoryMsg = "added & categorized as Connected.";
     } else if (category === "notConnected") {
       const currentNotConn = options?.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES;
+      const currentOptComp = options?.optionalCompulsoryStatuses || currentNotConn;
       updatePayload.notConnectedStatuses = Array.from(new Set([...currentNotConn, newStatusName]));
-      categoryMsg = "added & categorized as Not Connected.";
+      updatePayload.optionalCompulsoryStatuses = Array.from(new Set([...currentOptComp, newStatusName]));
+      categoryMsg = "added & categorized as Not Connected (Compulsory fields optional).";
     }
 
     try {
@@ -170,6 +179,7 @@ export default function SettingsTab() {
         ...prev,
         ...updatePayload
       }));
+      updateDynamicOptions(updatePayload);
       toast.success(`Status "${newStatusName}" ${categoryMsg}`);
     } catch (err) {
       console.error(err);
@@ -192,17 +202,19 @@ export default function SettingsTab() {
       newNotConn.push(status);
     }
 
+    const updatePayload = {
+      connectedStatuses: newConn,
+      notConnectedStatuses: newNotConn
+    };
+
     try {
-      await updateCallCenterOptions({
-        connectedStatuses: newConn,
-        notConnectedStatuses: newNotConn
-      });
+      await updateCallCenterOptions(updatePayload);
       setOptions(prev => ({
         ...prev,
-        connectedStatuses: newConn,
-        notConnectedStatuses: newNotConn
+        ...updatePayload
       }));
-      const label = toCategory === "connected" ? "Connected Calls" : toCategory === "notConnected" ? "Not Connected Calls" : "Not Assigned";
+      updateDynamicOptions(updatePayload);
+      const label = toCategory === "connected" ? "Connected Calls (Compulsory Fields Required)" : toCategory === "notConnected" ? "Not Connected Calls (Compulsory Fields Optional)" : "Not Assigned";
       toast.success(`Moved "${status}" to ${label}`);
     } catch (err) {
       console.error(err);
@@ -328,6 +340,12 @@ export default function SettingsTab() {
       <WhatsAppTemplatesCard
         templates={options?.whatsappTemplates || DEFAULT_WHATSAPP_TEMPLATES}
         onSaveTemplates={handleSaveWhatsappTemplates}
+      />
+
+      {/* Standalone Table: Statuses with Optional Compulsory Fields (Unanswered Callbacks) */}
+      <CompulsoryFieldBypassCard
+        options={options}
+        setOptions={setOptions}
       />
 
       {/* Drag & Drop Status Classification Tables */}

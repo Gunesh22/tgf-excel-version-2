@@ -11,6 +11,7 @@ import {
   FileSpreadsheet,
   Users,
   Phone,
+  PhoneOff,
   Flame,
   Clock,
   Tag,
@@ -34,7 +35,8 @@ import {
   SOURCE_OPTIONS,
   CALLED_FOR_OPTIONS,
   OBJECTION_REASONS,
-  CALL_TYPE_OPTIONS
+  CALL_TYPE_OPTIONS,
+  isUnansweredCallback
 } from "../../attender/utils.js";
 import { parseTimestamp, cleanExportRow, getAllCallEntries, getCallsDoneCount } from "../utils.jsx";
 import { normalizePhone, verifyCallCenterCache } from "../../../../lib/db";
@@ -584,6 +586,7 @@ export default function AllAttendersSheetTab({
       // Quick Status Presets
       if (filterStatus === "Hot Leads" && !log.isHotLead) return false;
       if (filterStatus === "Follow up" && !(log.callbackDate || log.status === "reminder" || log.status === "Next time")) return false;
+      if (filterStatus === "Unanswered Callback" && !isUnansweredCallback(log)) return false;
       if (filterStatus === "Reg.Done" && log.status !== "Reg.Done") return false;
       if (filterStatus === "Interested" && log.status !== "Interested") return false;
       if (filterStatus === "Pending" && (log.status && log.status !== "Pending")) return false;
@@ -800,6 +803,9 @@ export default function AllAttendersSheetTab({
 
   const getStatusBadge = (log) => {
     const status = log.status;
+    if (isUnansweredCallback(log)) {
+      return { bg: "bg-amber-100 border-amber-300", text: "text-amber-800 font-extrabold", label: status || "Unanswered Callback" };
+    }
     if (status) {
       if (status === "Reg.Done") return { bg: "bg-emerald-100", text: "text-emerald-700 border-emerald-200", label: status };
       if (status === "Interested") return { bg: "bg-blue-100", text: "text-blue-700 border-blue-200", label: status };
@@ -917,14 +923,26 @@ export default function AllAttendersSheetTab({
             </button>
 
             <button
-              onClick={() => setFilterStatus(filterStatus === "Hot Leads" ? "All" : "Hot Leads")}
+              onClick={() => setFilterStatus(filterStatus === "Unanswered Callback" ? "All" : "Unanswered Callback")}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold transition border active:scale-[0.97] cursor-pointer ${
-                filterStatus === "Hot Leads"
-                  ? "bg-amber-500 border-amber-500 text-white shadow-sm"
+                filterStatus === "Unanswered Callback"
+                  ? "bg-amber-500 border-amber-500 text-white shadow-sm shadow-amber-500/20"
                   : "bg-white border-gray-200 text-slate-700 hover:bg-slate-50"
               }`}
             >
-              <Flame size={12} className={filterStatus === "Hot Leads" ? "text-white" : "text-amber-500"} fill={filterStatus === "Hot Leads" ? "currentColor" : "none"} />
+              <PhoneOff size={12} className={filterStatus === "Unanswered Callback" ? "text-white" : "text-amber-500"} />
+              Unanswered Callback
+            </button>
+
+            <button
+              onClick={() => setFilterStatus(filterStatus === "Hot Leads" ? "All" : "Hot Leads")}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold transition border active:scale-[0.97] cursor-pointer ${
+                filterStatus === "Hot Leads"
+                  ? "bg-orange-500 border-orange-500 text-white shadow-sm shadow-orange-500/20"
+                  : "bg-white border-gray-200 text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              <Flame size={12} className={filterStatus === "Hot Leads" ? "text-white" : "text-orange-500"} fill={filterStatus === "Hot Leads" ? "currentColor" : "none"} />
               Hot Leads
             </button>
           </div>
@@ -1202,6 +1220,7 @@ export default function AllAttendersSheetTab({
                 const isDue = log.callbackDate && parseTimestamp(log.callbackDate) <= new Date();
                 const isHot = log.isHotLead;
                 const hasFollowup = log.callbackDate || log.status === "reminder" || log.status === "Next time";
+                const isUnanswered = isUnansweredCallback(log);
                 const isCalled = !!(log.status || log.callbackDate || log.remark);
 
                 let rowBg = "hover:bg-indigo-50/40";
@@ -1211,6 +1230,8 @@ export default function AllAttendersSheetTab({
                   rowBg = "bg-orange-50/70 border-l-[6px] border-l-orange-500";
                 } else if (hasFollowup) {
                   rowBg = "bg-blue-50/60 border-l-[6px] border-l-blue-500";
+                } else if (isUnanswered) {
+                  rowBg = "bg-amber-100/80 border-l-[6px] border-l-amber-500 shadow-sm";
                 } else if (isCalled) {
                   rowBg = "bg-emerald-50/50 border-l-[6px] border-l-emerald-500";
                 }

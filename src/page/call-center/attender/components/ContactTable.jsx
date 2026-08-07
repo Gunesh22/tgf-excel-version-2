@@ -1,7 +1,7 @@
 import React from "react";
 import { Flame, Clock } from "lucide-react";
 import { normalizePhone } from "../../../../lib/db";
-import { getFieldWithFallback } from "../utils";
+import { getFieldWithFallback, isUnansweredCallback } from "../utils";
 
 function CollapsedTags({ tags }) {
   const [expanded, setExpanded] = React.useState(false);
@@ -97,6 +97,9 @@ export function ContactTable({
 }) {
   const getStatusBadge = (log) => {
     const status = log.status || log.Status;
+    if (isUnansweredCallback(log)) {
+      return { bg: "bg-amber-100 border border-amber-300/80", text: "text-amber-800 font-extrabold", label: status || "Unanswered Callback" };
+    }
     if (status) {
       if (status === "Reg.Done") return { bg: "bg-emerald-100", text: "text-emerald-700", label: status };
       if (status === "Interested") return { bg: "bg-blue-100", text: "text-blue-700", label: status };
@@ -167,15 +170,18 @@ export function ContactTable({
               const isDue = log._callbackDue;
               const isHot = log.isHotLead;
               const hasFollowup = log.callbackDate || log.status === "reminder" || log.status === "Next time";
+              const isUnanswered = isUnansweredCallback(log);
               const isCalled = !!(log.status || log.callbackDate || log.remark || log.Remark || log.remarks);
 
-              let rowBg = "hover:bg-green-50/50";
+              let rowBg = "hover:bg-gray-50";
               if (isDue) {
                 rowBg = "bg-red-100 border-l-[6px] border-l-red-600 shadow-sm";
               } else if (isHot) {
                 rowBg = "bg-orange-100 border-l-[6px] border-l-orange-500";
               } else if (hasFollowup) {
                 rowBg = "bg-blue-100 border-l-[6px] border-l-blue-500";
+              } else if (isUnanswered) {
+                rowBg = "bg-amber-100/90 border-l-[6px] border-l-amber-500 shadow-sm";
               } else if (isCalled) {
                 rowBg = "bg-emerald-50 border-l-[6px] border-l-emerald-500";
               }

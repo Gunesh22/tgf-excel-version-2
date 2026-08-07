@@ -112,6 +112,41 @@ export const NOT_CONNECTED_STATUSES = [
   "no answer"
 ];
 
+export const OPTIONAL_COMPULSORY_STATUSES = [
+  "NA",
+  "Busy",
+  "Call Cut",
+  "switched off",
+  "Invalid No",
+  "Called by mistake",
+  "No Network",
+  "wrong no.",
+  "no answer"
+];
+
+export const isNotConnectedStatus = (status) => {
+  if (!status) return false;
+  const sLower = String(status).trim().toLowerCase();
+  return OPTIONAL_COMPULSORY_STATUSES.some(s => s.toLowerCase() === sLower);
+};
+
+export const findValueInLog = (obj, keysList) => {
+  if (!obj) return "";
+  const matchingKeys = Object.keys(obj).filter(k => keysList.includes(k.toLowerCase()));
+  for (const k of matchingKeys) {
+    const val = String(obj[k] || "").trim();
+    if (val) return val;
+  }
+  return "";
+};
+
+export const isUnansweredCallback = (log) => {
+  if (!log) return false;
+  // An Unanswered Callback is strictly a call attempt logged with an unconnected status
+  const status = log.status || log.Status || findValueInLog(log, ["status"]);
+  return isNotConnectedStatus(status);
+};
+
 export const DEFAULT_COLUMNS = [
   "Name",
   "Phone",
@@ -426,6 +461,15 @@ export const updateDynamicOptions = (data) => {
     }
     if (Array.isArray(data.calledForOptions)) {
       CALLED_FOR_OPTIONS.splice(0, CALLED_FOR_OPTIONS.length, ...data.calledForOptions);
+    }
+    if (Array.isArray(data.connectedStatuses)) {
+      CONNECTED_STATUSES.splice(0, CONNECTED_STATUSES.length, ...data.connectedStatuses);
+    }
+    if (Array.isArray(data.notConnectedStatuses)) {
+      NOT_CONNECTED_STATUSES.splice(0, NOT_CONNECTED_STATUSES.length, ...data.notConnectedStatuses);
+    }
+    if (Array.isArray(data.optionalCompulsoryStatuses)) {
+      OPTIONAL_COMPULSORY_STATUSES.splice(0, OPTIONAL_COMPULSORY_STATUSES.length, ...data.optionalCompulsoryStatuses);
     }
   }
 };

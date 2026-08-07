@@ -21,7 +21,8 @@ import {
   isKhojiAffirmative,
   isKhojiNegative,
   isKhojiField,
-  formatContactName
+  formatContactName,
+  isNotConnectedStatus
 } from "../utils";
 
 function parseTimestamp(t) {
@@ -1178,36 +1179,47 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         return;
       }
 
-      // Compulsory Khoji Validation
-      const khojiVal = String(targetEdited.Khoji || targetEdited.khoji || "").trim();
-      if (!khojiVal) {
-        toast.error("Please select Khoji status (Yes / Dew drop khoji / No) before saving.", { duration: 4000, position: 'top-center' });
-        return;
-      }
-
-      // Compulsory City Validation
-      const cityVal = String(targetEdited.City || targetEdited.city || "").trim();
-      if (!cityVal) {
-        toast.error("Please enter a City before saving.", { duration: 4000, position: 'top-center' });
-        return;
-      }
-
       // Compulsory Status Validation
       if (!targetEdited.status || String(targetEdited.status).trim() === "") {
         toast.error("Please select a call status before saving.", { duration: 4000, position: 'top-center' });
         return;
       }
 
+      const isUnconnected = isNotConnectedStatus(targetEdited.status);
+
+      if (isUnconnected) {
+        if (!targetEdited.City || !String(targetEdited.City).trim()) {
+          targetEdited.City = "Unknown";
+        }
+        if (!targetEdited.Khoji || !String(targetEdited.Khoji).trim()) {
+          targetEdited.Khoji = "No";
+        }
+      }
+
+      // Compulsory Khoji Validation
+      const khojiVal = String(targetEdited.Khoji || targetEdited.khoji || "").trim();
+      if (!khojiVal && !isUnconnected) {
+        toast.error("Please select Khoji status (Yes / Dew drop khoji / No) before saving.", { duration: 4000, position: 'top-center' });
+        return;
+      }
+
+      // Compulsory City Validation
+      const cityVal = String(targetEdited.City || targetEdited.city || "").trim();
+      if (!cityVal && !isUnconnected) {
+        toast.error("Please enter a City before saving.", { duration: 4000, position: 'top-center' });
+        return;
+      }
+
       // Compulsory Called For Validation
       const calledForVal = String(targetEdited[calledForField] || "").trim();
-      if (!calledForVal) {
+      if (!calledForVal && !isUnconnected) {
         toast.error("Please select a 'Called For' program/option before saving.", { duration: 4000, position: 'top-center' });
         return;
       }
 
       // Compulsory Source Validation
       const sourceVal = String(targetEdited[sourceField] || "").trim();
-      if (!sourceVal) {
+      if (!sourceVal && !isUnconnected) {
         toast.error("Please select a 'Source' before saving.", { duration: 4000, position: 'top-center' });
         return;
       }

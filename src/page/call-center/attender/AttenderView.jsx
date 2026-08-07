@@ -26,7 +26,8 @@ import {
   isKhojiAffirmative,
   isKhojiNegative,
   isIgnoredField,
-  getCanonicalStatus
+  getCanonicalStatus,
+  isUnansweredCallback
 } from "./utils";
 import { EditModal } from "./components/EditModal";
 import { MyPerformanceDashboard } from "./components/MyPerformanceDashboard";
@@ -670,6 +671,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       if (filterStatus === "Hot Leads" && !log.isHotLead) return false;
       if (filterStatus === "Callback" && !log.callbackDate) return false;
       if (filterStatus === "Follow up" && !(log.callbackDate || log.status === "reminder" || log.status === "Next time")) return false;
+      if (filterStatus === "Unanswered Callback" && !isUnansweredCallback(log)) return false;
       if (filterStatus === "Today Activity") {
         if (!log.lastCalledAt) return false;
         const logDate = new Date(log.lastCalledAt);
@@ -682,6 +684,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
         filterStatus !== "Hot Leads" && 
         filterStatus !== "Callback" && 
         filterStatus !== "Follow up" && 
+        filterStatus !== "Unanswered Callback" && 
         filterStatus !== "Today Activity" && 
         log.status !== filterStatus
       ) return false;

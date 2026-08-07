@@ -1,7 +1,7 @@
 import React from "react";
 import {
   Search, SlidersHorizontal, FileSpreadsheet, Flame, Clock, Tag,
-  ChevronDown, X, AlertCircle, Phone, Calendar, CalendarDays,
+  ChevronDown, X, AlertCircle, Phone, PhoneOff, Calendar, CalendarDays,
   User, CheckCircle2, CheckSquare
 } from "lucide-react";
 import { STATUS_OPTIONS } from "../utils";
@@ -480,18 +480,27 @@ export function AttenderFilters({
           </button>
 
           <div className="flex items-center gap-2">
-            {["All", "Hot Leads", "Follow up", "Today Activity"].map(s => (
+            {["All", "Hot Leads", "Follow up", "Unanswered Callback", "Today Activity"].map(s => (
               <button
                 key={s}
                 onClick={() => { setFilterStatus(s); setPage(1); }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all active:scale-[0.97] ${
                   filterStatus === s
-                    ? s === "Hot Leads" ? "bg-orange-500 text-white shadow" : s === "Follow up" ? "bg-blue-600 text-white shadow" : s === "Today Activity" ? "bg-teal-600 text-white shadow" : "bg-[#217346] text-white shadow"
+                    ? s === "Hot Leads"
+                      ? "bg-orange-500 text-white shadow shadow-orange-500/20"
+                      : s === "Follow up"
+                      ? "bg-blue-600 text-white shadow shadow-blue-500/20"
+                      : s === "Unanswered Callback"
+                      ? "bg-amber-500 text-white shadow shadow-amber-500/20"
+                      : s === "Today Activity"
+                      ? "bg-teal-600 text-white shadow shadow-teal-500/20"
+                      : "bg-[#217346] text-white shadow"
                     : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                 }`}
               >
                 {s === "Hot Leads" && <Flame size={12} className={filterStatus === s ? "text-white" : "text-orange-500"} />}
                 {s === "Follow up" && <Clock size={12} className={filterStatus === s ? "text-white" : "text-blue-500"} />}
+                {s === "Unanswered Callback" && <PhoneOff size={12} className={filterStatus === s ? "text-white" : "text-amber-500"} />}
                 {s === "Today Activity" && <Calendar size={12} className={filterStatus === s ? "text-white" : "text-teal-500"} />}
                 {s}
               </button>

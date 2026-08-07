@@ -3517,6 +3517,7 @@ export const getSettingsOptions = async () => {
       calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS,
       connectedStatuses: data.connectedStatuses || DEFAULT_CONNECTED_STATUSES,
       notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
+      optionalCompulsoryStatuses: data.optionalCompulsoryStatuses || data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
       whatsappTemplates: data.whatsappTemplates || DEFAULT_WHATSAPP_TEMPLATES
     };
   }
@@ -3528,6 +3529,7 @@ export const getSettingsOptions = async () => {
     calledForOptions: DEFAULT_CALLED_FOR_OPTIONS,
     connectedStatuses: DEFAULT_CONNECTED_STATUSES,
     notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
+    optionalCompulsoryStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
     whatsappTemplates: DEFAULT_WHATSAPP_TEMPLATES
   };
   await setDoc(docRef, defaults, { merge: true });
@@ -3550,6 +3552,7 @@ export const subscribeToCallCenterOptions = (onUpdate) => {
         calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS,
         connectedStatuses: data.connectedStatuses || DEFAULT_CONNECTED_STATUSES,
         notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
+        optionalCompulsoryStatuses: data.optionalCompulsoryStatuses || data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
         whatsappTemplates: data.whatsappTemplates || DEFAULT_WHATSAPP_TEMPLATES
       });
     } else {
@@ -3560,6 +3563,7 @@ export const subscribeToCallCenterOptions = (onUpdate) => {
         calledForOptions: DEFAULT_CALLED_FOR_OPTIONS,
         connectedStatuses: DEFAULT_CONNECTED_STATUSES,
         notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
+        optionalCompulsoryStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
         whatsappTemplates: DEFAULT_WHATSAPP_TEMPLATES
       };
       setDoc(docRef, defaults, { merge: true }).then(() => {

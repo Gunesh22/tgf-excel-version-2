@@ -33,6 +33,7 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
     runAutoLockAndPurgeCheck();
     const unsub = subscribeToCallCenterOptions((data) => {
       setSettingsOptions(data);
+      updateDynamicOptions(data);
     });
     return () => {
       if (unsub) unsub();
