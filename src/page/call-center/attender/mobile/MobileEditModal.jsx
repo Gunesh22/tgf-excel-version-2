@@ -196,8 +196,8 @@ export default function MobileEditModal({
   }, [edited.history, row.history]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-white sm:bg-black/60 sm:backdrop-blur-sm flex flex-col justify-between sm:justify-center animate-fade-in h-full w-full min-h-screen sm:min-h-0">
-      <div className="bg-white rounded-none sm:rounded-3xl w-full h-full sm:max-w-lg sm:max-h-[92vh] flex flex-col overflow-hidden shadow-2xl animate-slide-up">
+    <div className="fixed inset-0 z-50 bg-white sm:bg-black/60 sm:backdrop-blur-sm flex flex-col justify-between sm:justify-center animate-fade-in h-[100dvh] w-full sm:h-auto sm:min-h-0">
+      <div className="bg-white rounded-none sm:rounded-3xl w-full h-[100dvh] sm:h-auto sm:max-w-lg sm:max-h-[92vh] flex flex-col overflow-hidden shadow-2xl animate-slide-up">
         
         {/* 1. Header Card - Emerald Green */}
         <div className="bg-[#009669] px-5 py-4 text-white flex flex-col gap-3.5 relative shrink-0 pt-6 sm:pt-4">
@@ -523,13 +523,13 @@ export default function MobileEditModal({
           )}
         </div>
 
-        {/* 4. Modal Footer Bar */}
-        <div className="px-5 py-4 border-t border-slate-200 bg-white flex items-center justify-between shrink-0 shadow-lg pb-6 sm:pb-4">
+        {/* 4. Modal Footer Bar - Sticky at bottom */}
+        <div className="sticky bottom-0 z-30 px-5 py-3.5 border-t border-slate-200 bg-white flex items-center justify-between shrink-0 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] pb-5 sm:pb-3.5">
           {(!row._isNew && row.id) ? (
             <button
               type="button"
               onClick={handleDelete}
-              className="flex items-center gap-1.5 text-xs font-bold text-red-500 hover:text-red-700 transition active:scale-95 py-1 px-1"
+              className="flex items-center gap-1.5 text-xs font-bold text-red-500 hover:text-red-700 transition active:scale-95 py-2 px-2"
             >
               <Trash2 size={16} /> Remove
             </button>
@@ -537,15 +537,11 @@ export default function MobileEditModal({
             <div />
           )}
 
-          <div className="text-[10px] font-extrabold text-slate-400 tracking-widest uppercase text-center px-1">
-            {saving ? "Saving..." : "ALL EXITS AUTO-SAVE"}
-          </div>
-
           <button
             type="button"
             disabled={saving}
             onClick={() => handleSaveAndClose()}
-            className="px-7 py-3 bg-[#6366f1] hover:bg-[#4f46e5] active:bg-[#4338ca] text-white font-extrabold text-xs rounded-full shadow-lg shadow-indigo-500/25 transition active:scale-95 flex items-center justify-center gap-1.5 disabled:opacity-50"
+            className="px-8 py-3 bg-[#6366f1] hover:bg-[#4f46e5] active:bg-[#4338ca] text-white font-extrabold text-xs rounded-full shadow-lg shadow-indigo-500/25 transition active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 ml-auto"
           >
             {saving && <Loader size={14} className="animate-spin text-white" />} Save & Close
           </button>

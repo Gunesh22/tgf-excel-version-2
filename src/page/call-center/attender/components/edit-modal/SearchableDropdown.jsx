@@ -130,7 +130,7 @@ const SearchableDropdown = ({
               onChange={e => setSearch(e.target.value)}
               placeholder="Search options..."
               className="w-full bg-transparent px-1 py-1 text-xs text-gray-800 focus:outline-none placeholder:text-gray-400"
-              autoFocus
+              autoFocus={typeof window !== 'undefined' && !('ontouchstart' in window || navigator.maxTouchPoints > 0)}
             />
             {search && (
               <button type="button" onClick={() => setSearch("")} className="text-gray-400 hover:text-gray-600 p-0.5">
