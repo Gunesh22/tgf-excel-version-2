@@ -1166,12 +1166,14 @@ export const subscribeToCallLogs = (...args) => {
           // Source and Called For are now attender-specific as well
           Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
           "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
+          _hidden: attState._hidden === true,
           
           attenderId: attenderId,
           attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
         };
       })
-      .filter(log => !log._deleted);
+      .filter(log => !log._deleted && !log._hidden);
+
 
     // Filter by tag client-side if a specific tag is provided
     if (tag && tag !== "ALL") {
