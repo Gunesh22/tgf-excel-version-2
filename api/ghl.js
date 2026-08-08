@@ -55,6 +55,11 @@ export default async function handler(req, res) {
         : `https://services.leadconnectorhq.com/locations/${params?.locationId || GHL_LOCATION_ID}/tags`;
       if (!isV1) headers["Version"] = "2023-02-21";
     } else if (req.body?.targetUrl) {
+      const allowedDomains = ["https://rest.gohighlevel.com/", "https://services.leadconnectorhq.com/"];
+      const isAllowed = allowedDomains.some(domain => String(req.body.targetUrl).startsWith(domain));
+      if (!isAllowed) {
+        return res.status(403).json({ error: "Access denied: Target URL is not an authorized GHL domain." });
+      }
       targetUrl = req.body.targetUrl;
     } else {
       return res.status(400).json({ error: "Invalid GHL endpoint requested" });

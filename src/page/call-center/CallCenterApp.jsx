@@ -47,31 +47,65 @@ export default function CallCenterApp() {
     }
   };
 
+  // Failed Attempt & Rate Limiting Lockout State
+  const [attenderFailedCount, setAttenderFailedCount] = useState(0);
+  const [attenderLockoutUntil, setAttenderLockoutUntil] = useState(0);
+  const [adminFailedCount, setAdminFailedCount] = useState(0);
+  const [adminLockoutUntil, setAdminLockoutUntil] = useState(0);
+  const [currentTime, setCurrentTime] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const attenderRemainingLockSecs = Math.max(0, Math.ceil((attenderLockoutUntil - currentTime) / 1000));
+  const adminRemainingLockSecs = Math.max(0, Math.ceil((adminLockoutUntil - currentTime) / 1000));
+
   const handleAttenderStart = (e) => {
     if (e) e.preventDefault();
+    if (attenderRemainingLockSecs > 0) {
+      toast.error(`Too many failed attempts. Locked for ${attenderRemainingLockSecs}s.`);
+      return;
+    }
     if (!selectedAttenderId) { toast.error("Please select your name."); return; }
     
     const attenderObj = attenders.find(a => a.id === selectedAttenderId);
     if (!attenderObj) { toast.error("Attender not found."); return; }
 
-    const inputTrimmed = attenderPassword.trim();
+    const inputTrimmed = String(attenderPassword || "").trim();
     if (!inputTrimmed) {
       toast.error("Please enter your 6-digit password.");
       return;
     }
 
     if (attenderObj.password && inputTrimmed !== String(attenderObj.password).trim()) {
-      toast.error("Incorrect password for " + attenderObj.name);
+      const nextFail = attenderFailedCount + 1;
+      setAttenderFailedCount(nextFail);
+      if (nextFail >= 5) {
+        const lockoutTime = Date.now() + 60000;
+        setAttenderLockoutUntil(lockoutTime);
+        setAttenderFailedCount(0);
+        toast.error("Too many failed attempts! Account locked for 60 seconds.", { duration: 6000 });
+      } else {
+        toast.error(`Incorrect password. ${5 - nextFail} attempt(s) remaining.`);
+      }
       return;
     }
 
+    setAttenderFailedCount(0);
+    setAttenderLockoutUntil(0);
     toast.success(`Welcome back, ${attenderObj.name}!`);
     setMode("attender");
   };
 
   const handleAdminAuthSubmit = async (e) => {
     if (e) e.preventDefault();
-    const inputTrimmed = adminPasswordInput.trim();
+    if (adminRemainingLockSecs > 0) {
+      toast.error(`Too many failed attempts. Locked for ${adminRemainingLockSecs}s.`);
+      return;
+    }
+    const inputTrimmed = String(adminPasswordInput || "").trim();
     if (!inputTrimmed) {
       toast.error("Please enter 6-digit admin password.");
       return;
@@ -81,11 +115,22 @@ export default function CallCenterApp() {
     try {
       const realAdminPassword = await getAdminPassword();
       if (inputTrimmed === String(realAdminPassword).trim()) {
+        setAdminFailedCount(0);
+        setAdminLockoutUntil(0);
         toast.success("Admin access granted!");
         setAdminPasswordInput("");
         setMode("admin");
       } else {
-        toast.error("Incorrect Admin Password.");
+        const nextFail = adminFailedCount + 1;
+        setAdminFailedCount(nextFail);
+        if (nextFail >= 5) {
+          const lockoutTime = Date.now() + 60000;
+          setAdminLockoutUntil(lockoutTime);
+          setAdminFailedCount(0);
+          toast.error("Too many failed attempts! Admin login locked for 60 seconds.", { duration: 6000 });
+        } else {
+          toast.error(`Incorrect Admin Password. ${5 - nextFail} attempt(s) remaining.`);
+        }
       }
     } catch (err) {
       toast.error("Authentication error: " + err.message);
@@ -242,10 +287,10 @@ export default function CallCenterApp() {
 
                 <button
                   type="submit"
-                  disabled={!selectedAttenderId || !attenderPassword}
+                  disabled={!selectedAttenderId || !attenderPassword || attenderRemainingLockSecs > 0}
                   className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold text-sm rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 pt-3.5 pb-3.5"
                 >
-                  Start Calling <ChevronRight size={18} />
+                  {attenderRemainingLockSecs > 0 ? `🔒 Locked out (${attenderRemainingLockSecs}s)` : <>Start Calling <ChevronRight size={18} /></>}
                 </button>
               </form>
             )}
@@ -262,15 +307,17 @@ export default function CallCenterApp() {
                       type={showAdminPass ? "text" : "password"}
                       maxLength={6}
                       autoFocus
+                      disabled={adminRemainingLockSecs > 0}
                       placeholder="••••••"
                       value={adminPasswordInput}
                       onChange={e => setAdminPasswordInput(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-800/90 border border-slate-700/80 rounded-2xl text-white font-mono text-center text-lg tracking-[0.3em] font-bold placeholder:tracking-[0.2em] placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                      className="w-full px-4 py-3 bg-slate-800/90 border border-slate-700/80 rounded-2xl text-white font-mono text-center text-lg tracking-[0.3em] font-bold placeholder:tracking-[0.2em] placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-40 transition-all"
                     />
                     <button
                       type="button"
                       onClick={() => setShowAdminPass(!showAdminPass)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
+                      disabled={adminRemainingLockSecs > 0}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white disabled:opacity-40 transition-colors"
                     >
                       {showAdminPass ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
@@ -290,10 +337,12 @@ export default function CallCenterApp() {
 
                 <button
                   type="submit"
-                  disabled={isVerifyingAdmin || !adminPasswordInput}
+                  disabled={isVerifyingAdmin || !adminPasswordInput || adminRemainingLockSecs > 0}
                   className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold text-sm rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 pt-3.5 pb-3.5"
                 >
-                  {isVerifyingAdmin ? "Verifying..." : "Unlock Admin Panel"} <ChevronRight size={18} />
+                  {adminRemainingLockSecs > 0 
+                    ? `🔒 Locked out (${adminRemainingLockSecs}s)` 
+                    : (isVerifyingAdmin ? "Verifying..." : <>Unlock Admin Panel <ChevronRight size={18} /></>)}
                 </button>
               </form>
             )}
