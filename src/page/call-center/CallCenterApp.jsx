@@ -152,8 +152,8 @@ export default function CallCenterApp() {
               <Phone size={28} fill="white" className="text-white" />
             </div>
             <h1 className="text-2xl font-black text-white tracking-tight">TGF Call Center</h1>
-            <p className="text-slate-400 text-xs font-medium">Happy Thoughts Foundation</p>
           </div>
+
 
           {/* Segmented Tab Switcher */}
           <div className="bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl grid grid-cols-2 gap-1.5 shadow-lg">
