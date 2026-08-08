@@ -2,20 +2,28 @@ import React, { useState, useEffect } from "react";
 import { toast } from "react-hot-toast";
 import * as XLSX from "xlsx";
 import {
-  UserPlus, Trash2, Edit, ClipboardList, RefreshCw, SlidersHorizontal, Download, ArrowRightLeft
+  UserPlus, Trash2, Edit, ClipboardList, RefreshCw, SlidersHorizontal, Download, ArrowRightLeft, Key, Copy, Check, Eye, EyeOff, RotateCcw
 } from "lucide-react";
 import {
-  createAttender, updateAttender, deleteAttender,
+  createAttender, updateAttender, deleteAttender, generateRandomPassword,
   reassignContactsToPool, reassignContactsBetweenAttenders,
   subscribeToCallLogs, getAttenderContactCount
 } from "../../../../lib/db";
 import { cleanExportRow } from "../utils.jsx";
 
+import { AdminPasswordCard } from "./AdminPasswordCard";
+
 export default function AttendersTab({ programs, attenders, onReloadAttenders }) {
+
   const [newAttenderName, setNewAttenderName] = useState("");
   const [editingAttender, setEditingAttender] = useState(null);
   const [editName, setEditName] = useState("");
+  const [editPassword, setEditPassword] = useState("");
   const [creating, setCreating] = useState(false);
+  const [createdInfo, setCreatedInfo] = useState(null); // { name, password }
+
+  const [visiblePasswords, setVisiblePasswords] = useState({}); // { [attenderId]: boolean }
+  const [copiedId, setCopiedId] = useState(null);
 
   // Sheet View Modal
   const [viewingAttender, setViewingAttender] = useState(null);
@@ -51,9 +59,10 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
     if (!newAttenderName.trim()) return;
     setCreating(true);
     try {
-      await createAttender(newAttenderName.trim());
+      const res = await createAttender(newAttenderName.trim());
       setNewAttenderName("");
-      toast.success("Attender created successfully!");
+      setCreatedInfo({ name: newAttenderName.trim(), password: res.password });
+      toast.success(`Attender created! Password: ${res.password}`, { duration: 5000 });
       onReloadAttenders();
     } catch (err) {
       toast.error("Failed to create attender: " + err.message);
@@ -66,14 +75,36 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
     e.preventDefault();
     if (!editName.trim() || !editingAttender) return;
     try {
-      await updateAttender(editingAttender.id, editName.trim());
+      await updateAttender(editingAttender.id, {
+        name: editName.trim(),
+        password: editPassword.trim() || editingAttender.password || generateRandomPassword()
+      });
       setEditingAttender(null);
       setEditName("");
-      toast.success("Attender updated!");
+      setEditPassword("");
+      toast.success("Attender details updated!");
       onReloadAttenders();
     } catch (err) {
       toast.error("Update failed: " + err.message);
     }
+  };
+
+  const handleResetPassword = async (attender) => {
+    const newPass = generateRandomPassword();
+    try {
+      await updateAttender(attender.id, { password: newPass });
+      toast.success(`Reset password for ${attender.name}: ${newPass}`, { duration: 6000 });
+      onReloadAttenders();
+    } catch (err) {
+      toast.error("Failed to reset password: " + err.message);
+    }
+  };
+
+  const copyToClipboard = (text, id) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    toast.success("Password copied to clipboard!");
+    setTimeout(() => setCopiedId(null), 2000);
   };
 
   const handleDelete = async (id, name) => {
@@ -192,11 +223,32 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
       <div className="grid md:grid-cols-3 gap-8">
         {/* Left Form Column */}
         <div className="space-y-6">
+          {/* Highlighted Admin Security & Password Card */}
+          <AdminPasswordCard highlighted={true} />
+
           <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+
             <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2 text-base">
               <UserPlus size={18} className="text-indigo-600" />
               {editingAttender ? "Edit Attender Profile" : "Add New Attender"}
             </h3>
+
+            {createdInfo && (
+              <div className="mb-4 p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs font-bold text-emerald-800">
+                <div>
+                  <p>🎉 Created "{createdInfo.name}"</p>
+                  <p className="font-mono text-sm tracking-wider mt-0.5">PIN: {createdInfo.password}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(createdInfo.password, "created-info")}
+                  className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition"
+                >
+                  <Copy size={12} /> Copy
+                </button>
+              </div>
+            )}
+
 
             {editingAttender ? (
               <form onSubmit={handleUpdate} className="space-y-4">
@@ -205,8 +257,19 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
                   <input type="text" value={editName} onChange={e => setEditName(e.target.value)} required
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                 </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 mb-1.5 uppercase">6-Digit Password</label>
+                  <div className="flex gap-2">
+                    <input type="text" maxLength={6} value={editPassword} onChange={e => setEditPassword(e.target.value)} placeholder={editingAttender.password || "Auto-generated"}
+                      className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-mono tracking-widest font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    <button type="button" onClick={() => setEditPassword(generateRandomPassword())}
+                      className="px-3 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-bold rounded-2xl text-xs flex items-center gap-1 transition">
+                      <RotateCcw size={14} /> New
+                    </button>
+                  </div>
+                </div>
                 <div className="flex gap-2">
-                  <button type="submit" className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm transition shadow-sm">Update</button>
+                  <button type="submit" className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm transition shadow-sm">Update Profile</button>
                   <button type="button" onClick={() => setEditingAttender(null)} className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-gray-600 font-bold rounded-xl text-sm transition">Cancel</button>
                 </div>
               </form>
@@ -219,7 +282,7 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
                 </div>
                 <button type="submit" disabled={creating}
                   className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm transition shadow-sm">
-                  Add Attender
+                  Add Attender (Auto-PIN)
                 </button>
               </form>
             )}
@@ -229,35 +292,66 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
         {/* Right List Column */}
         <div className="md:col-span-2 space-y-6">
           <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-            <h3 className="font-bold text-slate-800 mb-4">Attenders List</h3>
+            <h3 className="font-bold text-slate-800 mb-4">Attenders List ({attenders.length})</h3>
             <div className="divide-y divide-gray-50 border border-gray-50 rounded-2xl overflow-hidden">
-              {attenders.map(a => (
-                <div key={a.id} className="p-4 flex items-center justify-between hover:bg-gray-50/50 transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-indigo-100 rounded-2xl flex items-center justify-center font-black text-indigo-700 uppercase">
-                      {a.name[0]}
+              {attenders.map(a => {
+                const isPassVisible = visiblePasswords[a.id];
+                const currentPass = a.password || "------";
+                return (
+                  <div key={a.id} className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-gray-50/50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-indigo-100 rounded-2xl flex items-center justify-center font-black text-indigo-700 uppercase">
+                        {a.name[0]}
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-slate-800">{a.name}</h4>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-xs font-mono font-bold">
+                            <Key size={12} className="text-indigo-600" />
+                            {isPassVisible ? currentPass : "••••••"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setVisiblePasswords(prev => ({ ...prev, [a.id]: !prev[a.id] }))}
+                            className="text-slate-400 hover:text-slate-600 p-0.5"
+                            title={isPassVisible ? "Hide password" : "Show password"}
+                          >
+                            {isPassVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(currentPass, a.id)}
+                            className="text-slate-400 hover:text-indigo-600 p-0.5"
+                            title="Copy password"
+                          >
+                            {copiedId === a.id ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <h4 className="font-bold text-slate-800">{a.name}</h4>
-                      <p className="text-xs text-slate-400 mt-0.5">ID: {a.id}</p>
+
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => handleResetPassword(a)}
+                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-xs flex items-center gap-1 transition"
+                        title="Generate new random 6-digit password">
+                        <RotateCcw size={12} /> Reset PIN
+                      </button>
+                      <button onClick={() => { setViewingAttender(a); setViewingProgramId(""); setShowSheetModal(true); }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-xs transition">
+                        <ClipboardList size={14} /> Worksheets
+                      </button>
+                      <button onClick={() => { setEditingAttender(a); setEditName(a.name); setEditPassword(a.password || ""); }}
+                        className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition">
+                        <Edit size={16} />
+                      </button>
+                      <button onClick={() => handleDelete(a.id, a.name)}
+                        className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition">
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => { setViewingAttender(a); setViewingProgramId(""); setShowSheetModal(true); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-xs transition">
-                      <ClipboardList size={14} /> View Worksheets
-                    </button>
-                    <button onClick={() => { setEditingAttender(a); setEditName(a.name); }}
-                      className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition">
-                      <Edit size={16} />
-                    </button>
-                    <button onClick={() => handleDelete(a.id, a.name)}
-                      className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition">
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {attenders.length === 0 && (
                 <div className="py-12 text-center text-gray-400 font-medium">No attenders registered.</div>
               )}

@@ -44,7 +44,7 @@ export const getGhlLocationId = () => {
 };
 
 const ghlHeaders = () => {
-  const isV2 = GHL_TOKEN.startsWith("pit-");
+  const isV2 = GHL_TOKEN ? GHL_TOKEN.startsWith("pit-") : true;
   const headers = {
     "Authorization": `Bearer ${GHL_TOKEN}`,
   };
@@ -56,15 +56,29 @@ const ghlHeaders = () => {
 };
 
 /**
+ * Secure proxy helper to execute GHL requests via Vercel serverless API (/api/ghl).
+ * Hides secret API tokens from appearing in browser Network DevTools.
+ */
+const callGhlApiProxy = async (endpoint, method = "POST", payload = null, params = null, signal = null) => {
+  try {
+    const proxyRes = await fetch("/api/ghl", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint, method, payload, params }),
+      signal,
+    });
+    if (proxyRes.ok) {
+      return await proxyRes.json();
+    }
+  } catch (e) {
+    // Fall back to direct fetch if serverless endpoint is unreachable in local dev
+  }
+  return null;
+};
+
+/**
  * Fetch or search contacts.
  * Supports pagination via page/startAfter params depending on V1/V2.
- * @param {number} page - Page number (V2 only, 1-indexed)
- * @param {number} pageLimit - Results per page (max 100)
- * @param {string} [query] - Optional search query string
- * @param {Array} [filters] - Optional advanced V2 filters array
- * @param {string} [v1StartAfter] - V1 cursor startAfter timestamp
- * @param {string} [v1StartAfterId] - V1 cursor startAfter contact ID
- * @returns {Promise<{contacts: Array, total: number, count: number, meta?: any}>}
  */
 export const searchContacts = async (
   page = 1, 
@@ -75,9 +89,20 @@ export const searchContacts = async (
   v1StartAfterId = null,
   signal = null
 ) => {
-  const isV1 = !GHL_TOKEN.startsWith("pit-");
+  const isV1 = GHL_TOKEN && !GHL_TOKEN.startsWith("pit-");
   const locId = getGhlLocationId();
 
+  // Try secure serverless proxy first
+  const proxyResult = await callGhlApiProxy(
+    "searchContacts",
+    isV1 ? "GET" : "POST",
+    isV1 ? null : { locationId: locId, page, pageLimit, query: query || undefined, filters: filters || undefined },
+    isV1 ? { limit: pageLimit, query: query || undefined, startAfter: v1StartAfter || undefined, startAfterId: v1StartAfterId || undefined } : null,
+    signal
+  );
+  if (proxyResult) return proxyResult;
+
+  // Fallback to direct client fetch if serverless route is inactive
   if (isV1) {
     const url = new URL("https://rest.gohighlevel.com/v1/contacts/");
     url.searchParams.set("limit", pageLimit);
@@ -121,6 +146,7 @@ export const searchContacts = async (
     return res.json();
   }
 };
+
 
 /**
  * Fetch ALL contacts by paginating through search/list results.
@@ -223,11 +249,14 @@ export const fetchCustomFieldsMap = async (signal = null) => {
   if (cachedCustomFieldsMap) return cachedCustomFieldsMap;
 
   try {
-    const isV1 = !GHL_TOKEN.startsWith("pit-");
+    const isV1 = GHL_TOKEN && !GHL_TOKEN.startsWith("pit-");
     const locId = getGhlLocationId();
     let fields = [];
 
-    if (isV1) {
+    const proxyData = await callGhlApiProxy("customFields", "GET", null, { locationId: locId }, signal);
+    if (proxyData && proxyData.customFields) {
+      fields = proxyData.customFields || [];
+    } else if (isV1) {
       const url = "https://rest.gohighlevel.com/v1/custom-fields/";
       const res = await fetch(url, {
         method: "GET",
@@ -484,8 +513,13 @@ export const testConnection = async () => {
  * Supports both V1 tags/ endpoint and V2 locations/:locationId/tags endpoint.
  */
 export const fetchLocationTags = async (signal = null) => {
-  const isV1 = !GHL_TOKEN.startsWith("pit-");
+  const isV1 = GHL_TOKEN && !GHL_TOKEN.startsWith("pit-");
   const locId = getGhlLocationId();
+
+  const proxyData = await callGhlApiProxy("tags", "GET", null, { locationId: locId }, signal);
+  if (proxyData && proxyData.tags) {
+    return proxyData.tags;
+  }
 
   if (isV1) {
     const url = "https://rest.gohighlevel.com/v1/tags/";

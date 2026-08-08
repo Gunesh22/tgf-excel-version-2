@@ -8,6 +8,8 @@ import {
 import { OptionsManagerCard } from "./OptionsManagerCard";
 import { WhatsAppTemplatesCard } from "./WhatsAppTemplatesCard";
 import CompulsoryFieldBypassCard from "./CompulsoryFieldBypassCard";
+import { AdminPasswordCard } from "./AdminPasswordCard";
+
 import { 
   getSettingsOptions, 
   updateCallCenterOptions, 
@@ -304,10 +306,14 @@ export default function SettingsTab() {
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
+      {/* Admin Master Password Management */}
+      <AdminPasswordCard highlighted={false} />
+
       <div>
         <h2 className="text-xl font-black text-gray-900">Call Center Options</h2>
         <p className="text-xs text-gray-400 font-medium mt-0.5">Configure dropdown values for Attenders globally.</p>
       </div>
+
 
       <div className="grid md:grid-cols-3 gap-6">
         <OptionsManagerCard
