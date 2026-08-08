@@ -246,7 +246,11 @@ export function AttenderFilters({
   uniqueObjectionReasons,
 
   // Clear filters handler
-  handleClearAllFilters
+  handleClearAllFilters,
+
+  // Mobile hide options
+  hideTagFilter = false,
+  hideSort = false
 }) {
   const [filterSearchQuery, setFilterSearchQuery] = React.useState("");
 
@@ -282,7 +286,7 @@ export function AttenderFilters({
   return (
     <>
       {/* Tag Selector */}
-      {availableTags.length > 0 && (
+      {availableTags.length > 0 && !hideTagFilter && (
         <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-3 shrink-0 relative">
           <Tag size={14} className="text-indigo-500 shrink-0" />
           <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest shrink-0">Tag Filter</span>
@@ -442,18 +446,20 @@ export function AttenderFilters({
             />
           </div>
 
-          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5 shrink-0">
-            <SlidersHorizontal size={13} className="text-gray-400" />
-            <select
-              value={sortBy}
-              onChange={e => { setSortBy(e.target.value); setPage(1); }}
-              className="bg-transparent text-xs font-bold text-gray-600 focus:outline-none cursor-pointer"
-            >
-              <option value="activityDesc">Sort: Latest Activity</option>
-              <option value="createdDesc">Sort: Date Assigned</option>
-              <option value="nameAsc">Sort: Name (A-Z)</option>
-            </select>
-          </div>
+          {!hideSort && (
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5 shrink-0">
+              <SlidersHorizontal size={13} className="text-gray-400" />
+              <select
+                value={sortBy}
+                onChange={e => { setSortBy(e.target.value); setPage(1); }}
+                className="bg-transparent text-xs font-bold text-gray-600 focus:outline-none cursor-pointer"
+              >
+                <option value="activityDesc">Sort: Latest Activity</option>
+                <option value="createdDesc">Sort: Date Assigned</option>
+                <option value="nameAsc">Sort: Name (A-Z)</option>
+              </select>
+            </div>
+          )}
 
           <button
             onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}

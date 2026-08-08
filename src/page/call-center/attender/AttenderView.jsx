@@ -45,9 +45,20 @@ function parseTimestamp(t) {
 import { Pagination } from "./components/Pagination";
 import { AttenderFilters } from "./components/AttenderFilters";
 import { ContactTable } from "./components/ContactTable";
+import MobileAttenderView from "./mobile/MobileAttenderView";
+import MobileEditModal from "./mobile/MobileEditModal";
 
 // ─── Main Attender View ───────────────────────
 export default function AttenderView({ attenderId, attenderName, optionsVersion, onExit }) {
+  const [isMobileScreen, setIsMobileScreen] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobileScreen(window.innerWidth < 768);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
   const [programs, setPrograms] = useState([]);
   const [selectedProgramId, setSelectedProgramId] = useState("");
   const [selectedProgramName, setSelectedProgramName] = useState("");
@@ -218,6 +229,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   const openCallEntryDialog = () => {
     setEditingRow({
       _isNew: true,
+      _timestamp: Date.now(),
       programId: INCOMING_PROGRAM_ID,
       programName: INCOMING_PROGRAM_NAME,
       attenderId, attenderName,
@@ -1073,7 +1085,76 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 font-sans">
+    <>
+      {/* Mobile-Only Dedicated Layout (< 768px) */}
+      <div className="block md:hidden h-screen overflow-hidden">
+        <MobileAttenderView
+          optionsVersion={optionsVersion}
+          attenderId={attenderId}
+          attenderName={attenderName}
+          filteredLogs={sortedLogs}
+          allLogsCount={callLogs.length}
+          filterStatus={filterStatus}
+          setFilterStatus={setFilterStatus}
+          onExit={onExit}
+          openCallEntryDialog={openCallEntryDialog}
+          setEditingRow={setEditingRow}
+          setGlobalSearchOpen={setGlobalSearchOpen}
+          showAdvancedFilters={showAdvancedFilters}
+          setShowAdvancedFilters={setShowAdvancedFilters}
+          resetOtherFilters={resetOtherFilters}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
+          setPage={setPage}
+          hiddenColumns={hiddenColumns}
+          allPossibleCols={allPossibleCols}
+          setIsColumnModalOpen={setIsColumnModalOpen}
+          availableTags={availableTags}
+          selectedTags={selectedTags}
+          setSelectedTags={setSelectedTags}
+          tagDropdownOpen={tagDropdownOpen}
+          setTagDropdownOpen={setTagDropdownOpen}
+          tagSearchQuery={tagSearchQuery}
+          setTagSearchQuery={setTagSearchQuery}
+          tagFilteredLogsLength={tagFilteredLogs.length}
+          activeFiltersCount={activeFiltersCount}
+          handleClearAllFilters={handleClearAllFilters}
+          filterSource={filterSource} setFilterSource={setFilterSource}
+          filterCity={filterCity} setFilterCity={setFilterCity}
+          filterCalledFor={filterCalledFor} setFilterCalledFor={setFilterCalledFor}
+          filterCallType={filterCallType} setFilterCallType={setFilterCallType}
+          filterSubProgram={filterSubProgram} setFilterSubProgram={setFilterSubProgram}
+          filterObjectionReason={filterObjectionReason} setFilterObjectionReason={setFilterObjectionReason}
+          filterCallbackStatus={filterCallbackStatus} setFilterCallbackStatus={setFilterCallbackStatus}
+          filterCallCount={filterCallCount} setFilterCallCount={setFilterCallCount}
+          filterGeneralStatus={filterGeneralStatus} setFilterGeneralStatus={setFilterGeneralStatus}
+          filterQueryStatus={filterQueryStatus} setFilterQueryStatus={setFilterQueryStatus}
+          filterAbhivyakti={filterAbhivyakti} setFilterAbhivyakti={setFilterAbhivyakti}
+          filterKhoji={filterKhoji} setFilterKhoji={setFilterKhoji}
+          filterDateType={filterDateType} setFilterDateType={setFilterDateType}
+          filterDateRange={filterDateRange} setFilterDateRange={setFilterDateRange}
+          customDateFrom={customDateFrom} setCustomDateFrom={setCustomDateFrom}
+          customDateTo={customDateTo} setCustomDateTo={setCustomDateTo}
+          customTimeFrom={customTimeFrom} setCustomTimeFrom={setCustomTimeFrom}
+          customTimeTo={customTimeTo} setCustomTimeTo={setCustomTimeTo}
+          uniqueSources={uniqueSources}
+          uniqueCities={uniqueCities}
+          uniqueCalledFor={uniqueCalledFor}
+          uniqueSubPrograms={uniqueSubPrograms}
+          uniqueObjectionReasons={uniqueObjectionReasons}
+          stats={stats}
+          programs={programs}
+          selectedProgramId={selectedProgramId}
+          setSelectedProgramId={setSelectedProgramId}
+          handleGetNumbers={handleGetNumbers}
+          isRequesting={isRequesting}
+        />
+      </div>
+
+      {/* Desktop-Only Layout (>= 768px) — 100% UNTOUCHED ORIGINAL CODE */}
+      <div className="hidden md:flex flex-col h-screen bg-gray-50 font-sans">
       <style>{`
         @keyframes slideUp {
           from { opacity: 0; transform: translateY(20px) scale(0.97); }
@@ -1500,5 +1581,57 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
         </div>
       )}
     </div>
+
+    {/* Shared Edit Modal (PC & Mobile Isolated) */}
+    {editingRow && (
+      isMobileScreen ? (
+        <MobileEditModal
+          key={editingRow.id || (editingRow._isNew ? `new-${editingRow._timestamp || Date.now()}` : "entry")}
+          optionsVersion={optionsVersion}
+          row={editingRow}
+          attenderId={attenderId}
+          attenderName={attenderName}
+          programs={programs.filter(p => p.id !== INCOMING_PROGRAM_ID && p.id !== OUTGOING_PROGRAM_ID)}
+          onSave={(updated, isOptimistic) => {
+            setCallLogs(prev => {
+              const index = prev.findIndex(l => l.id === updated.id);
+              if (index >= 0) {
+                const next = [...prev];
+                next[index] = { ...next[index], ...updated };
+                return next;
+              }
+              return [updated, ...prev];
+            });
+            if (!isOptimistic) setEditingRow(null);
+          }}
+          onDelete={handleDeleteRow}
+          onClose={() => setEditingRow(null)}
+        />
+      ) : (
+        <EditModal
+          key={editingRow.id || (editingRow._isNew ? `new-${editingRow._timestamp || Date.now()}` : "entry")}
+          optionsVersion={optionsVersion}
+          row={editingRow}
+          attenderId={attenderId}
+          attenderName={attenderName}
+          programs={programs.filter(p => p.id !== INCOMING_PROGRAM_ID && p.id !== OUTGOING_PROGRAM_ID)}
+          onSave={(updated, isOptimistic) => {
+            setCallLogs(prev => {
+              const index = prev.findIndex(l => l.id === updated.id);
+              if (index >= 0) {
+                const next = [...prev];
+                next[index] = { ...next[index], ...updated };
+                return next;
+              }
+              return [updated, ...prev];
+            });
+            if (!isOptimistic) setEditingRow(null);
+          }}
+          onDelete={handleDeleteRow}
+          onClose={() => setEditingRow(null)}
+        />
+      )
+    )}
+    </>
   );
 }
