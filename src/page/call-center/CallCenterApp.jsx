@@ -116,7 +116,6 @@ export default function CallCenterApp() {
       if (inputTrimmed === String(realAdminPassword).trim()) {
         setAdminFailedCount(0);
         setAdminLockoutUntil(0);
-        toast.success("Admin access granted!");
         setAdminPasswordInput("");
         setMode("admin");
       } else {
