@@ -95,7 +95,6 @@ export default function CallCenterApp() {
 
     setAttenderFailedCount(0);
     setAttenderLockoutUntil(0);
-    toast.success(`Welcome back, ${attenderObj.name}!`);
     setMode("attender");
   };
 
