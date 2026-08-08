@@ -103,7 +103,7 @@ export default function MobileEditModal({
     return "source";
   }, [edited]);
 
-  const [activeTab, setActiveTab] = useState("call");
+  const [activeTab, setActiveTab] = useState(() => (row && row._isNew ? "profile" : "call"));
   const [saving, setSaving] = useState(false);
   const [showEditHistory, setShowEditHistory] = useState(false);
   const [showCalledForPrompt, setShowCalledForPrompt] = useState(false);
