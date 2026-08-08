@@ -103,9 +103,44 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
   };
 
   return (
-    <div className="flex h-screen bg-[#F0F2F5] font-sans overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-64 bg-slate-950 flex flex-col h-full shrink-0">
+    <div className="flex flex-col md:flex-row h-screen bg-[#F0F2F5] font-sans overflow-hidden">
+      {/* Mobile Top Header */}
+      <div className="flex md:hidden flex-col bg-slate-950 border-b border-slate-800 shrink-0">
+        <div className="flex items-center justify-between p-3 border-b border-slate-800/60">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center">
+              <Settings size={16} className="text-white" />
+            </div>
+            <div>
+              <p className="text-white font-black text-xs leading-none">Admin Panel</p>
+              <p className="text-slate-500 text-[9px] font-medium mt-0.5">TGF Call Center</p>
+            </div>
+          </div>
+          <button onClick={onExit} className="flex items-center gap-1 px-3 py-1.5 bg-slate-800 text-slate-300 hover:text-white rounded-xl text-xs font-medium transition">
+            <ArrowLeft size={14} /> Exit
+          </button>
+        </div>
+        {/* Horizontal Scrollable Tabs */}
+        <div className="flex items-center gap-1.5 p-2 overflow-x-auto no-scrollbar">
+          {TAB_ITEMS.map(item => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                activeTab === item.id
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                  : "text-slate-400 hover:bg-slate-800 hover:text-white"
+              }`}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:flex w-64 bg-slate-950 flex-col h-full shrink-0">
         <div className="p-6 border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-indigo-600 rounded-2xl flex items-center justify-center">

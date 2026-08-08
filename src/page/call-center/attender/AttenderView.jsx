@@ -1082,14 +1082,14 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       `}</style>
 
       {/* Top Bar */}
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shrink-0 shadow-sm">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-4">
+      <header className="bg-white border-b border-gray-200 px-3 sm:px-6 py-3 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0 shadow-sm">
+        <div className="flex items-center justify-between md:justify-start gap-4 sm:gap-6">
+          <div className="flex items-center gap-3">
             <button onClick={onExit} className="p-2 hover:bg-gray-100 rounded-xl transition">
               <ArrowLeft size={18} className="text-gray-500" />
             </button>
             <div>
-              <h1 className="font-black text-gray-900 text-lg leading-none">My Call Sheet</h1>
+              <h1 className="font-black text-gray-900 text-base sm:text-lg leading-none">My Call Sheet</h1>
               <p className="text-xs text-gray-400 font-medium">{attenderName}</p>
             </div>
           </div>
@@ -1098,7 +1098,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           <div className="flex items-center bg-gray-100 p-0.5 rounded-xl border border-gray-200 shrink-0">
             <button
               onClick={() => setActiveView("sheet")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                 activeView === "sheet"
                   ? "bg-slate-800 text-white shadow-sm"
                   : "text-slate-500 hover:text-slate-700"
@@ -1108,7 +1108,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
             </button>
             <button
               onClick={() => setActiveView("performance")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                 activeView === "performance"
                   ? "bg-indigo-600 text-white shadow-sm"
                   : "text-slate-500 hover:text-slate-700"
@@ -1119,9 +1119,9 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* Get Numbers */}
-          <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-1.5">
+          <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-2.5 sm:px-3 py-1.5 flex-1 sm:flex-initial">
             {/* Searchable Tag Dropdown */}
             <div className="relative" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setProgramDropOpen(false); setProgramSearch(""); } }}>
               <button
