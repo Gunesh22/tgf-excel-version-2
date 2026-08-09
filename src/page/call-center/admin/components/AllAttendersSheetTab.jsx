@@ -38,7 +38,7 @@ import {
   CALL_TYPE_OPTIONS,
   isUnansweredCallback
 } from "../../attender/utils.js";
-import { parseTimestamp, cleanExportRow, getAllCallEntries, getCallsDoneCount } from "../utils.jsx";
+import { parseTimestamp, cleanExportRow, getAllCallEntries, getCallsDoneCount, getContactPhone } from "../utils.jsx";
 import { normalizePhone, verifyCallCenterCache } from "../../../../lib/db";
 
 // ── MultiSelect Dropdown Subcomponent ───────────────────────────────────────
@@ -333,9 +333,7 @@ export default function AllAttendersSheetTab({
       const nameKey = Object.keys(log).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase()));
       const contactName = nameKey ? log[nameKey] : (log.Name || log.name || "Unknown");
 
-      const phoneKey = Object.keys(log).find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno"].includes(k.toLowerCase()))
-        || Object.keys(log).find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
-      const contactPhone = phoneKey ? log[phoneKey] : (log.Phone || log.phone || "");
+      const contactPhone = getContactPhone(log) || log.Phone || log.Mobile || log.phone || log.mobile || "";
 
       const sourceKey = Object.keys(log).find(k => ["source", "sourse", "source of information", "source of informiton"].includes(k.toLowerCase()));
       const sourceVal = sourceKey ? String(log[sourceKey] || "").trim() : (log.Source || log.source || "");
@@ -492,7 +490,9 @@ export default function AllAttendersSheetTab({
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
         const name = (log.Name || "").toLowerCase();
-        const phone = (log.Phone || "").toLowerCase();
+        const phone = (log.Phone || log.Mobile || getContactPhone(log) || "").toLowerCase();
+        const phoneClean = phone.replace(/\D/g, "");
+        const queryClean = query.replace(/\D/g, "");
         const email = (log.Email || "").toLowerCase();
         const city = (log.City || "").toLowerCase();
         const state = (log.State || "").toLowerCase();
@@ -503,6 +503,7 @@ export default function AllAttendersSheetTab({
 
         const matches = name.includes(query) ||
           phone.includes(query) ||
+          (queryClean.length >= 4 && phoneClean.includes(queryClean)) ||
           email.includes(query) ||
           city.includes(query) ||
           state.includes(query) ||
@@ -1268,7 +1269,7 @@ export default function AllAttendersSheetTab({
 
                     {!hiddenColumns.includes("Phone") && (
                       <td className="py-2.5 px-4 border-r border-gray-100 font-semibold text-slate-700 align-top whitespace-nowrap">
-                        {log.Phone || "\u2014"}
+                        {log.Phone || log.Mobile || getContactPhone(log) || "\u2014"}
                       </td>
                     )}
 

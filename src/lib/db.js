@@ -2327,7 +2327,8 @@ const pruneContactForCacheForMonth = (c, monthStr) => {
   const pruned = {
     id: c.id,
     Name: c.Name || c.name || "",
-    Phone: c.Phone || c.phone || "",
+    Phone: c.Phone || c.phone || c.Mobile || c.mobile || "",
+    Mobile: c.Mobile || c.mobile || c.Phone || c.phone || "",
     tags: c.tags || [],
     programId: c.programId || "",
     programName: c.programName || "",
