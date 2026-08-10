@@ -29,8 +29,6 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
 
   useEffect(() => {
     loadAll();
-    // Run background check for completed months auto-locking / purging once on mount
-    runAutoLockAndPurgeCheck();
     const unsub = subscribeToCallCenterOptions((data) => {
       setSettingsOptions(data);
       updateDynamicOptions(data);
@@ -70,18 +68,18 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
     loadMonths();
   }, []);
 
-  // Hoisted subscription to registrations - always subscribe to ALL registrations for Abhivyakti tab
+  // Hoisted subscription to registrations — month-scoped and cached in IndexedDB
   useEffect(() => {
-    if (activeTab !== "abhivyakti") return;
+    if (activeTab !== "abhivyakti" || !selectedMonth) return;
     setRegistrationsLoading(true);
-    const unsubRegs = subscribeToRegistrations("ALL", (data) => {
+    const unsubRegs = subscribeToRegistrations(selectedMonth, (data) => {
       setRegistrations(data);
       setRegistrationsLoading(false);
     });
     return () => {
       if (unsubRegs) unsubRegs();
     };
-  }, [activeTab]);
+  }, [activeTab, selectedMonth]);
 
   const loadAll = async () => {
     setIsLoading(true);

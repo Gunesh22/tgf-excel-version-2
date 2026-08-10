@@ -3008,6 +3008,17 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
     targetOption = getMonthStr(new Date());
   }
 
+  const cacheKey = `tgf_admin_logs_${targetOption}_${tag || "ALL"}`;
+
+  // 1. Immediately emit cached admin logs from IndexedDB if available (0ms, 0 Firebase reads)
+  getIDBCache(cacheKey).then(cachedLogs => {
+    if (Array.isArray(cachedLogs) && cachedLogs.length > 0) {
+      finalCallback(cachedLogs);
+    }
+  }).catch(err => {
+    console.warn("Failed to load admin call logs from IndexedDB:", err);
+  });
+
   const { startMonth, endMonth } = getMonthRange(targetOption);
 
   let lockedDocs = [];
@@ -3095,7 +3106,8 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
       const tb = b.createdAt || 0;
       return ta - tb;
     });
-    
+
+    setIDBCache(cacheKey, logs).catch(err => console.warn("Failed to save admin logs to IDB:", err));
     finalCallback(logs);
   };
 
