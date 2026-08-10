@@ -3630,39 +3630,73 @@ export const updateCallCenterOptions = async (updates) => {
   await setDoc(docRef, updates, { merge: true });
 };
 
+let inMemoryOptions = null;
+let optionsUnsubscribe = null;
+const optionsSubscribers = new Set();
+
 export const subscribeToCallCenterOptions = (onUpdate) => {
-  const docRef = doc(db, "settings", "call_center_options");
-  return onSnapshot(docRef, (snap) => {
-    if (snap.exists()) {
-      const data = snap.data();
-      onUpdate({
-        statusOptions: data.statusOptions || DEFAULT_STATUS_OPTIONS,
-        sourceOptions: data.sourceOptions || DEFAULT_SOURCE_OPTIONS,
-        calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS,
-        connectedStatuses: data.connectedStatuses || DEFAULT_CONNECTED_STATUSES,
-        notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
-        optionalCompulsoryStatuses: data.optionalCompulsoryStatuses || data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
-        whatsappTemplates: data.whatsappTemplates || DEFAULT_WHATSAPP_TEMPLATES
+  optionsSubscribers.add(onUpdate);
+
+  // 1. Immediately emit in-memory options if available
+  if (inMemoryOptions) {
+    onUpdate(inMemoryOptions);
+  } else {
+    // Read from IndexedDB local cache for 0ms initial load
+    getIDBCache("tgf_call_center_options").then(cached => {
+      if (cached && !inMemoryOptions) {
+        inMemoryOptions = cached;
+        onUpdate(cached);
+      }
+    }).catch(err => console.warn("Failed to load options from IDB:", err));
+  }
+
+  // 2. Start SINGLE global Firestore listener if not active yet
+  if (!optionsUnsubscribe) {
+    const docRef = doc(db, "settings", "call_center_options");
+    optionsUnsubscribe = onSnapshot(docRef, (snap) => {
+      let opts = null;
+      if (snap.exists()) {
+        const data = snap.data();
+        opts = {
+          statusOptions: data.statusOptions || DEFAULT_STATUS_OPTIONS,
+          sourceOptions: data.sourceOptions || DEFAULT_SOURCE_OPTIONS,
+          calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS,
+          connectedStatuses: data.connectedStatuses || DEFAULT_CONNECTED_STATUSES,
+          notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
+          optionalCompulsoryStatuses: data.optionalCompulsoryStatuses || data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
+          whatsappTemplates: data.whatsappTemplates || DEFAULT_WHATSAPP_TEMPLATES
+        };
+      } else {
+        opts = {
+          statusOptions: DEFAULT_STATUS_OPTIONS,
+          sourceOptions: DEFAULT_SOURCE_OPTIONS,
+          calledForOptions: DEFAULT_CALLED_FOR_OPTIONS,
+          connectedStatuses: DEFAULT_CONNECTED_STATUSES,
+          notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
+          optionalCompulsoryStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
+          whatsappTemplates: DEFAULT_WHATSAPP_TEMPLATES
+        };
+        setDoc(docRef, opts, { merge: true }).catch(e => console.error("Failed to init options:", e));
+      }
+
+      inMemoryOptions = opts;
+      setIDBCache("tgf_call_center_options", opts).catch(e => console.warn("Failed to save options to IDB:", e));
+
+      // Broadcast to all active subscribers
+      optionsSubscribers.forEach(cb => {
+        try { cb(opts); } catch (err) { console.error("Subscriber error:", err); }
       });
-    } else {
-      // Initialize with defaults if it doesn't exist yet
-      const defaults = {
-        statusOptions: DEFAULT_STATUS_OPTIONS,
-        sourceOptions: DEFAULT_SOURCE_OPTIONS,
-        calledForOptions: DEFAULT_CALLED_FOR_OPTIONS,
-        connectedStatuses: DEFAULT_CONNECTED_STATUSES,
-        notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
-        optionalCompulsoryStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
-        whatsappTemplates: DEFAULT_WHATSAPP_TEMPLATES
-      };
-      setDoc(docRef, defaults, { merge: true }).then(() => {
-        onUpdate(defaults);
-      }).catch(e => {
-        console.error("Failed to initialize default settings options:", e);
-        onUpdate(defaults);
-      });
+    }, err => console.error("subscribeToCallCenterOptions error:", err));
+  }
+
+  // Return unsubscriber function
+  return () => {
+    optionsSubscribers.delete(onUpdate);
+    if (optionsSubscribers.size === 0 && optionsUnsubscribe) {
+      optionsUnsubscribe();
+      optionsUnsubscribe = null;
     }
-  });
+  };
 };
 
 export const logInteraction = async ({
