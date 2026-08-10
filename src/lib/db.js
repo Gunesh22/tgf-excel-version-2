@@ -1149,48 +1149,52 @@ export const subscribeToCallLogs = (...args) => {
     });
   }
 
-  const q = query(
-    collection(db, "contacts"),
-    or(
-      where("assignedTo", "==", attenderId),
-      where("assignedTo", "array-contains", attenderId)
-    )
+  const currentMonthStr = getMonthStr(new Date());
+  const cacheQuery = query(
+    collection(db, "callCenterCache"),
+    where(documentId(), ">=", currentMonthStr),
+    where(documentId(), "<=", currentMonthStr + "\uf8ff")
   );
 
-  return onSnapshot(q, snap => {
-    let logs = snap.docs
-      .map(d => {
-        const rawData = d.data();
-        const hasState = rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined;
-        const attState = hasState ? rawData.attenderStates[attenderId] : {};
-        return {
-          id: d.id,
-          ...rawData,
-          _rawData: rawData, // Preserve the exact un-overlaid document data for badge lookups
-          
-          // Overlay attender-specific state fields only if they exist, otherwise fall back to top-level/root document values
-          status: attState.status !== undefined ? attState.status : (rawData.status || ""),
-          remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
-          callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
-          history: attState.history !== undefined ? attState.history : (rawData.history || []),
-          callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
-          callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
-          objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
-          lastCalledAt: attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null),
-          firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
-          registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : (rawData.registeredYearMonth || null),
-          
-          // Source and Called For are now attender-specific as well
-          Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
-          "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
-          _hidden: attState._hidden === true,
-          
-          attenderId: attenderId,
-          attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
-        };
-      })
-      .filter(log => !log._deleted && !log._hidden);
+  return onSnapshot(cacheQuery, snap => {
+    const contactsMap = {};
+    snap.docs.filter(d => d.id !== "contacts").forEach(docSnap => {
+      const docContacts = docSnap.data().contacts || {};
+      Object.entries(docContacts).forEach(([id, rawData]) => {
+        if (!rawData) return;
+        const isAssignedToMe = rawData.attenderId === attenderId || 
+          rawData.assignedTo === attenderId || 
+          (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderId)) ||
+          (rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined);
 
+        if (isAssignedToMe) {
+          const hasState = rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined;
+          const attState = hasState ? rawData.attenderStates[attenderId] : {};
+          contactsMap[id] = {
+            id: id,
+            ...rawData,
+            _rawData: rawData,
+            status: attState.status !== undefined ? attState.status : (rawData.status || ""),
+            remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
+            callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
+            history: attState.history !== undefined ? attState.history : (rawData.history || []),
+            callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
+            callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
+            objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
+            lastCalledAt: attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null),
+            firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
+            registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : (rawData.registeredYearMonth || null),
+            Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
+            "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
+            _hidden: attState._hidden === true,
+            attenderId: attenderId,
+            attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
+          };
+        }
+      });
+    });
+
+    let logs = Object.values(contactsMap).filter(log => !log._deleted && !log._hidden);
 
     // Filter by tag client-side if a specific tag is provided
     if (tag && tag !== "ALL") {
