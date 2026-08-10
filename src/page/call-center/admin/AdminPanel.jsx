@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { toast } from "react-hot-toast";
 import { Settings, ArrowLeft, ChevronRight, Loader } from "lucide-react";
 import { getPrograms, getAttenders, subscribeToCallCenterOptions, subscribeToAllCallLogs, subscribeToRegistrations, getRegistrationMonths, runAutoLockAndPurgeCheck } from "../../../lib/db";
+import { updateDynamicOptions } from "../attender/utils";
 import ImportContacts from "../ImportContacts";
 import { TAB_ITEMS } from "./utils.jsx";
 import DashboardTab from "./components/DashboardTab";
