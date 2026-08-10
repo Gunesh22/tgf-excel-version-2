@@ -1132,6 +1132,23 @@ export const subscribeToCallLogs = (...args) => {
     [attenderId, callback] = args;
   }
 
+  const cacheKey = `tgf_attender_logs_${attenderId}`;
+
+  // 1. Immediately emit cached logs from IndexedDB if available (0-second UI load, 0 Firebase reads)
+  if (attenderId) {
+    getIDBCache(cacheKey).then(cachedLogs => {
+      if (Array.isArray(cachedLogs) && cachedLogs.length > 0) {
+        let filtered = cachedLogs;
+        if (tag && tag !== "ALL") {
+          filtered = cachedLogs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
+        }
+        callback(filtered);
+      }
+    }).catch(err => {
+      console.warn("Failed to load attender logs from IndexedDB:", err);
+    });
+  }
+
   const q = query(
     collection(db, "contacts"),
     or(
@@ -1205,7 +1222,12 @@ export const subscribeToCallLogs = (...args) => {
       }
       rest.push(log);
     });
-    callback([...overdue, ...rest]);
+
+    const finalLogs = [...overdue, ...rest];
+    if (attenderId) {
+      setIDBCache(cacheKey, finalLogs).catch(err => console.warn("Failed to update IndexedDB logs cache:", err));
+    }
+    callback(finalLogs);
   }, err => console.error("subscribeToCallLogs error:", err));
 };
 
@@ -1428,8 +1450,19 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
 
   // Handle "Reg.Done" registrations collection sync (highly robust, history-driven)
   try {
-    const freshSnap = await getDoc(contactRef);
-    const freshData = freshSnap.exists() ? freshSnap.data() : null;
+    const mergedAttenderStates = { ...(logData.attenderStates || {}) };
+    if (attenderId) {
+      mergedAttenderStates[attenderId] = {
+        ...(mergedAttenderStates[attenderId] || {}),
+        ...attenderSpecificUpdates
+      };
+    }
+    const freshData = {
+      ...logData,
+      ...sharedUpdates,
+      attenderStates: mergedAttenderStates,
+      updatedAt: new Date()
+    };
 
     if (!freshData || freshData._deleted) {
       // If contact is deleted, clean up all its registration snapshots
@@ -1563,8 +1596,8 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
   } catch (e) {
     console.error("Error during registration sync:", e);
   }
-  // Sync to callCenterCache
-  await updateCacheContacts([logId]);
+  // Sync to callCenterCache using in-memory freshData (0 extra getDoc calls)
+  await updateCacheContacts([logId], { [logId]: freshData });
 };
 
 // ─────────────────────────────────────────────
@@ -2493,7 +2526,13 @@ export const rebuildCallCenterCache = async () => {
 
 export const updateContactInActiveCache = async (month, contactId, prunedContact) => {
   const cacheColl = collection(db, "callCenterCache");
-  const snap = await getDocs(cacheColl);
+  // Query ONLY parts belonging to this month instead of reading all historical cache documents
+  const monthQuery = query(
+    cacheColl,
+    where(documentId(), ">=", month),
+    where(documentId(), "<=", month + "\uf8ff")
+  );
+  const snap = await getDocs(monthQuery);
   
   let targetDoc = null;
   const parts = [];
@@ -2712,7 +2751,7 @@ export const updateContactInLockedReport = async (month, contactId, prunedContac
   }
 };
 
-export const updateCacheContacts = async (contactIds) => {
+export const updateCacheContacts = async (contactIds, inMemoryDataMap = null) => {
   if (!contactIds || contactIds.length === 0) return;
   
   try {
@@ -2722,6 +2761,10 @@ export const updateCacheContacts = async (contactIds) => {
     for (let i = 0; i < contactIds.length; i += BATCH_SIZE) {
       const batchIds = contactIds.slice(i, i + BATCH_SIZE);
       const batchPromises = batchIds.map(async (id) => {
+        if (inMemoryDataMap && inMemoryDataMap[id]) {
+          const data = inMemoryDataMap[id];
+          return { id, snap: { exists: () => true, data: () => data } };
+        }
         const contactRef = doc(db, "contacts", id);
         const snap = await getDoc(contactRef);
         return { id, snap };
@@ -2738,7 +2781,7 @@ export const updateCacheContacts = async (contactIds) => {
     contactSnaps.forEach(({ id, snap }) => {
       const exists = snap.exists();
       const raw = exists ? snap.data() : null;
-      const isLive = exists && raw.isAssigned && !raw._deleted;
+      const isLive = exists && raw.isAssigned !== false && !raw._deleted;
 
       const contactMonths = new Set();
       // Even if not live, check history to find months this contact belonged to, so we can clean them up.

@@ -373,3 +373,198 @@ export function processAutomatedPipeline(lead, selectedOutcome, callbackTask = n
 }
 ```
 
+### 8.1 Status Definitions & Operational Clarifications
+
+#### 1. `Shivir done` (or `Shivir already done`)
+- **Definition**: 
+  - *Scenario A*: Attender called lead, gave info, and the lead completed registration on their own and completed the Shivir.
+  - *Scenario B*: Lead has already completed that specific Shivir in the past prior to/outside this call.
+- **Auto-Pipeline Stage**: **`Registered / Won`** (Lead has completed the target program).
+
+#### 2. `Next time`
+- **Definition**: Lead expresses intent to attend the Shivir in a future batch ("will do Shivir anytime later"), but no specific date or time is set yet.
+- **Auto-Pipeline Stage**: **`In Communication`** (Future Nurture / Interested), distinct from `Follow-Up Scheduled` (which strictly requires a specific locked Date & Time task).
+
+#### 3. Legacy Status Mapping Table
+
+| Legacy System Status | Exact Operational Meaning | Auto-Pipeline Stage |
+| :--- | :--- | :--- |
+| `no answer`, `NA`, `Busy`, `Call Cut`, `switched off` | Dial attempted, no connection. | **`Attempting Contact`** (or **`Closed / Invalid`** if 5x) |
+| `Info given`, `Interested` | Spoke to lead, details provided. | **`In Communication`** |
+| `Next time` | Will do Shivir in future batch (date unknown). | **`In Communication`** (Future Pool) |
+| `reminder`, `Callback Requested` | Lead requested callback at specific Date & Time. | **`Follow-Up Scheduled`** (Task attached) |
+| `Reg.Done`, `Already Reg.d`, `Shivir done` | Registration completed / Shivir completed. | **`Registered / Won`** |
+| `Invalid No`, `Not interested`, `Called by mistake`, `Not possible` | Dead end / non-viable line. | **`Closed / Invalid`** |
+| `Query` | Inquiry requiring resolution (`Pending`/`Solved`). | **`Query Contacts`** |
+
+---
+
+## 9. Optimized Step-by-Step Pipeline Architecture
+
+### Key Operational Innovation: Attender Credit Separation
+In the previous model, `Shivir done` and `Already Reg.d` were mixed with `Reg.Done`. However, as identified:
+- **`Reg.Done`**: Attender actively influenced, pitch/converted the lead. ➔ **Attender gets Sales Conversion Credit.**
+- **`Shivir done` / `Already Reg.d`**: The lead registered independently or had already completed the Shivir in the past. ➔ **Zero attender contribution.** Must NOT inflate attender sales stats.
+
+### Simplified Linear Sales Pipeline Flow (With Direct Alumni Exit)
+
+```
+[1. New Lead] ──► [2. Attempting Contact] ──► [3. In Discussion] ──► [4. Converted / Won]
+                         │                             │
+        ┌────────────────┼────────────────┐            │
+        ▼                ▼                ▼            ▼
+[Existing Alumni] [Closed/Invalid]   [Query]   [Closed/Invalid]
+(Already Reg.d)   (5x / Bad No)     (Help)
+```
+
+### Detailed Pipeline Stage Specifications
+
+| Stage Name | Included Statuses / Conditions | Simple Operational Rule |
+| :--- | :--- | :--- |
+| **`1. New Lead`** | Fresh imports (`attemptCount == 0`) | Uncontacted pool ready for first dial attempt. |
+| **`2. Attempting Contact`** | `no answer`, `NA`, `Busy`, `switched off` | Attempted 1 to 4 times.<br>• **If Already Done Shivir** ➔ Exits directly to **`Existing Alumni`** (Zero Attender Credit).<br>• **If Unreachable / 5x Dials** ➔ Moves to **`Closed / Invalid`**.<br>• **If Connected & Pitching** ➔ Moves to **`In Discussion`**. |
+| **`3. In Discussion`** | `Info given`, `Interested`, `Next time`, `Callback` | Attender actively speaking/pitching.<br>• **If Registered** ➔ Moves to **`Converted / Won`** (Attender Sales Credit).<br>• **If Refused** ➔ Moves to **`Closed / Invalid`**. |
+| **`4. Converted / Won`** | **`Reg.Done`** | 🌟 **Attender Sales Credit**: Attender pitched and successfully registered the lead! |
+| **`Existing Alumni`** | **`Shivir done`**, **`Already Reg.d`** | 🚫 **Zero Attender Credit**: Exited directly from Attempting Contact. Lead already completed Shivir in past. |
+| **`Closed / Invalid`** | `Invalid No`, `Not interested`, `5x Max Dials` | Terminal state for dead, non-responsive, or refused leads. |
+
+
+### 9.1 Direct Helpline Inquiries (Non-Database Query Entry)
+
+#### The Dual Entry Model for Query Contacts:
+Not all query calls originate from pre-existing database leads. People call the dedicated query helpline number directly:
+
+```
+                               ┌─────────────────────────────────────────┐
+                               │       ENTRY POINT FOR QUERIES           │
+                               └────────────────────┬────────────────────┘
+                                                    │
+                 ┌──────────────────────────────────┴──────────────────────────────────┐
+                 ▼                                                                     ▼
+    [Path A: Existing DB Lead]                                            [Path B: New Helpline Caller]
+    (Lead already in system asks query)                                  (Person NOT in DB calls helpline)
+                 │                                                                     │
+                 └──────────────────────────────────┬──────────────────────────────────┘
+                                                    │
+                                                    ▼
+                                     ┌─────────────────────────────┐
+                                     │   Step 5: Query Contacts    │
+                                     │   (Status: Query / Pending) │
+                                     └──────────────┬──────────────┘
+                                                    │
+                                                    ▼
+                                           [Query Is Resolved]
+                                                    │
+                 ┌──────────────────────────────────┼──────────────────────────────────┐
+                 ▼                                  ▼                                  ▼
+      (Wants to Register)                  (Wants Info / Thinking)             (General Question Done)
+  Move ➔ Step 6: Converted/Won          Move ➔ Step 3: In Discussion        Mark ➔ Solved & Archive
+```
+
+#### Key Rules for Direct Helpline Queries:
+1. **Bypass Step 1 (New Leads)**: Incoming calls on the query helpline bypass the sales dialing queues (`Step 1: New Leads`) and spawn directly inside **`Step 5: Query Contacts`**.
+2. **Mandatory Query Tagging**: Created with `queryStatus: "Pending"` and `source: "Helpline / Query Call"`.
+3. **Resolution Routing**:
+   - If resolved and lead wants to enroll ➔ Attender registers them ➔ **`Step 6: Converted / Won`**.
+   - If resolved and lead needs time ➔ Auto-moves to ➔ **`Step 3: In Discussion`**.
+   - If simple informational query (e.g. venue address) ➔ Marked **`✅ Solved`** and archived cleanly.
+
+---
+
+### 9.2 The `Next time` Life Cycle: Future Batch Re-Activation Rule
+
+#### The Operational Problem with `Next time`:
+When a lead says *"I cannot join this current batch, I will join next time"* (which might be in 2, 4, or 6 months):
+- Calling them again tomorrow or next week will annoy them (since no new batch exists yet).
+- However, leaving them forgotten forever loses potential future conversions.
+
+#### The Solution: Automated Campaign Re-Activation Cycle
+
+1. **Phase 1: Park in Future Batch Pool (`Next time`)**:
+   - When an attender selects **`Next time`**:
+     - The lead moves to **`Future Batch Pool`** (Parked Nurture).
+     - `attemptCount` resets to `0` (since successful contact was established).
+     - Dialing for the *current* Shivir campaign stops.
+
+2. **Phase 2: Automated Campaign Launch Re-Activation**:
+   - When Admin launches a **New Shivir Campaign** (e.g., "Upcoming Batch"):
+     - The system automatically selects all leads in the **`Future Batch Pool`** (`status == "Next time"`).
+     - Auto-shifts them back into **`Step 1: New Leads`** (or **`Step 2: Attempting Contact`**) with `attemptCount = 0`.
+     - Attenders dial them fresh with the brand-new Shivir dates!
+
+---
+
+### 9.3 Dedicated Query Helpdesk Module (Separated from Sales Pipeline)
+
+#### Why Separate Query from Sales Pipeline?
+Queries are **Customer Support Tickets**, whereas the Pipeline is a **Sales Conversion Journey**. Mixing support calls into sales dialing queues creates clutter.
+
+#### The 3-State Query Helpdesk Workflow:
+
+```
+                  ┌─────────────────────────────────────────┐
+                  │          INCOMING HELPLINE CALL         │
+                  └────────────────────┬────────────────────┘
+                                       │
+            ┌──────────────────────────┴──────────────────────────┐
+            ▼                                                     ▼
+ [Attender Present & Answers]                          [Missed / Unattended Call]
+            │                                                     │
+            ▼                                                     ▼
+┌─────────────────────────────┐                       ┌─────────────────────────────┐
+│  State 1: Solved On Spot    │                       │  State 2: Unattended Query  │
+│  (Quick Info / Resolution)  │                       │  (Pending Callback Queue)   │
+└──────────────┬──────────────┘                       └──────────────┬──────────────┘
+               │                                                     │
+               │                                                     ▼
+               │                                      [Attender Calls Back & Answers]
+               │                                                     │
+               └──────────────────────┬──────────────────────────────┘
+                                      │
+                                      ▼
+                      [Bridge to Sales Pipeline]
+                      • Wants to Enroll ➔ Move to Converted / Won
+                      • Needs Time ➔ Move to In Discussion
+                      • Info Only ➔ Mark Solved & Archive
+```
+
+#### Dedicated Query Desk Rules:
+1. **Unattended / Missed Call Queue**: If a caller calls the helpline and no attender answers, it creates a `Query (Pending Callback)` ticket. Attenders get a notification to call back.
+2. **On-the-Spot Resolution**: If an attender answers immediately, they log the query and mark it `Solved` instantly.
+3. **Direct Query-to-Registration Conversion (Sales Credit Rule)**:
+   - When a customer calls with a query and the attender resolves it and registers them on the call (e.g. `Reg.Done`), the lead transitions directly from **Query Desk ➔ `Step 5: Converted / Won`**.
+   - 🌟 **Attender Sales Credit**: The attender who answered the query and completed the registration receives **full Sales Conversion Credit**!
+   - If they need time after receiving info ➔ Transitions to **`Step 3: In Discussion & Follow-Up`**.
+---
+
+## 10. Loophole Audit & Edge-Case Safeguards (100% Watertight Rules)
+
+To ensure zero leads are lost and no system loopholes exist, the software enforces 4 mandatory edge-case safeguards:
+
+### 10.1 Safeguard 1: Duplicate Import Shield
+- **Scenario**: Admin imports a new Excel sheet containing a phone number already in the CRM.
+- **Rule**: 
+  - If existing lead is **Active** (`In Discussion`, `Query`, `Scheduled Follow-Up`) ➔ **DO NOT OVERWRITE** stage. Keep active stage intact.
+  - If existing lead is **Closed / Invalid** ➔ System auto-reopens lead as `1. New Lead` for the new batch.
+
+### 10.2 Safeguard 2: Overdue Callback Auto-Escalation
+- **Scenario**: An attender schedules a callback task for `10:00 AM`, but forgets or is absent.
+- **Rule**: If a callback task is overdue by **> 24 hours**, the lead auto-flags as `🚨 Overdue Task` on Akash's Admin Dashboard and can be reassigned with 1 click.
+
+### 10.3 Safeguard 3: Inbound Call Re-Activation
+- **Scenario**: A lead was auto-closed after 5 unanswered dials (`Closed / Invalid`), but calls the center back 2 weeks later.
+- **Rule**: An incoming call from any `Closed / Invalid` lead **automatically re-opens** the record and places it into **`In Discussion`** or **`Query Desk`**.
+
+### 10.4 Safeguard 4: Sales Credit Refund Adjustment
+- **Scenario**: A lead is marked `Reg.Done` (Converted / Won), but requests a refund or payment fails later.
+- **Rule**: Admin updates stage to `Closed / Refunded`, which automatically adjusts the attender's monthly sales conversion tally to preserve reporting integrity.
+
+
+
+
+
+
+
+
+
+
