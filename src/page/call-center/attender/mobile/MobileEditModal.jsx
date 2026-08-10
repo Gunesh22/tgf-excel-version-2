@@ -164,7 +164,7 @@ export default function MobileEditModal({
           row.attenderId, row.attenderName, updates, targetEdited.programId, targetEdited.programName
         );
       } else {
-        await updateCallLog(id, updates, attenderId, attenderName);
+        await updateCallLog(id, updates, attenderId, attenderName, row);
       }
 
       toast.success("Saved!", { duration: 3000, position: 'top-center' });
@@ -192,8 +192,117 @@ export default function MobileEditModal({
   };
 
   const mergedHistory = useMemo(() => {
-    return edited.history || row.history || [];
-  }, [edited.history, row.history]);
+    const list = [];
+
+    // 1. Current contact's history entries
+    const currentHist = Array.isArray(edited.history) ? edited.history : (Array.isArray(savedRow.history) ? savedRow.history : []);
+    currentHist.forEach((h, idx) => {
+      list.push({
+        status: h.status || "",
+        remark: h.remark || "",
+        calledFor: h.calledFor || h.called_for || h["Called For"] || "",
+        source: h.source || h.sourse || h.Source || "",
+        callType: h.callType || "outgoing",
+        attenderName: h.attenderName || "Unknown",
+        timestamp: h.timestamp || new Date().toISOString(),
+        isCurrentDoc: true,
+        originalIndex: idx,
+        sourceProgram: savedRow.programName || "This Sheet"
+      });
+    });
+
+    // 1b. Standalone remark
+    if (savedRow.remark && String(savedRow.remark).trim()) {
+      const remarkStr = String(savedRow.remark).trim();
+      const alreadyInHistory = list.some(h => h.remark === remarkStr && h.isCurrentDoc);
+      if (!alreadyInHistory) {
+        list.push({
+          status: savedRow.status || "",
+          remark: remarkStr,
+          calledFor: savedRow["Called For"] || savedRow.calledFor || "",
+          source: savedRow.Source || savedRow.source || "",
+          callType: savedRow.callType || "outgoing",
+          attenderName: savedRow.attenderName || savedRow.assignedName || "Unknown",
+          timestamp: savedRow.updatedAt?.toDate?.()?.toISOString?.() || savedRow.updatedAt || savedRow.createdAt?.toDate?.()?.toISOString?.() || savedRow.createdAt || new Date().toISOString(),
+          isCurrentDoc: true,
+          originalIndex: -1,
+          sourceProgram: savedRow.programName || "This Sheet"
+        });
+      }
+    }
+
+    // 2. All other attenders' histories from savedRow.attenderStates
+    if (savedRow.attenderStates) {
+      Object.keys(savedRow.attenderStates).forEach(otherAttenderId => {
+        if (otherAttenderId === attenderId) return;
+        const state = savedRow.attenderStates[otherAttenderId];
+        if (state) {
+          const progName = state.programName || "Other Attender";
+          if (Array.isArray(state.history)) {
+            state.history.forEach(h => {
+              list.push({
+                status: h.status || "",
+                remark: h.remark || "",
+                calledFor: h.calledFor || h.called_for || h["Called For"] || state["Called For"] || state.calledFor || "",
+                source: h.source || h.sourse || h.Source || state.Source || state.source || "",
+                callType: h.callType || state.callType || "outgoing",
+                attenderName: h.attenderName || state.attenderName || "Unknown",
+                timestamp: h.timestamp || new Date().toISOString(),
+                isCurrentDoc: false,
+                sourceProgram: progName
+              });
+            });
+          }
+          if (state.remark && String(state.remark).trim()) {
+            const attRemark = String(state.remark).trim();
+            const alreadyInHistory = Array.isArray(state.history) && state.history.some(h => h.remark === attRemark);
+            if (!alreadyInHistory) {
+              list.push({
+                status: state.status || "",
+                remark: attRemark,
+                calledFor: state["Called For"] || state.calledFor || "",
+                source: state.Source || state.source || "",
+                callType: state.callType || "outgoing",
+                attenderName: state.attenderName || "Unknown",
+                timestamp: state.updatedAt || new Date().toISOString(),
+                isCurrentDoc: false,
+                sourceProgram: progName
+              });
+            }
+          }
+        }
+      });
+    }
+
+    const getMs = (val) => {
+      if (!val) return 0;
+      if (val instanceof Date) return val.getTime();
+      if (typeof val === "string") return new Date(val).getTime() || 0;
+      if (val.toDate && typeof val.toDate === "function") return val.toDate().getTime() || 0;
+      if (typeof val === "object" && val.seconds !== undefined) return val.seconds * 1000;
+      try {
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? 0 : d.getTime();
+      } catch (e) {
+        return 0;
+      }
+    };
+
+    list.sort((a, b) => getMs(a.timestamp) - getMs(b.timestamp));
+
+    const seen = new Set();
+    const uniqueList = [];
+    list.forEach(item => {
+      const timeStr = String(getMs(item.timestamp));
+      const key = `${timeStr}_${item.remark}_${item.status}_${item.attenderName}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueList.push(item);
+      }
+    });
+
+    return uniqueList;
+  }, [edited.history, savedRow.history, savedRow.remark, savedRow.status, savedRow.programName, savedRow.attenderName, savedRow.assignedName, savedRow.updatedAt, savedRow.createdAt, savedRow.attenderStates, attenderId]);
 
   return (
     <div className="fixed inset-0 z-50 bg-white sm:bg-black/60 sm:backdrop-blur-sm flex flex-col justify-between sm:justify-center animate-fade-in h-[100dvh] w-full sm:h-auto sm:min-h-0">

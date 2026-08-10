@@ -23,7 +23,10 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
   const [callLogs, setCallLogs] = useState([]);
   const [callLogsLoading, setCallLogsLoading] = useState(true);
 
-  const [selectedMonth, setSelectedMonth] = useState("ALL");
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
   const [registrations, setRegistrations] = useState([]);
   const [registrationsLoading, setRegistrationsLoading] = useState(false);
   const [monthOptions, setMonthOptions] = useState([]);

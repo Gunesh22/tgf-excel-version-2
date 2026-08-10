@@ -882,6 +882,7 @@ export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
   if (numbersToCheck.length === 0) return null;
   
   const promises = [];
+  console.log(`[FIRESTORE READ - checkGlobalDuplicate] Querying 'contacts' collection | variations: ${numbersToCheck.join(", ")} | queriesCount: ${numbersToCheck.length}`);
   numbersToCheck.forEach(norm => {
     promises.push(
       getDocs(query(collection(db, "contacts"), where("normalizedPhones", "array-contains", norm)))
@@ -889,6 +890,9 @@ export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
   });
   
   const snaps = await Promise.all(promises);
+  let totalDocsReturned = 0;
+  snaps.forEach(s => totalDocsReturned += s.docs.length);
+  console.log(`[FIRESTORE READ - checkGlobalDuplicate] Completed | totalDocsReturned: ${totalDocsReturned}`);
   
   const matchesMap = new Map();
   snaps.forEach(snap => {
@@ -1157,6 +1161,7 @@ export const subscribeToCallLogs = (...args) => {
   );
 
   return onSnapshot(cacheQuery, snap => {
+    console.log(`[FIRESTORE READ - onSnapshot] subscribeToCallLogs snapshot received | docsCount: ${snap.docs.length} (document IDs: ${snap.docs.map(d=>d.id).join(", ")})`);
     const contactsMap = {};
     snap.docs.filter(d => d.id !== "contacts").forEach(docSnap => {
       const docContacts = docSnap.data().contacts || {};
@@ -1187,6 +1192,7 @@ export const subscribeToCallLogs = (...args) => {
             Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
             "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
             _hidden: attState._hidden === true,
+            _partId: docSnap.id,
             attenderId: attenderId,
             attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
           };
@@ -1235,23 +1241,28 @@ export const subscribeToCallLogs = (...args) => {
   }, err => console.error("subscribeToCallLogs error:", err));
 };
 
-export const updateCallLog = async (logId, updates, attenderId = null, attenderName = null) => {
+export const updateCallLog = async (logId, updates, attenderId = null, attenderName = null, existingContact = null) => {
   const contactRef = doc(db, "contacts", logId);
   
   let previousStatus = "";
   let logData = {};
+
   try {
     const logSnap = await getDoc(contactRef);
     if (logSnap.exists()) {
       logData = logSnap.data();
-      if (attenderId && logData.attenderStates?.[attenderId]?.status !== undefined) {
-        previousStatus = logData.attenderStates[attenderId].status || "";
-      } else {
-        previousStatus = logData.status || "";
-      }
+    } else if (existingContact) {
+      logData = existingContact;
     }
   } catch (e) {
-    console.warn("Failed to fetch previous status", e);
+    console.warn("Failed to fetch contact data in updateCallLog", e);
+    if (existingContact) logData = existingContact;
+  }
+
+  if (attenderId && logData.attenderStates?.[attenderId]?.status !== undefined) {
+    previousStatus = logData.attenderStates[attenderId].status || "";
+  } else {
+    previousStatus = logData.status || "";
   }
 
   // Format Name if modified
@@ -1302,7 +1313,7 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
   const attenderSpecificFields = [
     "status", "remark", "callType", "history", "callbackDate", "callbackStatus",
     "objectionReason", "lastCalledAt", "firstCalledAt", "registeredYearMonth",
-    "Source", "Called For"
+    "Source", "Called For", "source", "calledFor", "called_for", "sourse"
   ];
 
   Object.keys(updates).forEach(key => {
@@ -1326,7 +1337,7 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
       const yearMonth = `${istDate.getFullYear()}-${String(istDate.getMonth() + 1).padStart(2, "0")}`;
       attenderSpecificUpdates.registeredYearMonth = yearMonth;
       finalUpdatePayload.registeredYearMonth = yearMonth;
-    } else if (previousStatus === "Reg.Done" && attenderSpecificUpdates.status && attenderSpecificUpdates.status !== "Reg.Done") {
+    } else if (previousStatus === "Reg.Done" && attenderSpecificUpdates.status !== undefined && attenderSpecificUpdates.status !== "Reg.Done") {
       // Solution 2: Only remove top-level registeredYearMonth if no other attender has registered this lead
       let hasOtherRegistration = false;
       if (logData.attenderStates) {
@@ -1376,21 +1387,38 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     if (attenderSpecificUpdates.callbackDate !== undefined) finalUpdatePayload.callbackDate = attenderSpecificUpdates.callbackDate;
     if (attenderSpecificUpdates.callType !== undefined) finalUpdatePayload.callType = attenderSpecificUpdates.callType;
     if (attenderSpecificUpdates.history !== undefined) finalUpdatePayload.history = attenderSpecificUpdates.history;
-    if (attenderSpecificUpdates.Source !== undefined) finalUpdatePayload.Source = attenderSpecificUpdates.Source;
-    if (attenderSpecificUpdates["Called For"] !== undefined) finalUpdatePayload["Called For"] = attenderSpecificUpdates["Called For"];
+
+    const sourceVal = attenderSpecificUpdates.Source ?? attenderSpecificUpdates.source ?? attenderSpecificUpdates.sourse;
+    if (sourceVal !== undefined) {
+      finalUpdatePayload.Source = sourceVal;
+      finalUpdatePayload.source = sourceVal;
+      finalUpdatePayload[`attenderStates.${attenderId}.Source`] = sourceVal;
+      finalUpdatePayload[`attenderStates.${attenderId}.source`] = sourceVal;
+    }
+
+    const calledForVal = attenderSpecificUpdates["Called For"] ?? attenderSpecificUpdates.calledFor ?? attenderSpecificUpdates.called_for;
+    if (calledForVal !== undefined) {
+      finalUpdatePayload["Called For"] = calledForVal;
+      finalUpdatePayload.calledFor = calledForVal;
+      finalUpdatePayload[`attenderStates.${attenderId}.Called For`] = calledForVal;
+      finalUpdatePayload[`attenderStates.${attenderId}.calledFor`] = calledForVal;
+    }
     
     // Track who did the last edit
     finalUpdatePayload.lastEditedBy = attenderSpecificUpdates.attenderName;
     finalUpdatePayload.lastEditedAt = new Date().toISOString();
 
-    // Also ensure this attender is in the assignedTo array
+    // Also ensure this attender is in the assignedTo array so the lead appears in their call sheet
     const prevAssigned = Array.isArray(logData.assignedTo)
-      ? logData.assignedTo
+      ? [...logData.assignedTo]
       : (logData.assignedTo ? [logData.assignedTo] : []);
     if (!prevAssigned.includes(attenderId)) {
       prevAssigned.push(attenderId);
-      finalUpdatePayload.assignedTo = prevAssigned;
     }
+    finalUpdatePayload.assignedTo = prevAssigned;
+    finalUpdatePayload.isAssigned = true;
+    sharedUpdates.assignedTo = prevAssigned;
+    sharedUpdates.isAssigned = true;
   } else {
     Object.assign(finalUpdatePayload, attenderSpecificUpdates);
   }
@@ -1417,6 +1445,7 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
   });
 
   // Execute atomically using a writeBatch to prevent partial updates or duplicate snapshot triggers
+  console.log(`[FIRESTORE WRITE - updateCallLog] Writing updates to contact document: ${logId}`);
   const batch = writeBatch(db);
   if (Object.keys(rootPayload).length > 0) {
     batch.set(contactRef, rootPayload, { merge: true });
@@ -1452,21 +1481,22 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
     });
   }
 
+  const mergedAttenderStates = { ...(logData.attenderStates || {}) };
+  if (attenderId) {
+    mergedAttenderStates[attenderId] = {
+      ...(mergedAttenderStates[attenderId] || {}),
+      ...attenderSpecificUpdates
+    };
+  }
+  const freshData = {
+    ...logData,
+    ...sharedUpdates,
+    attenderStates: mergedAttenderStates,
+    updatedAt: new Date()
+  };
+
   // Handle "Reg.Done" registrations collection sync (highly robust, history-driven)
   try {
-    const mergedAttenderStates = { ...(logData.attenderStates || {}) };
-    if (attenderId) {
-      mergedAttenderStates[attenderId] = {
-        ...(mergedAttenderStates[attenderId] || {}),
-        ...attenderSpecificUpdates
-      };
-    }
-    const freshData = {
-      ...logData,
-      ...sharedUpdates,
-      attenderStates: mergedAttenderStates,
-      updatedAt: new Date()
-    };
 
     if (!freshData || freshData._deleted) {
       // If contact is deleted, clean up all its registration snapshots
@@ -1580,7 +1610,7 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
         };
 
         Object.keys(payload).forEach(key => {
-          if (payload[key] === undefined) {
+          if (payload[key] === undefined || payload[key] === deleteField() || (payload[key] && typeof payload[key] === "object" && payload[key]._methodName === "deleteField")) {
             delete payload[key];
           }
         });
@@ -1600,8 +1630,9 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
   } catch (e) {
     console.error("Error during registration sync:", e);
   }
-  // Sync to callCenterCache using in-memory freshData (0 extra getDoc calls)
-  await updateCacheContacts([logId], { [logId]: freshData });
+  // Sync to callCenterCache using in-memory freshData and knownPartId (0 extra reads)
+  const knownPartId = existingContact?._partId || logData?._partId || null;
+  await updateCacheContacts([logId], { [logId]: freshData }, { [logId]: knownPartId });
 };
 
 // ─────────────────────────────────────────────
@@ -1846,7 +1877,13 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
 
   if (isExisting && existingDocId) {
     const contactRef = doc(db, "contacts", existingDocId);
-    await setDoc(contactRef, { ...logPayload, _deleted: deleteField() }, { merge: true });
+    const { attenderStates, ...restPayload } = logPayload;
+    const dotPayload = {
+      ...restPayload,
+      _deleted: deleteField(),
+      [`attenderStates.${attenderId}`]: updatedStates[attenderId]
+    };
+    await setDoc(contactRef, dotPayload, { merge: true });
     docRef = { id: existingDocId };
   } else {
     docRef = await addDoc(collection(db, "contacts"), logPayload);
@@ -1899,7 +1936,8 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   // Register tag in active tags collection
   await registerActiveTag(finalProgramName);
 
-  await updateCacheContacts([docRef.id]);
+  const knownPartId = isExisting ? existingData._partId : null;
+  await updateCacheContacts([docRef.id], { [docRef.id]: logPayload }, { [docRef.id]: knownPartId });
   return docRef.id;
 };
 
@@ -2373,8 +2411,13 @@ const pruneContactForCacheForMonth = (c, monthStr) => {
     "Called For": c["Called For"] || c.calledFor || "",
     source: c.source || c.Source || "",
     calledFor: c.calledFor || c["Called For"] || "",
+    City: c.City || c.city || "",
+    State: c.State || c.state || "",
+    Email: c.Email || c.email || "",
     Khoji: c.Khoji || "",
     isAssigned: c.isAssigned === true,
+    assignedTo: Array.isArray(c.assignedTo) ? c.assignedTo : (c.assignedTo ? [c.assignedTo] : []),
+    assignedName: c.assignedName || "",
     _deleted: c._deleted === true,
     
     // Top-level compatibility fields
@@ -2431,7 +2474,11 @@ const pruneContactForCacheForMonth = (c, monthStr) => {
         objectionReason: state.objectionReason || "",
         lastCalledAt: state.lastCalledAt || null,
         firstCalledAt: state.firstCalledAt || null,
-        updatedAt: state.updatedAt || ""
+        updatedAt: state.updatedAt || "",
+        Source: state.Source || state.source || "",
+        source: state.source || state.Source || "",
+        "Called For": state["Called For"] || state.calledFor || "",
+        calledFor: state.calledFor || state["Called For"] || ""
       };
     });
   }
@@ -2528,15 +2575,32 @@ export const rebuildCallCenterCache = async () => {
   await batch.commit();
 };
 
-export const updateContactInActiveCache = async (month, contactId, prunedContact) => {
+export const updateContactInActiveCache = async (month, contactId, prunedContact, knownPartId = null) => {
+  if (knownPartId) {
+    try {
+      console.log(`[FIRESTORE WRITE - updateContactInActiveCache] Direct updateDoc to target part: ${knownPartId} | contactId: ${contactId}`);
+      const ref = doc(db, "callCenterCache", knownPartId);
+      if (prunedContact === null) {
+        await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
+      } else {
+        await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+      }
+      return;
+    } catch (err) {
+      console.warn("Direct update to knownPartId failed, falling back to month query search:", err);
+    }
+  }
+
   const cacheColl = collection(db, "callCenterCache");
-  // Query ONLY parts belonging to this month instead of reading all historical cache documents
+  // Query parts belonging to this month to locate or create target cache document
   const monthQuery = query(
     cacheColl,
     where(documentId(), ">=", month),
     where(documentId(), "<=", month + "\uf8ff")
   );
+  console.log(`[FIRESTORE READ - getDocs] updateContactInActiveCache querying cache parts (fallback) for month: ${month}`);
   const snap = await getDocs(monthQuery);
+  console.log(`[FIRESTORE READ - getDocs] updateContactInActiveCache completed | partsFound: ${snap.docs.length} (document IDs: ${snap.docs.map(d=>d.id).join(", ")})`);
   
   let targetDoc = null;
   const parts = [];
@@ -2755,46 +2819,43 @@ export const updateContactInLockedReport = async (month, contactId, prunedContac
   }
 };
 
-export const updateCacheContacts = async (contactIds, inMemoryDataMap = null) => {
+export const updateCacheContacts = async (contactIds, inMemoryDataMap = {}, knownPartIdMap = {}) => {
   if (!contactIds || contactIds.length === 0) return;
-  
-  try {
-    // 1. Fetch updated contacts in chunks of 50 (prevents network throttling on large bulk operations)
-    const BATCH_SIZE = 50;
-    const contactSnaps = [];
-    for (let i = 0; i < contactIds.length; i += BATCH_SIZE) {
-      const batchIds = contactIds.slice(i, i + BATCH_SIZE);
-      const batchPromises = batchIds.map(async (id) => {
-        if (inMemoryDataMap && inMemoryDataMap[id]) {
-          const data = inMemoryDataMap[id];
-          return { id, snap: { exists: () => true, data: () => data } };
-        }
-        const contactRef = doc(db, "contacts", id);
-        const snap = await getDoc(contactRef);
-        return { id, snap };
-      });
-      const batchResults = await Promise.all(batchPromises);
-      contactSnaps.push(...batchResults);
-    }
 
+  try {
     const currentMonth = getMonthStr(new Date());
 
-    // 2. Group cache updates by month
+    // 1. Fetch raw docs for contacts not provided in inMemoryDataMap
+    const missingIds = contactIds.filter(id => !inMemoryDataMap[id]);
+    const fetchedDataMap = {};
+
+    if (missingIds.length > 0) {
+      const fetchPromises = missingIds.map(id => getDoc(doc(db, "contacts", id)));
+      const snaps = await Promise.all(fetchPromises);
+      snaps.forEach(snap => {
+        if (snap.exists()) {
+          fetchedDataMap[snap.id] = { id: snap.id, ...snap.data() };
+        } else {
+          fetchedDataMap[snap.id] = { id: snap.id, _deleted: true };
+        }
+      });
+    }
+
+    // 2. Map contacts to their historical/active months
     const monthlyUpdatesMap = {};
 
-    contactSnaps.forEach(({ id, snap }) => {
-      const exists = snap.exists();
-      const raw = exists ? snap.data() : null;
-      const isLive = exists && raw.isAssigned !== false && !raw._deleted;
+    contactIds.forEach(id => {
+      const raw = inMemoryDataMap[id] || fetchedDataMap[id];
+      if (!raw) return;
 
+      const isLive = raw.isAssigned === true && !raw._deleted;
       const contactMonths = new Set();
-      // Even if not live, check history to find months this contact belonged to, so we can clean them up.
-      if (raw) {
-        const createdMonth = getMonthStr(raw.createdAt) || currentMonth;
-        contactMonths.add(createdMonth);
 
+      if (isLive) {
         if (raw.attenderStates) {
           Object.values(raw.attenderStates).forEach(state => {
+            const stateMonth = getMonthStr(state.lastCalledAt || state.updatedAt);
+            if (stateMonth) contactMonths.add(stateMonth);
             (state.history || []).forEach(h => {
               const hTs = h.timestamp ? (h.timestamp.toDate ? h.timestamp.toDate() : new Date(h.timestamp)) : null;
               const hMonth = getMonthStr(hTs);
@@ -3115,18 +3176,35 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
     finalCallback(logs);
   };
 
-  // Fetch the locked monthly reports in range
-  const lockedQuery = query(
-    collection(db, "lockedMonthlyReports"),
-    where(documentId(), ">=", startMonth),
-    where(documentId(), "<=", endMonth + "\uf8ff")
-  );
-  
-  getDocs(lockedQuery).then(snap => {
-    lockedDocs = snap.docs;
-    triggerCallback();
-  }).catch(err => {
-    console.error("subscribeToAllCallLogs locked fetch error:", err);
+  // Fetch the locked monthly reports in range (served from IndexedDB cache first for 0 reads)
+  const lockedCacheKey = `tgf_locked_reports_${startMonth}_${endMonth}`;
+  getIDBCache(lockedCacheKey).then(cachedLocked => {
+    if (Array.isArray(cachedLocked) && cachedLocked.length > 0) {
+      console.log(`[ADMIN IDB CACHE] Loaded ${cachedLocked.length} lockedMonthlyReports from IndexedDB (0 Reads)`);
+      lockedDocs = cachedLocked.map(d => ({
+        id: d.id,
+        data: () => d
+      }));
+      triggerCallback();
+    } else {
+      const lockedQuery = query(
+        collection(db, "lockedMonthlyReports"),
+        where(documentId(), ">=", startMonth),
+        where(documentId(), "<=", endMonth + "\uf8ff")
+      );
+      console.log(`[ADMIN FIRESTORE READ - getDocs] subscribeToAllCallLogs checking lockedMonthlyReports | range: ${startMonth} to ${endMonth}`);
+      getDocs(lockedQuery).then(snap => {
+        console.log(`[ADMIN FIRESTORE READ - getDocs] lockedMonthlyReports completed | docsCount: ${snap.docs.length}`);
+        lockedDocs = snap.docs;
+        const plainLocked = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setIDBCache(lockedCacheKey, plainLocked).catch(err => console.warn("Failed to cache locked reports:", err));
+        triggerCallback();
+      }).catch(err => {
+        console.error("subscribeToAllCallLogs locked fetch error:", err);
+        triggerCallback();
+      });
+    }
+  }).catch(() => {
     triggerCallback();
   });
   
@@ -3138,6 +3216,7 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
   );
 
   const unsubCache = onSnapshot(cacheQuery, async (snap) => {
+    console.log(`[ADMIN FIRESTORE READ - onSnapshot] subscribeToAllCallLogs cache snapshot received | docsCount: ${snap.docs.length} (document IDs: ${snap.docs.map(d=>d.id).join(", ")})`);
     if (snap.empty && lockedDocs.length === 0) {
       console.log(`No cache documents exist for range ${startMonth} to ${endMonth}, fetching directly from Firebase contacts collection...`);
       try {

@@ -500,61 +500,43 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           });
 
           if (activeToastRef.current) {
-            toast.success("Duplicate contact found! Details auto-filled.", { id: activeToastRef.current });
+            toast.success("Duplicate contact found in database!", { id: activeToastRef.current });
             activeToastRef.current = null;
           }
 
-          // ── Auto-fill all contact fields from the duplicate ──
+          // ── Link contact identity and auto-fill empty fields if duplicate found ──
           if (dup) {
             setEdited(prev => {
               const updated = { ...prev };
 
-              // Standard personal fields — only fill if currently empty
-              ["Name", "Email", "City", "State", "Khoji"].forEach(f => {
+              const fieldsToMap = ["Name", "Email", "City", "State", "Khoji"];
+              fieldsToMap.forEach(f => {
                 const dupVal = getFieldWithFallback(dup, f);
                 if (!String(updated[f] || "").trim() && dupVal) {
                   updated[f] = dupVal;
                 }
               });
 
-              // Tags
               const dupTagsVal = getFieldWithFallback(dup, "tags") || getFieldWithFallback(dup, "Tags");
               if (!String(updated.Tags || "").trim() && dupTagsVal) {
                 updated.Tags = dupTagsVal;
               }
 
-              // Link contact identity
+              const dupCalledFor = getFieldWithFallback(dup, "Called For");
+              if (!String(updated[calledForField] || "").trim() && dupCalledFor) {
+                updated[calledForField] = dupCalledFor;
+              }
+              const dupSource = getFieldWithFallback(dup, "Source");
+              if (!String(updated[sourceField] || "").trim() && dupSource) {
+                updated[sourceField] = dupSource;
+              }
+
               if (!updated.contactId) {
                 updated.contactId = dup.contactId || dup.id;
               }
               if (!updated.GHL_ID && dup.GHL_ID) {
                 updated.GHL_ID = dup.GHL_ID;
               }
-
-              // All other custom / dynamic fields — fill if empty
-              const skipKeys = new Set([
-                "id", "contactid", "ghl_id", "normalizedphone", "normalizedmobile",
-                "assignedto", "assignedname", "assignedat", "isassigned", "history",
-                "createdat", "updatedat", "lasteditedby", "lasteditedat", "createdtime",
-                "attenderid", "attendername", "programid", "programname", "remark", "status",
-                "calltype", "querystatus", "objectionreason", "callbackdate", "callbackstatus",
-                "ishotlead", "firstcalledat", "lastcalledat", "_isnew", "_rawdata", "_deleted",
-                "attenderstates", "tags", "source", "called for", "called_for", "calledfor"
-              ]);
-
-              Object.keys(dup).forEach(k => {
-                if (skipKeys.has(k.toLowerCase())) return;
-                const dupVal = dup[k];
-                if (dupVal === undefined || dupVal === null || String(dupVal).trim() === "") return;
-                const existingKey = Object.keys(updated).find(x => x.toLowerCase() === k.toLowerCase());
-                if (existingKey) {
-                  if (!String(updated[existingKey] || "").trim()) {
-                    updated[existingKey] = dupVal;
-                  }
-                } else {
-                  updated[k] = dupVal;
-                }
-              });
 
               return updated;
             });
@@ -646,7 +628,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       if (dupTimerRef.current) clearTimeout(dupTimerRef.current);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phoneVal, mobileVal, row._isNew, row.id, edited.contactId, initialPhone, initialMobile]);
+  }, [phoneVal, mobileVal, row._isNew, row.id, initialPhone, initialMobile]);
 
   const dupWarningMessage = useMemo(() => {
     if (!globalDup) return "";
@@ -704,10 +686,12 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     const cfList = Array.from(calledFors).filter(Boolean);
     const cfStr = cfList.length > 0 ? ` for ${cfList.join(", ")}` : "";
 
-    if (isAssignedToOthers && attList.length > 0) {
-      return `Already assigned to ${attList.join(", ")}${cfStr}`;
+    if (isAssignedToMe && isAssignedToOthers && attList.length > 0) {
+      return `Already assigned to you and ${attList.join(", ")}${cfStr}`;
     } else if (isAssignedToMe) {
       return `Already assigned to you${cfStr}`;
+    } else if (isAssignedToOthers && attList.length > 0) {
+      return `Already assigned to ${attList.join(", ")}${cfStr}`;
     } else if (isUnassigned) {
       return `Already present in database (Unassigned)${cfStr}`;
     } else {
@@ -751,15 +735,25 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       const fieldsToMap = ["Name", "Email", "City", "State", "Khoji"];
       fieldsToMap.forEach(f => {
         const dupVal = getFieldWithFallback(dup, f);
-        if (!String(updated[f] || "").trim() && dupVal) {
+        if (dupVal) {
           updated[f] = dupVal;
         }
       });
 
       // Map Tags specifically
       const dupTagsVal = getFieldWithFallback(dup, "tags") || getFieldWithFallback(dup, "Tags");
-      if (!String(updated.Tags || "").trim() && dupTagsVal) {
+      if (dupTagsVal) {
         updated.Tags = dupTagsVal;
+      }
+
+      // Map Called For & Source
+      const dupCalledFor = getFieldWithFallback(dup, "Called For");
+      if (dupCalledFor) {
+        updated[calledForField] = dupCalledFor;
+      }
+      const dupSource = getFieldWithFallback(dup, "Source");
+      if (dupSource) {
+        updated[sourceField] = dupSource;
       }
 
       // Set contactId and GHL_ID
@@ -789,9 +783,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         if (dupVal !== undefined && dupVal !== null && String(dupVal).trim() !== "") {
           const existingKey = Object.keys(updated).find(x => x.toLowerCase() === kl);
           if (existingKey) {
-            if (!String(updated[existingKey] || "").trim()) {
-              updated[existingKey] = dupVal;
-            }
+            updated[existingKey] = dupVal;
           } else {
             updated[k] = dupVal;
           }
@@ -813,6 +805,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       list.push({
         status: h.status || "",
         remark: h.remark || "",
+        calledFor: h.calledFor || h.called_for || h["Called For"] || "",
+        source: h.source || h.sourse || h.Source || "",
+        callType: h.callType || "outgoing",
         attenderName: h.attenderName || "Unknown",
         timestamp: h.timestamp || new Date().toISOString(),
         isCurrentDoc: true,
@@ -822,7 +817,6 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     });
 
     // 1b. Also include the standalone remark saved before history tracking existed
-    //     (i.e., a remark that is NOT already represented in any history entry)
     if (savedRow.remark && String(savedRow.remark).trim()) {
       const remarkStr = String(savedRow.remark).trim();
       const alreadyInHistory = list.some(h => h.remark === remarkStr && h.isCurrentDoc);
@@ -830,10 +824,13 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         list.push({
           status: savedRow.status || "",
           remark: remarkStr,
+          calledFor: savedRow["Called For"] || savedRow.calledFor || "",
+          source: savedRow.Source || savedRow.source || "",
+          callType: savedRow.callType || "outgoing",
           attenderName: savedRow.attenderName || savedRow.assignedName || "Unknown",
           timestamp: savedRow.updatedAt?.toDate?.()?.toISOString?.() || savedRow.updatedAt || savedRow.createdAt?.toDate?.()?.toISOString?.() || savedRow.createdAt || new Date().toISOString(),
           isCurrentDoc: true,
-          originalIndex: -1, // sentinel: this is a standalone remark, not editable inline
+          originalIndex: -1,
           sourceProgram: savedRow.programName || "This Sheet"
         });
       }
@@ -852,9 +849,12 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
               list.push({
                 status: h.status || "",
                 remark: h.remark || "",
+                calledFor: h.calledFor || h.called_for || h["Called For"] || state["Called For"] || state.calledFor || "",
+                source: h.source || h.sourse || h.Source || state.Source || state.source || "",
+                callType: h.callType || state.callType || "outgoing",
                 attenderName: h.attenderName || state.attenderName || "Unknown",
                 timestamp: h.timestamp || new Date().toISOString(),
-                isCurrentDoc: otherAttenderId === attenderId,
+                isCurrentDoc: false,
                 sourceProgram: progName
               });
             });
@@ -867,9 +867,12 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
               list.push({
                 status: state.status || "",
                 remark: attRemark,
+                calledFor: state["Called For"] || state.calledFor || "",
+                source: state.Source || state.source || "",
+                callType: state.callType || "outgoing",
                 attenderName: state.attenderName || "Unknown",
                 timestamp: state.updatedAt || new Date().toISOString(),
-                isCurrentDoc: otherAttenderId === attenderId,
+                isCurrentDoc: false,
                 sourceProgram: progName
               });
             }
@@ -894,6 +897,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                   list.push({
                     status: h.status || "",
                     remark: h.remark || "",
+                    calledFor: h.calledFor || h.called_for || h["Called For"] || state["Called For"] || state.calledFor || "",
+                    source: h.source || h.sourse || h.Source || state.Source || state.source || "",
+                    callType: h.callType || state.callType || "outgoing",
                     attenderName: h.attenderName || state.attenderName || "Unknown",
                     timestamp: h.timestamp || new Date().toISOString(),
                     isCurrentDoc: false,
@@ -908,6 +914,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
                   list.push({
                     status: state.status || "",
                     remark: attRemark,
+                    calledFor: state["Called For"] || state.calledFor || "",
+                    source: state.Source || state.source || "",
+                    callType: state.callType || "outgoing",
                     attenderName: state.attenderName || "Unknown",
                     timestamp: state.updatedAt || new Date().toISOString(),
                     isCurrentDoc: false,
@@ -925,6 +934,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             list.push({
               status: h.status || "",
               remark: h.remark || "",
+              calledFor: h.calledFor || h.called_for || h["Called For"] || "",
+              source: h.source || h.sourse || h.Source || "",
+              callType: h.callType || "outgoing",
               attenderName: h.attenderName || "Unknown",
               timestamp: h.timestamp || new Date().toISOString(),
               isCurrentDoc: false,
@@ -940,6 +952,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             list.push({
               status: m.status || "",
               remark: dupRemark,
+              calledFor: m["Called For"] || m.calledFor || "",
+              source: m.Source || m.source || "",
+              callType: m.callType || "outgoing",
               attenderName: m.assignedName || m.attenderName || "Unknown",
               timestamp: m.updatedAt?.toDate?.()?.toISOString?.() || m.updatedAt || m.createdAt?.toDate?.()?.toISOString?.() || m.createdAt || new Date().toISOString(),
               isCurrentDoc: false,
@@ -1151,7 +1166,10 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         return String(val).trim();
       };
       
-      const hasChanges = Object.keys(targetEdited).some(key => {
+      const historyChanged = JSON.stringify(targetEdited.history || []) !== JSON.stringify(savedRow.history || []);
+      const phoneChanged = cleanForCompare(targetEdited.Phone) !== cleanForCompare(savedRow.Phone) || cleanForCompare(targetEdited.Mobile) !== cleanForCompare(savedRow.Mobile);
+
+      const hasChanges = historyChanged || phoneChanged || isCallAttemptUpdated || Object.keys(targetEdited).some(key => {
         if (["id", "_callbackDue", "_isNew", "attenderStates", "assignedTo", "assignedName", "assignedAt", "isAssigned", "lastEditedBy", "lastEditedAt", "normalizedPhone", "normalizedMobile", "history", "lastCalledAt", "firstCalledAt"].includes(key)) {
           return false;
         }
@@ -1347,33 +1365,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         // Maintain a timeline of interactions.
         let baseHistory = Array.isArray(targetEdited.history) ? targetEdited.history : (Array.isArray(savedRow.history) ? savedRow.history : []);
 
-        // Conditionally update past history entries if correcting a mistake (not protected by a Reg.Done)
-        const oldCalledFor = String(savedRow[calledForField] || savedRow.calledFor || "").trim();
-        const newCalledFor = String(targetEdited[calledForField] || targetEdited.calledFor || "").trim();
-        const oldSource = String(savedRow[sourceField] || savedRow.source || "").trim();
-        const newSource = String(targetEdited[sourceField] || targetEdited.source || "").trim();
-        const cleanStr = (s) => s ? String(s).toLowerCase().replace(/[\s_-]/g, "") : "";
 
-        if (baseHistory.length > 0) {
-          const isCalledForProtected = baseHistory.some(h => 
-            cleanStr(h.calledFor) === cleanStr(oldCalledFor) && h.status === "Reg.Done"
-          );
-          
-          baseHistory = baseHistory.map(h => {
-            const updatedEntry = { ...h };
-            if (oldCalledFor && newCalledFor && cleanStr(h.calledFor) === cleanStr(oldCalledFor)) {
-              if (!isCalledForProtected) {
-                updatedEntry.calledFor = newCalledFor;
-              }
-            }
-            if (oldSource && newSource && cleanStr(h.source) === cleanStr(oldSource)) {
-              if (!isCalledForProtected) {
-                updatedEntry.source = newSource;
-              }
-            }
-            return updatedEntry;
-          });
-        }
 
         // Scenario 2: Incoming call & Registration on an Outgoing Campaign
         const isIncomingConvertOnOutgoingProgram = 
@@ -1472,14 +1464,17 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
 
       console.log("Attempting to save updates: ", updates);
 
-      // If this is a NEW incoming entry, create it in Firebase
-      if (row._isNew) {
+      // If this is a NEW entry and has no linked existing contact ID, create a new doc
+      const targetDocId = targetEdited.contactId || targetEdited.id || id;
+      const isNewWithoutDoc = row._isNew && !targetEdited.contactId && !targetEdited.id;
+
+      if (isNewWithoutDoc) {
         delete updates._isNew;
         await addIncomingCallLog(
           row.attenderId, row.attenderName, updates, targetEdited.programId, targetEdited.programName
         );
       } else {
-        await updateCallLog(id, updates, attenderId, attenderName);
+        await updateCallLog(targetDocId, updates, attenderId, attenderName, row);
       }
 
       console.log("✅ Save successful!");

@@ -829,6 +829,18 @@ export default function AllAttendersSheetTab({
     return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "";
   };
 
+  if (callLogsLoading) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-4 py-20 bg-slate-50/50 min-h-[400px]">
+        <RefreshCw size={36} className="text-indigo-600 animate-spin" />
+        <div className="text-center space-y-1">
+          <p className="text-slate-800 font-extrabold text-base">Syncing Database...</p>
+          <p className="text-slate-400 text-xs font-semibold">Fetching active database for {selectedMonth || "selected scope"}...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-slate-50/50 overflow-hidden">
       {/* Streamlined Header & Filter Bar */}

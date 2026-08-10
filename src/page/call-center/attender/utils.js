@@ -396,12 +396,45 @@ export const getFieldWithFallback = (log, fieldName) => {
     // Also check alias 'tag'
     const tagAlias = log.tag ? String(log.tag) : "";
     tagAlias.split(",").map(x => x.trim()).filter(Boolean).forEach(x => merged.add(x));
+
+    if (log.attenderStates && typeof log.attenderStates === "object") {
+      Object.values(log.attenderStates).forEach(st => {
+        if (st) {
+          const stTags = Array.isArray(st.tags) ? st.tags : (st.Tags ? String(st.Tags).split(",") : []);
+          stTags.forEach(t => String(t).split(",").map(x => x.trim()).filter(Boolean).forEach(x => merged.add(x)));
+        }
+      });
+    }
+
     return Array.from(merged).sort().join(", ");
   }
 
   for (const c of candidates) {
     const val = getVal(c);
     if (val) return val;
+  }
+
+  // Fallback to checking attenderStates if top-level field is empty
+  if (log.attenderStates && typeof log.attenderStates === "object") {
+    for (const stateObj of Object.values(log.attenderStates)) {
+      if (stateObj && typeof stateObj === "object") {
+        for (const c of candidates) {
+          const valInState = String(stateObj[c] || "").trim();
+          if (valInState) return valInState;
+        }
+        const keysInState = Object.keys(stateObj);
+        const directKeyInState = keysInState.find(k => k.toLowerCase() === name);
+        if (directKeyInState && String(stateObj[directKeyInState] || "").trim()) {
+          return String(stateObj[directKeyInState]).trim();
+        }
+        if (aliases.length > 0) {
+          const aliasKeyInState = keysInState.find(k => aliases.includes(k.toLowerCase()));
+          if (aliasKeyInState && String(stateObj[aliasKeyInState] || "").trim()) {
+            return String(stateObj[aliasKeyInState]).trim();
+          }
+        }
+      }
+    }
   }
 
   if (candidates.length > 0) {
