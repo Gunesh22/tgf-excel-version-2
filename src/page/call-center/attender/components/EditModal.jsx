@@ -127,6 +127,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
   const [dupPopoverOpen, setDupPopoverOpen] = useState(false);
   const handleDismissRef = useRef(null);
+  const isSubmittingRef = useRef(false);
   const [addedFields, setAddedFields] = useState([]);
   const [localPrograms, setLocalPrograms] = useState(programs);
   const [showCalledForPrompt, setShowCalledForPrompt] = useState(false);
@@ -1261,9 +1262,9 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       }
     }
 
+    if (saving || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setSaving(true);
-
-    if (onSave) onSave(targetEdited, true);
 
     try {
       const { id, _callbackDue, ...rest } = targetEdited;
@@ -1460,34 +1461,33 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         }
       }
 
-      updates.lastEditedBy = attenderName || "Unknown";
-
-      console.log("Attempting to save updates: ", updates);
-
-      // If this is a NEW entry and has no linked existing contact ID, create a new doc
       const targetDocId = targetEdited.contactId || targetEdited.id || id;
       const isNewWithoutDoc = row._isNew && !targetEdited.contactId && !targetEdited.id;
 
+      let savedDocId = targetDocId;
       if (isNewWithoutDoc) {
         delete updates._isNew;
-        await addIncomingCallLog(
-          row.attenderId, row.attenderName, updates, targetEdited.programId, targetEdited.programName
+        const resId = await addIncomingCallLog(
+          row.attenderId || attenderId, row.attenderName || attenderName, updates, targetEdited.programId, targetEdited.programName
         );
+        console.log("[EDIT MODAL SAVE] addIncomingCallLog result docId:", resId);
+        savedDocId = resId;
       } else {
-        await updateCallLog(targetDocId, updates, attenderId, attenderName, row);
+        const res = await updateCallLog(targetDocId, updates, attenderId, attenderName, row);
+        console.log("[EDIT MODAL SAVE] updateCallLog result:", res);
       }
 
       console.log("✅ Save successful!");
       toast.success("Saved!", { duration: 4000, position: 'top-center' });
 
+      if (onSave) onSave({ ...targetEdited, ...updates, id: savedDocId }, false);
       if (onClose) onClose();
     } catch (err) {
-      console.error("❌ CRTICAL SAVE ERROR:", err.message || err);
-      alert("FIREBASE REFUSED TO SAVE: " + (err.message || "Unknown Error"));
-      toast.error("Save failed - Check network & rules.", { duration: 6000, position: 'top-center' });
-      throw err;
+      console.error("❌ CRITICAL SAVE ERROR:", err.message || err);
+      toast.error("Save failed: " + (err.message || "Unknown error"), { duration: 6000, position: 'top-center' });
     } finally {
       setSaving(false);
+      isSubmittingRef.current = false;
     }
   };
 

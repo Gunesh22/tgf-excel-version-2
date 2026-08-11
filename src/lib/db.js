@@ -1492,7 +1492,7 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
   });
 
   // Execute atomically using a writeBatch to prevent partial updates or duplicate snapshot triggers
-  console.log(`[FIRESTORE WRITE - updateCallLog] Writing updates to contact document: ${logId}`);
+  console.log(`[FIRESTORE BATCH WRITE] Contact ID: ${logId}`, { rootPayload, deepUpdates });
   const batch = writeBatch(db);
   if (Object.keys(rootPayload).length > 0) {
     batch.set(contactRef, rootPayload, { merge: true });
@@ -1501,6 +1501,7 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     batch.update(contactRef, deepUpdates);
   }
   await batch.commit();
+  console.log(`[FIRESTORE BATCH WRITE SUCCESS] Contact ID: ${logId}`);
 
   // Log interaction if status/remark/callType/callbackDate changed
   const hasInteractionUpdate = 
@@ -1683,20 +1684,23 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
 };
 
 export const updateCallLog = async (logId, updates, attenderId = null, attenderName = null, existingContact = null) => {
-  // 1. Instantly update local IndexedDB cache for 0ms load & browser persistence
+  console.log(`[UPDATE CALL LOG] Initiating instant 0ms local save for contactId: ${logId}`);
+  // 1. Instantly update local IndexedDB cache for 0ms UI response
   if (attenderId) {
     await updateLocalAttenderCache(attenderId, logId, updates);
   }
 
-  // 2. Try direct write to Firebase
-  try {
-    await updateCallLogDirectFirebase(logId, updates, attenderId, attenderName, existingContact);
-    return { success: true, synced: true };
-  } catch (err) {
-    console.warn("⚠️ Firebase write limit reached or network offline! Lead updated in local IDB & queued for sync.", err);
-    await queuePendingWrite("updateCallLog", { logId, updates, attenderId, attenderName, existingContact });
-    return { success: true, synced: false, queuedLocally: true };
-  }
+  // 2. Trigger direct write to Firebase asynchronously in the background
+  updateCallLogDirectFirebase(logId, updates, attenderId, attenderName, existingContact)
+    .then(() => {
+      console.log(`[UPDATE CALL LOG SUCCESS] Firebase write completed for contactId: ${logId}`);
+    })
+    .catch(err => {
+      console.warn("⚠️ Firebase write deferred to pending queue:", err?.message || err);
+      queuePendingWrite("updateCallLog", { logId, updates, attenderId, attenderName, existingContact });
+    });
+
+  return { success: true, synced: false, localId: logId };
 };
 
 // ─────────────────────────────────────────────
@@ -1787,9 +1791,10 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
   if (finalNormalizedPhones.length > 0) {
     try {
       const q3 = query(collection(db, "contacts"), where("normalizedPhones", "array-contains-any", finalNormalizedPhones));
-      const snap3 = await getDocs(q3);
+      const timeoutLookup = new Promise(resolve => setTimeout(() => resolve({ empty: true, docs: [] }), 1500));
+      const snap3 = await Promise.race([getDocs(q3), timeoutLookup]);
       
-      const mergedDocs = snap3.docs;
+      const mergedDocs = snap3.docs || [];
       const existingSnap = { empty: mergedDocs.length === 0, docs: mergedDocs };
 
       if (!existingSnap.empty) {
@@ -2012,6 +2017,7 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   if (attenderId) {
     await updateLocalAttenderCache(attenderId, localId, {
       ...data,
+      id: localId,
       Name: formatContactName(data.Name || data.name || "New Lead"),
       Phone: data.Phone || data.phone || "",
       callType: data.callType || "incoming",
@@ -2020,15 +2026,17 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
     });
   }
 
-  // 2. Try direct write to Firebase
-  try {
-    const docId = await addIncomingCallLogDirectFirebase(attenderId, attenderName, data, programId, programName);
-    return docId;
-  } catch (err) {
-    console.warn("⚠️ Firebase write limit reached or network offline! New lead saved in local IDB & queued for sync.", err);
-    await queuePendingWrite("addIncomingCallLog", { attenderId, attenderName, data, programId, programName });
-    return localId;
-  }
+  // 2. Trigger direct write to Firebase asynchronously in background
+  addIncomingCallLogDirectFirebase(attenderId, attenderName, data, programId, programName)
+    .then(docId => {
+      console.log(`[ADD INC SUCCESS] Firebase write completed for new lead: ${docId}`);
+    })
+    .catch(err => {
+      console.warn("⚠️ Firebase write deferred to pending queue:", err?.message || err);
+      queuePendingWrite("addIncomingCallLog", { attenderId, attenderName, data, programId, programName });
+    });
+
+  return localId;
 };
 
 // Global search contacts by exact phone number, name prefix, or email prefix
@@ -3038,6 +3046,12 @@ export const updateCacheContacts = async (contactIds, inMemoryDataMap = {}, know
       const contactMonths = new Set();
 
       if (isLive) {
+        // ALWAYS include currentMonth for live assigned contacts so they appear in active cache partition
+        contactMonths.add(currentMonth);
+
+        const createdMonth = getMonthStr(raw.createdAt) || currentMonth;
+        contactMonths.add(createdMonth);
+
         if (raw.attenderStates) {
           Object.values(raw.attenderStates).forEach(state => {
             const stateMonth = getMonthStr(state.lastCalledAt || state.updatedAt);
@@ -3070,6 +3084,8 @@ export const updateCacheContacts = async (contactIds, inMemoryDataMap = {}, know
         }
       });
     });
+
+    console.log(`[CACHE CONTACTS UPDATE] Syncing ${contactIds.length} contact(s) to callCenterCache for months:`, Object.keys(monthlyUpdatesMap));
 
     // 3. Apply updates to each month document
     const cutoffMonth = getCutoffMonth(3);
@@ -3664,56 +3680,58 @@ export const setIDBCache = async (key, data) => {
 const PENDING_WRITES_KEY = "tgf_pending_writes_queue";
 
 export const updateLocalAttenderCache = async (attenderId, logId, updates) => {
-  if (!attenderId || !logId) return;
+  if (!attenderId || !logId) {
+    console.warn("[LOCAL IDB SAVE] Missing attenderId or logId:", { attenderId, logId });
+    return;
+  }
   const cacheKey = `tgf_attender_logs_${attenderId}`;
   try {
     const cachedLogs = await getIDBCache(cacheKey);
-    if (Array.isArray(cachedLogs)) {
-      const idx = cachedLogs.findIndex(item => item.id === logId);
-      let updatedLogs = [...cachedLogs];
-      
-      const attenderSpecificFields = [
-        "status", "remark", "callType", "history", "callbackDate", "callbackStatus",
-        "objectionReason", "lastCalledAt", "firstCalledAt", "registeredYearMonth",
-        "Source", "Called For", "source", "calledFor", "called_for", "sourse"
-      ];
-      
-      const attUpdates = {};
-      Object.keys(updates).forEach(k => {
-        if (attenderSpecificFields.includes(k)) {
-          attUpdates[k] = updates[k];
-        }
-      });
-
-      if (idx >= 0) {
-        const existing = updatedLogs[idx];
-        const existingAttState = existing.attenderStates?.[attenderId] || {};
-        const newAttState = { ...existingAttState, ...attUpdates, updatedAt: new Date().toISOString() };
-        
-        updatedLogs[idx] = {
-          ...existing,
-          ...updates,
-          attenderStates: {
-            ...(existing.attenderStates || {}),
-            [attenderId]: newAttState
-          },
-          updatedAt: new Date().toISOString()
-        };
-      } else {
-        const newAttState = { ...attUpdates, updatedAt: new Date().toISOString() };
-        updatedLogs.unshift({
-          id: logId,
-          ...updates,
-          attenderId,
-          attenderStates: {
-            [attenderId]: newAttState
-          },
-          updatedAt: new Date().toISOString()
-        });
+    let updatedLogs = Array.isArray(cachedLogs) ? [...cachedLogs] : [];
+    
+    const idx = updatedLogs.findIndex(item => item.id === logId);
+    
+    const attenderSpecificFields = [
+      "status", "remark", "callType", "history", "callbackDate", "callbackStatus",
+      "objectionReason", "lastCalledAt", "firstCalledAt", "registeredYearMonth",
+      "Source", "Called For", "source", "calledFor", "called_for", "sourse"
+    ];
+    
+    const attUpdates = {};
+    Object.keys(updates).forEach(k => {
+      if (attenderSpecificFields.includes(k)) {
+        attUpdates[k] = updates[k];
       }
-      await setIDBCache(cacheKey, updatedLogs);
-      console.log(`[LOCAL IDB SUCCESS] Lead ${logId} updated in local IndexedDB for attender ${attenderId}`);
+    });
+
+    if (idx >= 0) {
+      const existing = updatedLogs[idx];
+      const existingAttState = existing.attenderStates?.[attenderId] || {};
+      const newAttState = { ...existingAttState, ...attUpdates, updatedAt: new Date().toISOString() };
+      
+      updatedLogs[idx] = {
+        ...existing,
+        ...updates,
+        attenderStates: {
+          ...(existing.attenderStates || {}),
+          [attenderId]: newAttState
+        },
+        updatedAt: new Date().toISOString()
+      };
+    } else {
+      const newAttState = { ...attUpdates, updatedAt: new Date().toISOString() };
+      updatedLogs.unshift({
+        id: logId,
+        ...updates,
+        attenderId,
+        attenderStates: {
+          [attenderId]: newAttState
+        },
+        updatedAt: new Date().toISOString()
+      });
     }
+    await setIDBCache(cacheKey, updatedLogs);
+    console.log(`[LOCAL IDB SUCCESS] Lead ${logId} updated in local IndexedDB for attender ${attenderId} (Total cached: ${updatedLogs.length})`);
   } catch (err) {
     console.warn("Failed to update local IDB attender cache:", err);
   }

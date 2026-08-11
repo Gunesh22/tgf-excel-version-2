@@ -1367,7 +1367,28 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           attenderName={attenderName}
           programs={programs.filter(p => p.id !== INCOMING_PROGRAM_ID && p.id !== OUTGOING_PROGRAM_ID)}
           onSave={(updated, isOptimistic) => {
-            setCallLogs(prev => prev.map(l => l.id === updated.id ? { ...l, ...updated } : l));
+            setCallLogs(prev => {
+              const targetId = updated.id || updated.contactId;
+              const rawPhone = updated.Phone || updated.Mobile || updated.phone || updated.mobile;
+              const normP = rawPhone ? normalizePhone(rawPhone) : null;
+              
+              const existingIdx = prev.findIndex(l => {
+                if (targetId && (l.id === targetId || l.contactId === targetId)) return true;
+                if (normP) {
+                  const lPhone = l.Phone || l.Mobile || l.phone || l.mobile;
+                  if (lPhone && normalizePhone(lPhone) === normP) return true;
+                }
+                return false;
+              });
+
+              if (existingIdx !== -1) {
+                const next = [...prev];
+                next[existingIdx] = { ...next[existingIdx], ...updated, id: targetId || next[existingIdx].id };
+                return next;
+              } else {
+                return [{ ...updated, id: targetId || `local_inc_${Date.now()}` }, ...prev];
+              }
+            });
             if (!isOptimistic) setEditingRow(null);
           }}
           onDelete={handleDeleteRow}
