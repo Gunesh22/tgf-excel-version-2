@@ -2482,7 +2482,7 @@ const pruneContactForCacheForMonth = (c, monthStr) => {
       };
     });
   }
-  return pruned;
+  return JSON.parse(JSON.stringify(pruned));
 };
 
 const getByteSize = (obj) => {
@@ -2494,17 +2494,26 @@ const getByteSize = (obj) => {
 };
 
 export const rebuildCallCenterCache = async () => {
-  const q = query(collection(db, "contacts"), where("isAssigned", "==", true));
-  const snap = await getDocs(q);
+  const allContactsSnap = await getDocs(collection(db, "contacts"));
   const currentMonth = getMonthStr(new Date());
   
   const monthlyData = {};
   
-  snap.docs.forEach(d => {
+  allContactsSnap.docs.forEach(d => {
     const data = d.data();
     if (data._deleted) return;
     
+    const isAssigned = data.isAssigned === true || 
+                       !!data.attenderId || 
+                       (Array.isArray(data.attenderIds) && data.attenderIds.length > 0) ||
+                       (data.attenderStates && Object.keys(data.attenderStates).length > 0);
+
+    if (!isAssigned) return;
+
     const contactMonths = new Set();
+    // Always include current month for active assigned contacts so they appear in active attender sheets
+    contactMonths.add(currentMonth);
+
     const createdMonth = getMonthStr(data.createdAt) || currentMonth;
     contactMonths.add(createdMonth);
     
