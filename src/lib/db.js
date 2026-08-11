@@ -1127,82 +1127,124 @@ export const assignContactsToAttender = async (tag, programName, attenderId, att
 // CALL LOGS — Attender's Personal Sheet
 // ─────────────────────────────────────────────
 
-// Real-time subscription — queries by attenderId only (month-scoped on client)
+// Real-time subscription — queries by attenderId (Stale-While-Revalidate: Instant 0ms IndexedDB load + background real-time sync)
 export const subscribeToCallLogs = (...args) => {
-  let tag = null, attenderId = null, callback = null;
-  if (args.length === 3) {
-    [tag, attenderId, callback] = args;
-  } else {
-    [attenderId, callback] = args;
+  let tag = null, attenderId = null, attenderName = null, callback = null;
+  if (typeof args[args.length - 1] === "function") {
+    callback = args.pop();
+  }
+  if (args.length === 1) {
+    attenderId = args[0];
+  } else if (args.length === 2) {
+    attenderId = args[0];
+    if (typeof args[1] === "string" && args[1].length > 0) {
+      attenderName = args[1];
+    }
+  } else if (args.length >= 3) {
+    tag = args[0];
+    attenderId = args[1];
+    attenderName = args[2];
   }
 
   const cacheKey = `tgf_attender_logs_${attenderId}`;
+  let unsubFirestore = null;
+  let isCancelled = false;
 
-  // 1. Immediately emit cached logs from IndexedDB if available (0-second UI load, 0 Firebase reads)
+  // 1. Immediately emit cached logs from IndexedDB (0ms UI load, zero delay)
   if (attenderId) {
     getIDBCache(cacheKey).then(cachedLogs => {
+      if (isCancelled) return;
       if (Array.isArray(cachedLogs) && cachedLogs.length > 0) {
+        console.log(`[LOCAL CACHE INSTANT LOAD] Served ${cachedLogs.length} leads from IndexedDB for ${attenderId}`);
         let filtered = cachedLogs;
         if (tag && tag !== "ALL") {
           filtered = cachedLogs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
         }
-        callback(filtered);
+        if (callback && !isCancelled) callback(filtered);
       }
     }).catch(err => {
       console.warn("Failed to load attender logs from IndexedDB:", err);
     });
   }
 
-  const currentMonthStr = getMonthStr(new Date());
+  // 2. Attach background onSnapshot listener on current month partition for INSTANT updates
+  const now = new Date();
+  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
   const cacheQuery = query(
     collection(db, "callCenterCache"),
-    where(documentId(), ">=", currentMonthStr),
-    where(documentId(), "<=", currentMonthStr + "\uf8ff")
+    where(documentId(), ">=", currentMonthStr)
   );
 
-  return onSnapshot(cacheQuery, snap => {
-    console.log(`[FIRESTORE READ - onSnapshot] subscribeToCallLogs snapshot received | docsCount: ${snap.docs.length} (document IDs: ${snap.docs.map(d=>d.id).join(", ")})`);
+  unsubFirestore = onSnapshot(cacheQuery, snap => {
+    if (isCancelled) return;
+    console.log(`[FIRESTORE REALTIME SYNC] snapshot received | docsCount: ${snap.docs.length}`);
     const contactsMap = {};
     snap.docs.filter(d => d.id !== "contacts").forEach(docSnap => {
       const docContacts = docSnap.data().contacts || {};
       Object.entries(docContacts).forEach(([id, rawData]) => {
         if (!rawData) return;
-        const isAssignedToMe = rawData.attenderId === attenderId || 
+        const isAssignedToMe = (attenderId && (
+          rawData.attenderId === attenderId || 
           rawData.assignedTo === attenderId || 
           (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderId)) ||
-          (rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined);
+          (rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined)
+        )) || (attenderName && (
+          rawData.assignedName === attenderName || 
+          rawData.attenderName === attenderName || 
+          rawData.assignedTo === attenderName ||
+          (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderName)) ||
+          (rawData.attenderStates && rawData.attenderStates[attenderName] !== undefined)
+        ));
 
         if (isAssignedToMe) {
-          const hasState = rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined;
-          const attState = hasState ? rawData.attenderStates[attenderId] : {};
-          contactsMap[id] = {
-            id: id,
-            ...rawData,
-            _rawData: rawData,
-            status: attState.status !== undefined ? attState.status : (rawData.status || ""),
-            remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
-            callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
-            history: attState.history !== undefined ? attState.history : (rawData.history || []),
-            callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
-            callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
-            objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
-            lastCalledAt: attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null),
-            firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
-            registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : (rawData.registeredYearMonth || null),
-            Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
-            "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
-            _hidden: attState._hidden === true,
-            _partId: docSnap.id,
-            attenderId: attenderId,
-            attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
+          const matchedKey = (rawData.attenderStates && attenderId && rawData.attenderStates[attenderId] !== undefined)
+            ? attenderId 
+            : (rawData.attenderStates && attenderName && rawData.attenderStates[attenderName] !== undefined) 
+              ? attenderName 
+              : null;
+          const hasState = Boolean(matchedKey);
+          const attState = hasState ? rawData.attenderStates[matchedKey] : {};
+          
+          const newLastCalledAt = attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null);
+          const getTimeMs = (val) => {
+            if (!val) return 0;
+            if (typeof val.toDate === "function") return val.toDate().getTime();
+            if (val.seconds !== undefined) return val.seconds * 1000;
+            const d = new Date(val);
+            return isNaN(d.getTime()) ? 0 : d.getTime();
           };
+
+          const existing = contactsMap[id];
+          if (!existing || (newLastCalledAt && getTimeMs(newLastCalledAt) > getTimeMs(existing.lastCalledAt))) {
+            contactsMap[id] = {
+              id: id,
+              ...rawData,
+              _rawData: rawData,
+              status: attState.status !== undefined ? attState.status : (rawData.status || ""),
+              remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
+              callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
+              history: attState.history !== undefined ? attState.history : (rawData.history || []),
+              callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
+              callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
+              objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
+              lastCalledAt: newLastCalledAt,
+              firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
+              registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : (rawData.registeredYearMonth || null),
+              Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
+              "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
+              _hidden: attState._hidden === true,
+              _partId: docSnap.id,
+              attenderId: attenderId,
+              attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
+            };
+          }
         }
       });
     });
 
     let logs = Object.values(contactsMap).filter(log => !log._deleted && !log._hidden);
 
-    // Filter by tag client-side if a specific tag is provided
     if (tag && tag !== "ALL") {
       logs = logs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
     }
@@ -1237,11 +1279,16 @@ export const subscribeToCallLogs = (...args) => {
     if (attenderId) {
       setIDBCache(cacheKey, finalLogs).catch(err => console.warn("Failed to update IndexedDB logs cache:", err));
     }
-    callback(finalLogs);
+    if (callback && !isCancelled) callback(finalLogs);
   }, err => console.error("subscribeToCallLogs error:", err));
+
+  return () => {
+    isCancelled = true;
+    if (unsubFirestore) unsubFirestore();
+  };
 };
 
-export const updateCallLog = async (logId, updates, attenderId = null, attenderName = null, existingContact = null) => {
+export const updateCallLogDirectFirebase = async (logId, updates, attenderId = null, attenderName = null, existingContact = null) => {
   const contactRef = doc(db, "contacts", logId);
   
   let previousStatus = "";
@@ -1635,6 +1682,23 @@ export const updateCallLog = async (logId, updates, attenderId = null, attenderN
   await updateCacheContacts([logId], { [logId]: freshData }, { [logId]: knownPartId });
 };
 
+export const updateCallLog = async (logId, updates, attenderId = null, attenderName = null, existingContact = null) => {
+  // 1. Instantly update local IndexedDB cache for 0ms load & browser persistence
+  if (attenderId) {
+    await updateLocalAttenderCache(attenderId, logId, updates);
+  }
+
+  // 2. Try direct write to Firebase
+  try {
+    await updateCallLogDirectFirebase(logId, updates, attenderId, attenderName, existingContact);
+    return { success: true, synced: true };
+  } catch (err) {
+    console.warn("⚠️ Firebase write limit reached or network offline! Lead updated in local IDB & queued for sync.", err);
+    await queuePendingWrite("updateCallLog", { logId, updates, attenderId, attenderName, existingContact });
+    return { success: true, synced: false, queuedLocally: true };
+  }
+};
+
 // ─────────────────────────────────────────────
 // Remove a single attender's access to a contact
 // without affecting any other attender's data.
@@ -1688,7 +1752,7 @@ export const removeAttenderFromContact = async (contactId, attenderId) => {
 // ─────────────────────────────────────────────
 
 // Add a manual incoming or outgoing call entry
-export const addIncomingCallLog = async (attenderId, attenderName, data, programId = null, programName = null) => {
+export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName, data, programId = null, programName = null) => {
   const now = new Date();
   const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
@@ -1941,6 +2005,32 @@ export const addIncomingCallLog = async (attenderId, attenderName, data, program
   return docRef.id;
 };
 
+export const addIncomingCallLog = async (attenderId, attenderName, data, programId = null, programName = null) => {
+  const localId = `local_inc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+
+  // 1. Instantly update local IndexedDB cache for 0ms UI load
+  if (attenderId) {
+    await updateLocalAttenderCache(attenderId, localId, {
+      ...data,
+      Name: formatContactName(data.Name || data.name || "New Lead"),
+      Phone: data.Phone || data.phone || "",
+      callType: data.callType || "incoming",
+      status: data.status || "Call Log Added",
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  // 2. Try direct write to Firebase
+  try {
+    const docId = await addIncomingCallLogDirectFirebase(attenderId, attenderName, data, programId, programName);
+    return docId;
+  } catch (err) {
+    console.warn("⚠️ Firebase write limit reached or network offline! New lead saved in local IDB & queued for sync.", err);
+    await queuePendingWrite("addIncomingCallLog", { attenderId, attenderName, data, programId, programName });
+    return localId;
+  }
+};
+
 // Global search contacts by exact phone number, name prefix, or email prefix
 export const globalSearchContacts = async (queryStr) => {
   if (!queryStr || !queryStr.trim()) return [];
@@ -2020,6 +2110,93 @@ export const globalSearchContacts = async (queryStr) => {
     return Array.from(resultsMap.values());
   } catch (e) {
     console.error("Global search failed:", e);
+    return [];
+  }
+};
+
+// On-Demand Search: Read directly from Firebase (master contacts + callCenterCache partitions), restricted strictly to this attender's assigned leads
+export const searchAttenderContacts = async (queryStr, attenderId, attenderName) => {
+  if (!queryStr || !queryStr.trim() || queryStr.trim().length < 2) return [];
+  const term = queryStr.trim();
+  const termLower = term.toLowerCase();
+  const norm = normalizePhone(term);
+
+  try {
+    // 1. Search master contacts collection via globalSearchContacts
+    const globalResults = await globalSearchContacts(term);
+
+    // 2. Also search all callCenterCache partitions in Firebase for matching contacts
+    const cacheSnap = await getDocs(collection(db, "callCenterCache"));
+    const cacheResults = [];
+
+    cacheSnap.docs.filter(d => d.id !== "contacts").forEach(docSnap => {
+      const docContacts = docSnap.data().contacts || {};
+      Object.entries(docContacts).forEach(([id, rawData]) => {
+        if (!rawData || rawData._deleted) return;
+
+        const searchableStr = [
+          rawData.Name, rawData.name, rawData.Phone, rawData.phone, rawData.Mobile, rawData.mobile,
+          rawData.Email, rawData.email, rawData.City, rawData.city, rawData["Called For"]
+        ].filter(Boolean).join(" ").toLowerCase();
+
+        const normPhone = rawData.Phone ? normalizePhone(rawData.Phone) : (rawData.Mobile ? normalizePhone(rawData.Mobile) : "");
+        
+        const isMatch = searchableStr.includes(termLower) || (norm.length >= 4 && normPhone.includes(norm));
+        if (isMatch) {
+          cacheResults.push({ id, ...rawData, _partId: docSnap.id });
+        }
+      });
+    });
+
+    // Combine and filter strictly for this attender's leads
+    const allResultsMap = new Map();
+    [...globalResults, ...cacheResults].forEach(item => {
+      if (!item || !item.id) return;
+      
+      const isAssignedToMe = (attenderId && (
+        item.attenderId === attenderId || 
+        item.assignedTo === attenderId || 
+        (Array.isArray(item.assignedTo) && item.assignedTo.includes(attenderId)) ||
+        (item.attenderStates && item.attenderStates[attenderId] !== undefined)
+      )) || (attenderName && (
+        item.assignedName === attenderName || 
+        item.attenderName === attenderName || 
+        item.assignedTo === attenderName ||
+        (Array.isArray(item.assignedTo) && item.assignedTo.includes(attenderName)) ||
+        (item.attenderStates && item.attenderStates[attenderName] !== undefined)
+      ));
+
+      if (isAssignedToMe) {
+        const matchedKey = (item.attenderStates && attenderId && item.attenderStates[attenderId] !== undefined)
+          ? attenderId 
+          : (item.attenderStates && attenderName && item.attenderStates[attenderName] !== undefined) 
+            ? attenderName 
+            : null;
+        const hasState = Boolean(matchedKey);
+        const attState = hasState ? item.attenderStates[matchedKey] : {};
+
+        allResultsMap.set(item.id, {
+          id: item.id,
+          ...item,
+          status: attState.status !== undefined ? attState.status : (item.status || ""),
+          remark: attState.remark !== undefined ? attState.remark : (item.remark || ""),
+          callType: String(attState.callType !== undefined ? attState.callType : (item.callType || "outgoing")).toLowerCase(),
+          history: attState.history !== undefined ? attState.history : (item.history || []),
+          callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (item.callbackDate || null),
+          callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (item.callbackStatus || ""),
+          objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (item.objectionReason || ""),
+          lastCalledAt: attState.lastCalledAt !== undefined ? attState.lastCalledAt : (item.lastCalledAt || null),
+          Source: attState.Source !== undefined ? attState.Source : (item.Source || item.Sourse || ""),
+          "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (item["Called For"] || ""),
+          attenderId: attenderId,
+          attenderName: attState.attenderName || item.assignedName || item.attenderName || ""
+        });
+      }
+    });
+
+    return Array.from(allResultsMap.values());
+  } catch (err) {
+    console.error("searchAttenderContacts error:", err);
     return [];
   }
 };
@@ -3480,6 +3657,150 @@ export const setIDBCache = async (key, data) => {
     return false;
   }
 };
+
+// ─────────────────────────────────────────────
+// OFFLINE & QUOTA PENDING WRITES QUEUE ENGINE
+// ─────────────────────────────────────────────
+const PENDING_WRITES_KEY = "tgf_pending_writes_queue";
+
+export const updateLocalAttenderCache = async (attenderId, logId, updates) => {
+  if (!attenderId || !logId) return;
+  const cacheKey = `tgf_attender_logs_${attenderId}`;
+  try {
+    const cachedLogs = await getIDBCache(cacheKey);
+    if (Array.isArray(cachedLogs)) {
+      const idx = cachedLogs.findIndex(item => item.id === logId);
+      let updatedLogs = [...cachedLogs];
+      
+      const attenderSpecificFields = [
+        "status", "remark", "callType", "history", "callbackDate", "callbackStatus",
+        "objectionReason", "lastCalledAt", "firstCalledAt", "registeredYearMonth",
+        "Source", "Called For", "source", "calledFor", "called_for", "sourse"
+      ];
+      
+      const attUpdates = {};
+      Object.keys(updates).forEach(k => {
+        if (attenderSpecificFields.includes(k)) {
+          attUpdates[k] = updates[k];
+        }
+      });
+
+      if (idx >= 0) {
+        const existing = updatedLogs[idx];
+        const existingAttState = existing.attenderStates?.[attenderId] || {};
+        const newAttState = { ...existingAttState, ...attUpdates, updatedAt: new Date().toISOString() };
+        
+        updatedLogs[idx] = {
+          ...existing,
+          ...updates,
+          attenderStates: {
+            ...(existing.attenderStates || {}),
+            [attenderId]: newAttState
+          },
+          updatedAt: new Date().toISOString()
+        };
+      } else {
+        const newAttState = { ...attUpdates, updatedAt: new Date().toISOString() };
+        updatedLogs.unshift({
+          id: logId,
+          ...updates,
+          attenderId,
+          attenderStates: {
+            [attenderId]: newAttState
+          },
+          updatedAt: new Date().toISOString()
+        });
+      }
+      await setIDBCache(cacheKey, updatedLogs);
+      console.log(`[LOCAL IDB SUCCESS] Lead ${logId} updated in local IndexedDB for attender ${attenderId}`);
+    }
+  } catch (err) {
+    console.warn("Failed to update local IDB attender cache:", err);
+  }
+};
+
+export const getPendingWrites = async () => {
+  try {
+    const queue = await getIDBCache(PENDING_WRITES_KEY);
+    return Array.isArray(queue) ? queue : [];
+  } catch (e) {
+    return [];
+  }
+};
+
+export const queuePendingWrite = async (actionType, payload) => {
+  try {
+    const queue = await getPendingWrites();
+    const newItem = {
+      id: `pw_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      actionType,
+      payload,
+      timestamp: new Date().toISOString(),
+      retryCount: 0
+    };
+    queue.push(newItem);
+    await setIDBCache(PENDING_WRITES_KEY, queue);
+    console.log(`[WRITE QUEUED LOCALLY] Total queued items: ${queue.length}`, newItem);
+    return newItem;
+  } catch (err) {
+    console.error("Failed to queue pending write:", err);
+    return null;
+  }
+};
+
+export const clearPendingWriteItem = async (itemId) => {
+  try {
+    const queue = await getPendingWrites();
+    const updated = queue.filter(item => item.id !== itemId);
+    await setIDBCache(PENDING_WRITES_KEY, updated);
+  } catch (err) {
+    console.warn("Failed to clear pending write item:", err);
+  }
+};
+
+let isFlushingWrites = false;
+export const flushPendingWrites = async () => {
+  if (isFlushingWrites) return;
+  const queue = await getPendingWrites();
+  if (queue.length === 0) return;
+
+  isFlushingWrites = true;
+  console.log(`[OFFLINE SYNC START] Attempting to sync ${queue.length} pending local writes to Firebase...`);
+
+  for (const item of queue) {
+    try {
+      let success = false;
+      if (item.actionType === "updateCallLog") {
+        const { logId, updates, attenderId, attenderName, existingContact } = item.payload;
+        await updateCallLogDirectFirebase(logId, updates, attenderId, attenderName, existingContact);
+        success = true;
+      } else if (item.actionType === "addIncomingCallLog") {
+        const { attenderId, attenderName, data, programId, programName } = item.payload;
+        await addIncomingCallLogDirectFirebase(attenderId, attenderName, data, programId, programName);
+        success = true;
+      }
+
+      if (success) {
+        console.log(`[OFFLINE SYNC SUCCESS] Flushed write item ${item.id} to Firebase`);
+        await clearPendingWriteItem(item.id);
+      }
+    } catch (err) {
+      console.warn(`[OFFLINE SYNC PAUSED] Write item ${item.id} failed again (quota/offline). Will retry later.`, err);
+      break;
+    }
+  }
+  isFlushingWrites = false;
+};
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => {
+    console.log("🌐 Network online detected! Flushing pending write queue...");
+    flushPendingWrites();
+  });
+  setInterval(() => {
+    flushPendingWrites();
+  }, 30000);
+}
 
 export const subscribeToRegistrations = (scopeOption, callback) => {
   let targetOption = scopeOption;

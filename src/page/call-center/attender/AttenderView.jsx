@@ -12,7 +12,7 @@ import {
   assignContactsToAttender, normalizePhone, getActiveTags,
   INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME, ensureIncomingProgram,
   OUTGOING_PROGRAM_ID, OUTGOING_PROGRAM_NAME, ensureOutgoingProgram,
-  globalSearchContacts, claimContact, removeAttenderFromContact, claimCRMContact
+  globalSearchContacts, searchAttenderContacts, claimContact, removeAttenderFromContact, claimCRMContact
 } from "../../../lib/db";
 import { searchCRM } from "../../../lib/ghl";
 import {
@@ -148,14 +148,43 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   }, []);
 
   useEffect(() => {
-    // Subscribe by attenderId only — all this attender's logs across all programs
+    // Subscribe by attenderId & attenderName — all this attender's logs across all programs
     setIsLoadingProgram(true);
-    unsubRef.current = subscribeToCallLogs(attenderId, (logs) => {
+    unsubRef.current = subscribeToCallLogs(attenderId, attenderName, (logs) => {
       setCallLogs(logs);
       setIsLoadingProgram(false);
     });
     return () => { if (unsubRef.current) unsubRef.current(); };
-  }, [attenderId]);
+  }, [attenderId, attenderName]);
+
+  // On-demand search: When user types in search bar, read matching leads directly from Firebase + merge with local cache
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q || q.length < 2) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const extraResults = await searchAttenderContacts(q, attenderId, attenderName);
+        if (Array.isArray(extraResults) && extraResults.length > 0) {
+          setCallLogs(prev => {
+            const existingMap = new Map(prev.map(item => [item.id, item]));
+            let hasNew = false;
+            extraResults.forEach(item => {
+              if (!existingMap.has(item.id)) {
+                existingMap.set(item.id, item);
+                hasNew = true;
+              }
+            });
+            return hasNew ? Array.from(existingMap.values()) : prev;
+          });
+        }
+      } catch (err) {
+        console.warn("Error fetching remote search results:", err);
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, attenderId, attenderName]);
 
   // Refresh callback-due flags every 60 seconds for long-running sessions
   useEffect(() => {
@@ -561,20 +590,6 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     });
   }, [callLogs, selectedTags, programs]);
 
-  // ── Stats ──
-  const stats = useMemo(() => {
-    const active = tagFilteredLogs;
-    const total = active.length;
-    const called = active.filter(l => l.status || l.callbackDate || l.remark || l.remarks).length;
-    const interested = active.filter(l => l.status === "Interested").length;
-    const regDone = active.filter(l => l.status === "Reg.Done").length;
-    const callbacks = active.filter(l => l._callbackDue).length;
-    const incoming = active.filter(l => l.callType === "incoming").length;
-    const outgoing = active.filter(l => l.callType !== "incoming").length;
-    const hotLeads = active.filter(l => l.isHotLead).length;
-    return { total, called, interested, regDone, callbacks, incoming, outgoing, hotLeads };
-  }, [tagFilteredLogs]);
-
   // ── Unique values for dropdowns dynamically computed from month data ──
   const uniqueSources = useMemo(() => {
     const set = new Set(SOURCE_OPTIONS);
@@ -676,8 +691,34 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   const filteredLogs = useMemo(() => {
     return tagFilteredLogs.filter(log => {
       // 1. Text Search Query
-      const q = searchQuery.toLowerCase();
-      if (q && !Object.values(log).join(" ").toLowerCase().includes(q)) return false;
+      const q = searchQuery.trim().toLowerCase();
+      if (q) {
+        const qDigits = q.replace(/[\s\-\.\(\)\+]/g, "");
+        const isPhoneQuery = qDigits.length >= 3 && /^\d+$/.test(qDigits);
+
+        let isMatch = false;
+
+        // A. Standard substring search across all values of the log
+        for (const val of Object.values(log)) {
+          if (val && typeof val !== "object" && String(val).toLowerCase().includes(q)) {
+            isMatch = true;
+            break;
+          }
+        }
+
+        // B. Phone number normalized matching
+        if (!isMatch && isPhoneQuery) {
+          const logPhones = [
+            log.Phone, log.phone, log.Mobile, log.mobile, log.Whatsapp, log.whatsapp, log.normalizedPhone, log.normalizedMobile
+          ].map(p => String(p || "").replace(/[\s\-\.\(\)\+]/g, "")).filter(Boolean);
+
+          if (logPhones.some(p => p.includes(qDigits))) {
+            isMatch = true;
+          }
+        }
+
+        if (!isMatch) return false;
+      }
 
       // 2. Quick Status Filter
       if (filterStatus === "Hot Leads" && !log.isHotLead) return false;
@@ -955,6 +996,20 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     });
     return list;
   }, [filteredLogs, sortBy]);
+
+  // ── Stats ──
+  const stats = useMemo(() => {
+    const active = sortedLogs;
+    const total = active.length;
+    const called = active.filter(l => l.status || l.callbackDate || l.remark || l.remarks).length;
+    const interested = active.filter(l => l.status === "Interested").length;
+    const regDone = active.filter(l => l.status === "Reg.Done").length;
+    const callbacks = active.filter(l => l._callbackDue).length;
+    const incoming = active.filter(l => l.callType === "incoming").length;
+    const outgoing = active.filter(l => l.callType !== "incoming").length;
+    const hotLeads = active.filter(l => l.isHotLead).length;
+    return { total, called, interested, regDone, callbacks, incoming, outgoing, hotLeads };
+  }, [sortedLogs]);
 
   const totalPages = Math.ceil(sortedLogs.length / rowsPerPage);
   const paginated = sortedLogs.slice((page - 1) * rowsPerPage, page * rowsPerPage);
@@ -1466,7 +1521,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       {/* Filters */}
       {activeView === "sheet" && (
         <AttenderFilters
-          key={`filters-${optionsVersion}`}
+          optionsVersion={optionsVersion}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
           sortBy={sortBy}
