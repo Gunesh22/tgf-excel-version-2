@@ -2877,8 +2877,17 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
       const ref = doc(db, "callCenterCache", knownPartId);
       if (prunedContact === null) {
         await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
+        if (globalActivePartitionsCache[month]?.[knownPartId]?.contacts) {
+          delete globalActivePartitionsCache[month][knownPartId].contacts[contactId];
+        }
       } else {
         await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+        if (globalActivePartitionsCache[month]?.[knownPartId]) {
+          if (!globalActivePartitionsCache[month][knownPartId].contacts) {
+            globalActivePartitionsCache[month][knownPartId].contacts = {};
+          }
+          globalActivePartitionsCache[month][knownPartId].contacts[contactId] = prunedContact;
+        }
       }
       return;
     } catch (err) {
@@ -3307,7 +3316,7 @@ export const updateCacheContacts = async (contactIds, inMemoryDataMap = {}, know
         for (const [key, val] of Object.entries(updates)) {
           const contactId = key.split(".")[1];
           const isDeleteVal = !(val && val.id);
-          await updateContactInActiveCache(month, contactId, isDeleteVal ? null : val);
+          await updateContactInActiveCache(month, contactId, isDeleteVal ? null : val, knownPartIdMap[contactId] || null);
         }
       }
     });
