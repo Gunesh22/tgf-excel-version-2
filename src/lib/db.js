@@ -1127,6 +1127,24 @@ export const assignContactsToAttender = async (tag, programName, attenderId, att
 // CALL LOGS — Attender's Personal Sheet
 // ─────────────────────────────────────────────
 
+// In-memory registry of active partition snapshots to eliminate getDocs reads during updates
+const globalActivePartitionsCache = {};
+
+export const populateGlobalActivePartitionsCache = (snapDocs) => {
+  if (!Array.isArray(snapDocs)) return;
+  snapDocs.forEach(d => {
+    if (!d || d.id === "contacts") return;
+    const match = d.id.match(/^(\d{4}-\d{2})/);
+    if (match) {
+      const monthKey = match[1];
+      if (!globalActivePartitionsCache[monthKey]) {
+        globalActivePartitionsCache[monthKey] = {};
+      }
+      globalActivePartitionsCache[monthKey][d.id] = d.data() || { contacts: {} };
+    }
+  });
+};
+
 // Real-time subscription — queries by attenderId (Stale-While-Revalidate: Instant 0ms IndexedDB load + background real-time sync)
 export const subscribeToCallLogs = (...args) => {
   let tag = null, attenderId = null, attenderName = null, callback = null;
@@ -1167,18 +1185,20 @@ export const subscribeToCallLogs = (...args) => {
     });
   }
 
-  // 2. Attach background onSnapshot listener on current month partition for INSTANT updates
+  // 2. Attach background onSnapshot listener on Current Month + Previous 2 Months partition (3 Months Active Cache)
   const now = new Date();
-  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const prev2Date = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+  const prev2MonthStr = `${prev2Date.getFullYear()}-${String(prev2Date.getMonth() + 1).padStart(2, "0")}`;
 
   const cacheQuery = query(
     collection(db, "callCenterCache"),
-    where(documentId(), ">=", currentMonthStr)
+    where(documentId(), ">=", prev2MonthStr)
   );
 
   unsubFirestore = onSnapshot(cacheQuery, snap => {
     if (isCancelled) return;
     console.log(`[FIRESTORE REALTIME SYNC] snapshot received | docsCount: ${snap.docs.length}`);
+    populateGlobalActivePartitionsCache(snap.docs);
     const contactsMap = {};
     snap.docs.filter(d => d.id !== "contacts").forEach(docSnap => {
       const docContacts = docSnap.data().contacts || {};
@@ -2045,10 +2065,14 @@ export const globalSearchContacts = async (queryStr) => {
   const term = queryStr.trim();
   const termLower = term.toLowerCase();
 
+  console.log(`[GLOBAL SEARCH] Executing targeted index queries for term: "${term}"`);
+
   const queries = [];
 
   // 1. Search by exact phone match (using normalized form)
   const norm = normalizePhone(term);
+  const isPureDigits = /^\d+$/.test(term);
+
   if (norm.length >= 4) {
     queries.push(
       getDocs(
@@ -2060,8 +2084,8 @@ export const globalSearchContacts = async (queryStr) => {
     );
   }
 
-  // 2. Search by Name prefix (case-sensitive prefixes)
-  if (term.length >= 2) {
+  // 2. Search by Name prefix (only if not pure digits)
+  if (!isPureDigits && term.length >= 2) {
     queries.push(
       getDocs(
         query(
@@ -2072,7 +2096,6 @@ export const globalSearchContacts = async (queryStr) => {
         )
       )
     );
-    // Also try capitalized prefix
     const capitalized = term.charAt(0).toUpperCase() + term.slice(1);
     if (capitalized !== term) {
       queries.push(
@@ -2088,8 +2111,8 @@ export const globalSearchContacts = async (queryStr) => {
     }
   }
 
-  // 3. Search by Email prefix
-  if (term.includes("@") || term.length >= 3) {
+  // 3. Search by Email prefix (only if term includes @)
+  if (term.includes("@")) {
     queries.push(
       getDocs(
         query(
@@ -2115,50 +2138,28 @@ export const globalSearchContacts = async (queryStr) => {
       });
     });
 
+    console.log(`[GLOBAL SEARCH SUCCESS] Query batch returned ${resultsMap.size} unique contact(s)`);
     return Array.from(resultsMap.values());
   } catch (e) {
-    console.error("Global search failed:", e);
+    console.error("[GLOBAL SEARCH ERROR] Global search failed:", e);
     return [];
   }
 };
-
-// On-Demand Search: Read directly from Firebase (master contacts + callCenterCache partitions), restricted strictly to this attender's assigned leads
+// On-Demand Targeted Search: Queries master contacts collection (0 callCenterCache full collection reads)
 export const searchAttenderContacts = async (queryStr, attenderId, attenderName) => {
   if (!queryStr || !queryStr.trim() || queryStr.trim().length < 2) return [];
   const term = queryStr.trim();
-  const termLower = term.toLowerCase();
-  const norm = normalizePhone(term);
+
+  console.log(`[TARGETED SEARCH START] Querying contacts master collection for: "${term}" | Attender: ${attenderName || attenderId}`);
 
   try {
-    // 1. Search master contacts collection via globalSearchContacts
+    // Search master contacts collection using targeted field indexes
     const globalResults = await globalSearchContacts(term);
+    console.log(`[TARGETED SEARCH FIREBASE] Master contacts search returned ${globalResults.length} document(s)`);
 
-    // 2. Also search all callCenterCache partitions in Firebase for matching contacts
-    const cacheSnap = await getDocs(collection(db, "callCenterCache"));
-    const cacheResults = [];
-
-    cacheSnap.docs.filter(d => d.id !== "contacts").forEach(docSnap => {
-      const docContacts = docSnap.data().contacts || {};
-      Object.entries(docContacts).forEach(([id, rawData]) => {
-        if (!rawData || rawData._deleted) return;
-
-        const searchableStr = [
-          rawData.Name, rawData.name, rawData.Phone, rawData.phone, rawData.Mobile, rawData.mobile,
-          rawData.Email, rawData.email, rawData.City, rawData.city, rawData["Called For"]
-        ].filter(Boolean).join(" ").toLowerCase();
-
-        const normPhone = rawData.Phone ? normalizePhone(rawData.Phone) : (rawData.Mobile ? normalizePhone(rawData.Mobile) : "");
-        
-        const isMatch = searchableStr.includes(termLower) || (norm.length >= 4 && normPhone.includes(norm));
-        if (isMatch) {
-          cacheResults.push({ id, ...rawData, _partId: docSnap.id });
-        }
-      });
-    });
-
-    // Combine and filter strictly for this attender's leads
+    // Filter strictly for this attender's assigned leads
     const allResultsMap = new Map();
-    [...globalResults, ...cacheResults].forEach(item => {
+    globalResults.forEach(item => {
       if (!item || !item.id) return;
       
       const isAssignedToMe = (attenderId && (
@@ -2202,9 +2203,109 @@ export const searchAttenderContacts = async (queryStr, attenderId, attenderName)
       }
     });
 
-    return Array.from(allResultsMap.values());
+    const finalResults = Array.from(allResultsMap.values());
+    console.log(`[TARGETED SEARCH COMPLETE] Matched ${finalResults.length} lead(s) assigned to ${attenderName || attenderId}`);
+    return finalResults;
   } catch (err) {
-    console.error("searchAttenderContacts error:", err);
+    console.error("[TARGETED SEARCH ERROR] searchAttenderContacts error:", err);
+    return [];
+  }
+};
+
+// Targeted Historical Cache Fetcher: Reads ONLY required monthly callCenterCache partition docs and caches them in IndexedDB with 1-Week TTL
+export const fetchHistoricalCachePartition = async (monthStr, attenderId, attenderName) => {
+  if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) return [];
+
+  // 1. Check local IndexedDB cache first (1-Week / 7-Day TTL)
+  const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const cacheKey = `tgf_historical_cache_${monthStr}_${attenderId}`;
+  console.log(`[HISTORICAL CACHE CHECK] Checking local IndexedDB cache for month: ${monthStr}`);
+  try {
+    const localData = await getIDBCache(cacheKey);
+    if (localData) {
+      const logs = Array.isArray(localData) ? localData : localData.logs;
+      const timestamp = localData.timestamp || 0;
+      const ageMs = Date.now() - timestamp;
+
+      if (Array.isArray(logs) && logs.length > 0 && (timestamp === 0 || ageMs < ONE_WEEK_MS)) {
+        console.log(`[HISTORICAL CACHE LOCAL LOAD SUCCESS] Served ${logs.length} leads for ${monthStr} from IndexedDB (0 Firebase reads | Cache age: ${timestamp ? Math.round(ageMs / 3600000) + 'h / 168h TTL' : 'active'})`);
+        return logs;
+      } else if (timestamp && ageMs >= ONE_WEEK_MS) {
+        console.log(`[HISTORICAL CACHE EXPIRED] Local cache for ${monthStr} is older than 7 days (1 Week TTL). Purging and re-fetching from Firebase.`);
+      }
+    }
+  } catch (e) {
+    console.warn("[HISTORICAL CACHE WARN] Error reading historical IndexedDB cache:", e);
+  }
+
+  // 2. Targeted Firestore query: fetch ALL partition docs for monthStr (e.g., 2026-05_part1, 2026-05_part2)
+  console.log(`[HISTORICAL FIREBASE READ] Fetching all targeted partition docs from Firestore for month: ${monthStr}`);
+  try {
+    const q = query(
+      collection(db, "callCenterCache"),
+      where(documentId(), ">=", monthStr),
+      where(documentId(), "<=", monthStr + "\uf8ff")
+    );
+    const snap = await getDocs(q);
+    console.log(`[HISTORICAL FIREBASE READ SUCCESS] Retrieved ${snap.docs.length} partition doc(s) for month: ${monthStr}`);
+
+    const contactsMap = {};
+
+    snap.docs.forEach(docSnap => {
+      const docContacts = docSnap.data().contacts || {};
+      Object.entries(docContacts).forEach(([id, rawData]) => {
+        if (!rawData || rawData._deleted) return;
+        const isAssignedToMe = (attenderId && (
+          rawData.attenderId === attenderId || 
+          rawData.assignedTo === attenderId || 
+          (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderId)) ||
+          (rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined)
+        )) || (attenderName && (
+          rawData.assignedName === attenderName || 
+          rawData.attenderName === attenderName || 
+          rawData.assignedTo === attenderName ||
+          (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderName)) ||
+          (rawData.attenderStates && rawData.attenderStates[attenderName] !== undefined)
+        ));
+
+        if (isAssignedToMe) {
+          const matchedKey = (rawData.attenderStates && attenderId && rawData.attenderStates[attenderId] !== undefined)
+            ? attenderId 
+            : (rawData.attenderStates && attenderName && rawData.attenderStates[attenderName] !== undefined) 
+              ? attenderName 
+              : null;
+          const hasState = Boolean(matchedKey);
+          const attState = hasState ? rawData.attenderStates[matchedKey] : {};
+
+          contactsMap[id] = {
+            id,
+            ...rawData,
+            _rawData: rawData,
+            status: attState.status !== undefined ? attState.status : (rawData.status || ""),
+            remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
+            callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
+            history: attState.history !== undefined ? attState.history : (rawData.history || []),
+            callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
+            callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
+            objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
+            lastCalledAt: attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null),
+            Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
+            "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
+            attenderId,
+            attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
+          };
+        }
+      });
+    });
+
+    const historicalLogs = Object.values(contactsMap);
+    console.log(`[HISTORICAL CACHE STORE] Storing ${historicalLogs.length} leads into IndexedDB for month: ${monthStr} (1-Week TTL)`);
+    if (historicalLogs.length > 0) {
+      await setIDBCache(cacheKey, { timestamp: Date.now(), logs: historicalLogs }).catch(err => console.warn("Failed to store historical cache:", err));
+    }
+    return historicalLogs;
+  } catch (err) {
+    console.error("fetchHistoricalCachePartition error:", err);
     return [];
   }
 };
@@ -2781,10 +2882,111 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
       }
       return;
     } catch (err) {
-      console.warn("Direct update to knownPartId failed, falling back to month query search:", err);
+      console.warn("Direct update to knownPartId failed, falling back to in-memory/query search:", err);
     }
   }
 
+  // 1. ZERO-READ OPTIMIZATION: Use active in-memory snapshot cache if available
+  const memoryParts = globalActivePartitionsCache[month];
+  if (memoryParts && Object.keys(memoryParts).length > 0) {
+    console.log(`[ZERO-READ CACHE UPDATE] Using in-memory partition snapshot for month: ${month} (0 Firestore Reads!)`);
+    let targetPartId = null;
+    let chosenPartId = null;
+    let maxPartNum = 0;
+
+    Object.entries(memoryParts).forEach(([partId, partData]) => {
+      const match = partId.match(/_part(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1]);
+        if (num > maxPartNum) maxPartNum = num;
+      } else {
+        maxPartNum = Math.max(maxPartNum, 1);
+      }
+
+      const contacts = partData.contacts || {};
+      if (contacts[contactId]) {
+        targetPartId = partId;
+      }
+    });
+
+    if (targetPartId) {
+      const ref = doc(db, "callCenterCache", targetPartId);
+      if (prunedContact === null) {
+        await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
+        if (globalActivePartitionsCache[month][targetPartId]?.contacts) {
+          delete globalActivePartitionsCache[month][targetPartId].contacts[contactId];
+        }
+      } else {
+        const data = globalActivePartitionsCache[month][targetPartId] || {};
+        const updatedContacts = { ...(data.contacts || {}), [contactId]: prunedContact };
+        const newSize = getByteSize({ contacts: updatedContacts });
+
+        if (newSize < 850 * 1024 && Object.keys(updatedContacts).length <= 120) {
+          await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+          globalActivePartitionsCache[month][targetPartId].contacts[contactId] = prunedContact;
+        } else {
+          // Remove from this part and move to another
+          await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
+          delete globalActivePartitionsCache[month][targetPartId].contacts[contactId];
+
+          Object.entries(memoryParts).forEach(([partId, partData]) => {
+            if (partId === targetPartId) return;
+            const dContacts = partData.contacts || {};
+            const testContacts = { ...dContacts, [contactId]: prunedContact };
+            const testSize = getByteSize({ contacts: testContacts });
+            if (testSize < 850 * 1024 && Object.keys(testContacts).length <= 120 && !chosenPartId) {
+              chosenPartId = partId;
+            }
+          });
+
+          if (chosenPartId) {
+            const chosenRef = doc(db, "callCenterCache", chosenPartId);
+            await updateDoc(chosenRef, { [`contacts.${contactId}`]: prunedContact });
+            if (!globalActivePartitionsCache[month][chosenPartId].contacts) {
+              globalActivePartitionsCache[month][chosenPartId].contacts = {};
+            }
+            globalActivePartitionsCache[month][chosenPartId].contacts[contactId] = prunedContact;
+          } else {
+            const newPartNum = maxPartNum > 0 ? maxPartNum + 1 : 1;
+            const newPartId = `${month}_part${newPartNum}`;
+            const newRef = doc(db, "callCenterCache", newPartId);
+            await setDoc(newRef, { contacts: { [contactId]: prunedContact } }, { merge: true });
+            globalActivePartitionsCache[month][newPartId] = { contacts: { [contactId]: prunedContact } };
+          }
+        }
+      }
+      return;
+    } else {
+      if (prunedContact === null) return;
+
+      Object.entries(memoryParts).forEach(([partId, partData]) => {
+        const dContacts = partData.contacts || {};
+        const testContacts = { ...dContacts, [contactId]: prunedContact };
+        const testSize = getByteSize({ contacts: testContacts });
+        if (testSize < 850 * 1024 && Object.keys(testContacts).length <= 120 && !chosenPartId) {
+          chosenPartId = partId;
+        }
+      });
+
+      if (chosenPartId) {
+        const chosenRef = doc(db, "callCenterCache", chosenPartId);
+        await updateDoc(chosenRef, { [`contacts.${contactId}`]: prunedContact });
+        if (!globalActivePartitionsCache[month][chosenPartId].contacts) {
+          globalActivePartitionsCache[month][chosenPartId].contacts = {};
+        }
+        globalActivePartitionsCache[month][chosenPartId].contacts[contactId] = prunedContact;
+      } else {
+        const newPartNum = maxPartNum > 0 ? maxPartNum + 1 : 1;
+        const newPartId = `${month}_part${newPartNum}`;
+        const newRef = doc(db, "callCenterCache", newPartId);
+        await setDoc(newRef, { contacts: { [contactId]: prunedContact } }, { merge: true });
+        globalActivePartitionsCache[month][newPartId] = { contacts: { [contactId]: prunedContact } };
+      }
+      return;
+    }
+  }
+
+  // 2. FALLBACK ONLY IF IN-MEMORY SNAPSHOT NOT LOADED
   const cacheColl = collection(db, "callCenterCache");
   // Query parts belonging to this month to locate or create target cache document
   const monthQuery = query(
@@ -2896,8 +3098,6 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
       await setDoc(ref, {
         contacts: {
           [contactId]: prunedContact
-        }
-      }, { merge: true });
     }
   }
 };
@@ -3671,6 +3871,45 @@ export const setIDBCache = async (key, data) => {
   } catch (e) {
     console.warn("IndexedDB write error:", e);
     return false;
+  }
+};
+
+// Automatically purges historical cache entries older than 7 days (1-Week TTL) or maxKeepMonths (default: 6 months)
+export const purgeStaleHistoricalCache = async (maxKeepMonths = 6) => {
+  try {
+    const db = await openIDB();
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    const store = tx.objectStore(IDB_STORE);
+    const keysReq = store.getAllKeys();
+
+    keysReq.onsuccess = () => {
+      const keys = keysReq.result || [];
+      const now = new Date();
+      const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+      const cutoffDate = new Date(now.getFullYear(), now.getMonth() - maxKeepMonths, 1);
+      const cutoffStr = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth() + 1).padStart(2, "0")}`;
+
+      keys.forEach(key => {
+        if (typeof key === "string" && key.startsWith("tgf_historical_cache_")) {
+          const match = key.match(/tgf_historical_cache_(\d{4}-\d{2})_/);
+          const getReq = store.get(key);
+          getReq.onsuccess = () => {
+            const entry = getReq.result;
+            const monthStr = match ? match[1] : null;
+            const isStaleMonth = monthStr && monthStr < cutoffStr;
+            const isExpiredTTL = entry && entry.timestamp && (Date.now() - entry.timestamp > ONE_WEEK_MS);
+
+            if (isStaleMonth || isExpiredTTL) {
+              console.log(`[CACHE PURGE] Deleting historical cache key: ${key} (${isExpiredTTL ? "1-Week TTL Expired" : "Older than cutoff"})`);
+              const delTx = db.transaction(IDB_STORE, "readwrite");
+              delTx.objectStore(IDB_STORE).delete(key);
+            }
+          };
+        }
+      });
+    };
+  } catch (e) {
+    console.warn("Failed to purge stale historical cache:", e);
   }
 };
 

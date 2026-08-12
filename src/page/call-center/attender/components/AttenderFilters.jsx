@@ -248,11 +248,26 @@ export function AttenderFilters({
   // Clear filters handler
   handleClearAllFilters,
 
+  // Manual search trigger handler
+  onTriggerSearch,
+
   // Mobile hide options
   hideTagFilter = false,
   hideSort = false
 }) {
+  const [searchDraft, setSearchDraft] = React.useState(searchQuery);
   const [filterSearchQuery, setFilterSearchQuery] = React.useState("");
+  const [showDatePickerModal, setShowDatePickerModal] = React.useState(false);
+
+  React.useEffect(() => {
+    setSearchDraft(searchQuery);
+  }, [searchQuery]);
+
+  const handleExecuteSearch = () => {
+    setSearchQuery(searchDraft);
+    setPage(1);
+    if (onTriggerSearch) onTriggerSearch(searchDraft);
+  };
 
   const shouldShowFilter = (label) => {
     if (!filterSearchQuery.trim()) return true;
@@ -285,125 +300,162 @@ export function AttenderFilters({
 
   return (
     <>
-      {/* Tag Selector */}
-      {availableTags.length > 0 && !hideTagFilter && (
-        <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-3 shrink-0 relative">
-          <Tag size={14} className="text-indigo-500 shrink-0" />
-          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest shrink-0">Tag Filter</span>
-          
-          <div className="relative">
-            <button
-              onClick={() => setTagDropdownOpen(!tagDropdownOpen)}
-              className="flex items-center justify-between gap-2 px-4 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl font-black text-sm text-indigo-700 hover:bg-indigo-100 transition focus:outline-none min-w-[200px]"
-            >
-              <span>
-                {selectedTags.length === 0
-                  ? "— All Tags —"
-                  : `${selectedTags.length} Tag${selectedTags.length > 1 ? "s" : ""} Selected`}
-              </span>
-              <ChevronDown size={14} className={`transition-transform duration-200 ${tagDropdownOpen ? "rotate-180" : ""}`} />
-            </button>
+      {/* Top Header Filter Bar (Tag Selector + 3-Month Active Window + Advanced Filters) */}
+      {!hideTagFilter && (
+        <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-3 shrink-0 relative overflow-x-auto">
+          {availableTags.length > 0 && (
+            <>
+              <Tag size={14} className="text-indigo-500 shrink-0" />
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest shrink-0">Tag Filter</span>
+              
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => setTagDropdownOpen(!tagDropdownOpen)}
+                  className="flex items-center justify-between gap-2 px-3 py-1 bg-indigo-50 border border-indigo-200 rounded-xl font-black text-xs text-indigo-700 hover:bg-indigo-100 transition focus:outline-none min-w-[150px]"
+                >
+                  <span>
+                    {selectedTags.length === 0
+                      ? "— All Tags —"
+                      : `${selectedTags.length} Tag${selectedTags.length > 1 ? "s" : ""} Selected`}
+                  </span>
+                  <ChevronDown size={14} className={`transition-transform duration-200 ${tagDropdownOpen ? "rotate-180" : ""}`} />
+                </button>
 
-            {tagDropdownOpen && (
-              <>
-                <div className="fixed inset-0 z-20" onClick={() => setTagDropdownOpen(false)} />
-                <div className="absolute left-0 mt-2 w-72 bg-white border border-gray-200 rounded-2xl shadow-xl z-30 flex flex-col p-3 animate-slide-down-scale origin-top">
-                  {/* Tag Search Input */}
-                  <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 mb-2 shrink-0">
-                    <Search size={14} className="text-gray-400" />
-                    <input
-                      type="text"
-                      placeholder="Search tags..."
-                      value={tagSearchQuery}
-                      onChange={e => setTagSearchQuery(e.target.value)}
-                      className="bg-transparent text-xs font-semibold text-gray-700 outline-none w-full"
-                    />
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center justify-between text-[10px] font-black text-indigo-600 uppercase tracking-wider px-1 mb-2 shrink-0">
-                    <button
-                      onClick={() => {
-                        setSelectedTags(availableTags);
-                        setPage(1);
-                        resetOtherFilters();
-                      }}
-                      className="hover:underline"
-                    >
-                      Select All
-                    </button>
-                    <button
-                      onClick={() => {
-                        setSelectedTags([]);
-                        setPage(1);
-                        resetOtherFilters();
-                      }}
-                      className="hover:underline text-rose-600"
-                    >
-                      Clear
-                    </button>
-                  </div>
-
-                  {/* Scrollable list of tags */}
-                  <div className="max-h-48 overflow-y-auto space-y-1 pr-1 flex-1">
-                    {availableTags
-                      .filter(tag => tag.toLowerCase().includes(tagSearchQuery.toLowerCase()))
-                      .map(tag => {
-                        const isChecked = selectedTags.includes(tag);
-                        return (
-                          <label
-                            key={tag}
-                            className="flex items-center gap-2.5 px-2.5 py-1.5 hover:bg-slate-50 rounded-lg cursor-pointer transition text-xs font-bold text-gray-700"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => {
-                                  if (isChecked) {
-                                    setSelectedTags(prev => prev.filter(t => t !== tag));
-                                  } else {
-                                    setSelectedTags(prev => [...prev, tag]);
-                                  }
-                                  setPage(1);
-                                  resetOtherFilters();
-                                }}
-                              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-                            />
-                            <span className="truncate">#{tag}</span>
-                          </label>
-                        );
-                      })}
-                    {availableTags.filter(tag => tag.toLowerCase().includes(tagSearchQuery.toLowerCase())).length === 0 && (
-                      <div className="text-center py-4 text-xs font-semibold text-gray-400">
-                        No tags match your search.
+                {tagDropdownOpen && (
+                  <>
+                    <div className="fixed inset-0 z-20" onClick={() => setTagDropdownOpen(false)} />
+                    <div className="absolute left-0 mt-2 w-72 bg-white border border-gray-200 rounded-2xl shadow-xl z-30 flex flex-col p-3 animate-slide-down-scale origin-top">
+                      {/* Tag Search Input */}
+                      <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 mb-2 shrink-0">
+                        <Search size={14} className="text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Search tags..."
+                          value={tagSearchQuery}
+                          onChange={e => setTagSearchQuery(e.target.value)}
+                          className="bg-transparent text-xs font-semibold text-gray-700 outline-none w-full"
+                        />
                       </div>
-                    )}
-                  </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center justify-between text-[10px] font-black text-indigo-600 uppercase tracking-wider px-1 mb-2 shrink-0">
+                        <button
+                          onClick={() => {
+                            setSelectedTags(availableTags);
+                            setPage(1);
+                            resetOtherFilters();
+                          }}
+                          className="hover:underline"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedTags([]);
+                            setPage(1);
+                            resetOtherFilters();
+                          }}
+                          className="hover:underline text-rose-600"
+                        >
+                          Clear
+                        </button>
+                      </div>
+
+                      {/* Scrollable list of tags */}
+                      <div className="max-h-48 overflow-y-auto space-y-1 pr-1 flex-1">
+                        {availableTags
+                          .filter(tag => tag.toLowerCase().includes(tagSearchQuery.toLowerCase()))
+                          .map(tag => {
+                            const isChecked = selectedTags.includes(tag);
+                            return (
+                              <label
+                                key={tag}
+                                className="flex items-center gap-2.5 px-2.5 py-1.5 hover:bg-slate-50 rounded-lg cursor-pointer transition text-xs font-bold text-gray-700"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => {
+                                      if (isChecked) {
+                                        setSelectedTags(prev => prev.filter(t => t !== tag));
+                                      } else {
+                                        setSelectedTags(prev => [...prev, tag]);
+                                      }
+                                      setPage(1);
+                                      resetOtherFilters();
+                                    }}
+                                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                                />
+                                <span className="truncate">#{tag}</span>
+                              </label>
+                            );
+                          })}
+                        {availableTags.filter(tag => tag.toLowerCase().includes(tagSearchQuery.toLowerCase())).length === 0 && (
+                          <div className="text-center py-4 text-xs font-semibold text-gray-400">
+                            No tags match your search.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Selected tag pills inline */}
+              {selectedTags.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap max-w-xs overflow-y-auto max-h-10 shrink-0">
+                  {selectedTags.map(tag => (
+                    <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                      #{tag}
+                      <button
+                        onClick={() => {
+                          setSelectedTags(prev => prev.filter(t => t !== tag));
+                          setPage(1);
+                          resetOtherFilters();
+                        }}
+                        className="p-0.5 hover:bg-indigo-100 rounded-full transition"
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  ))}
                 </div>
-              </>
-            )}
+              )}
+            </>
+          )}
+
+          {/* 3-Month Cache Indicator & Historical Date Toggle (Moved Beside Tag Filter) */}
+          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200/80 px-2 py-0.5 rounded-xl shrink-0 text-[11px]">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span className="font-bold text-gray-700 animate-pulse">
+              3-Month Active Window
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setShowDatePickerModal(true);
+              }}
+              className="ml-1 px-2 py-0.5 bg-white border border-gray-200 hover:bg-gray-100 text-gray-600 hover:text-gray-900 text-[10px] font-semibold rounded-lg transition"
+            >
+              Load Older Dates
+            </button>
           </div>
 
-          {/* Selected tag pills inline */}
-          {selectedTags.length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap max-w-md overflow-y-auto max-h-10">
-              {selectedTags.map(tag => (
-                <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
-                  #{tag}
-                  <button
-                    onClick={() => {
-                      setSelectedTags(prev => prev.filter(t => t !== tag));
-                      setPage(1);
-                      resetOtherFilters();
-                    }}
-                    className="p-0.5 hover:bg-indigo-100 rounded-full transition"
-                  >
-                    <X size={10} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
+          {/* Advanced Filters Button (Moved Beside Tag Filter) */}
+          <button
+            onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all border active:scale-[0.97] shrink-0 ${
+              showAdvancedFilters || activeFiltersCount > 0
+                ? "bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm"
+                : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+            }`}
+          >
+            <SlidersHorizontal size={13} />
+            Advanced Filters {activeFiltersCount > 0 && `(${activeFiltersCount})`}
+          </button>
 
           <span className="text-xs font-bold text-gray-400 shrink-0 ml-auto">
             {tagFilteredLogsLength} contact{tagFilteredLogsLength !== 1 ? "s" : ""}{selectedTags.length === 0 ? " · all tags" : ""}
@@ -435,15 +487,41 @@ export function AttenderFilters({
       {/* Main Filter Action Bar */}
       <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center justify-between shrink-0 gap-3">
         <div className="flex items-center gap-3 overflow-x-auto flex-1">
-          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5 shrink-0">
-            <Search size={14} className="text-gray-400" />
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1 shrink-0 focus-within:ring-2 focus-within:ring-indigo-100 transition">
+            <Search size={14} className="text-gray-400 shrink-0" />
             <input
               type="text"
               placeholder="Search..."
-              value={searchQuery}
-              onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
-              className="bg-transparent text-sm outline-none w-36"
+              value={searchDraft}
+              onChange={e => setSearchDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleExecuteSearch();
+                }
+              }}
+              className="bg-transparent text-sm font-semibold outline-none w-36"
             />
+            {searchDraft && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchDraft("");
+                  setSearchQuery("");
+                  setPage(1);
+                }}
+                className="text-gray-400 hover:text-gray-600 p-0.5"
+              >
+                <X size={12} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleExecuteSearch}
+              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-lg transition shadow-sm shrink-0"
+            >
+              Search
+            </button>
           </div>
 
           {!hideSort && (
@@ -460,18 +538,6 @@ export function AttenderFilters({
               </select>
             </div>
           )}
-
-          <button
-            onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border active:scale-[0.97] shrink-0 ${
-              showAdvancedFilters || activeFiltersCount > 0
-                ? "bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm"
-                : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
-            }`}
-          >
-            <SlidersHorizontal size={13} />
-            Advanced Filters {activeFiltersCount > 0 && `(${activeFiltersCount})`}
-          </button>
 
           <button
             onClick={() => setIsColumnModalOpen(true)}
@@ -929,6 +995,129 @@ export function AttenderFilters({
             </div>
           </div>
         </div>
+
+      {/* Dedicated Historical Date Range Picker Modal */}
+      {showDatePickerModal && (
+        <div
+          onClick={e => { if (e.target === e.currentTarget) setShowDatePickerModal(false); }}
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+        >
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 p-6 space-y-5">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <div>
+                <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                  <CalendarDays size={18} className="text-indigo-600" />
+                  Historical Date Range
+                </h3>
+                <p className="text-xs text-gray-500 font-semibold mt-0.5">
+                  Fetch historical lead partitions older than 3 months on-demand
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDatePickerModal(false)}
+                className="p-2 hover:bg-gray-100 active:scale-90 rounded-xl transition text-gray-400 hover:text-gray-600"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Date Parameter Field */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-700">Filter By Date Field</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFilterDateType("lastCalledAt")}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition border ${
+                    filterDateType === "lastCalledAt" || filterDateType === "All"
+                      ? "bg-indigo-50 border-indigo-200 text-indigo-700 font-black"
+                      : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  Last Called Date
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterDateType("createdAt")}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition border ${
+                    filterDateType === "createdAt"
+                      ? "bg-indigo-50 border-indigo-200 text-indigo-700 font-black"
+                      : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  Assignment Date
+                </button>
+              </div>
+            </div>
+
+            {/* Date Inputs */}
+            <div className="space-y-3">
+              <label className="text-xs font-bold text-gray-700">Select Date Range</label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">From Date</span>
+                  <input
+                    type="date"
+                    value={customDateFrom}
+                    onChange={e => {
+                      setCustomDateFrom(e.target.value);
+                      if (filterDateType === "All") setFilterDateType("lastCalledAt");
+                      setFilterDateRange("Custom");
+                    }}
+                    className="w-full bg-gray-50 border border-gray-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs font-bold text-gray-800 outline-none"
+                  />
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">To Date</span>
+                  <input
+                    type="date"
+                    value={customDateTo}
+                    onChange={e => {
+                      setCustomDateTo(e.target.value);
+                      if (filterDateType === "All") setFilterDateType("lastCalledAt");
+                      setFilterDateRange("Custom");
+                    }}
+                    className="w-full bg-gray-50 border border-gray-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs font-bold text-gray-800 outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterDateType("All");
+                  setFilterDateRange("All");
+                  setCustomDateFrom("");
+                  setCustomDateTo("");
+                  setPage(1);
+                  setShowDatePickerModal(false);
+                }}
+                className="px-3 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl transition"
+              >
+                Reset to 3-Month Window
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (filterDateType === "All") setFilterDateType("lastCalledAt");
+                  if (!customDateFrom && !customDateTo) setFilterDateRange("This Month");
+                  else setFilterDateRange("Custom");
+                  setPage(1);
+                  setShowDatePickerModal(false);
+                }}
+                className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-95 rounded-xl shadow-md transition"
+              >
+                Apply Date Range
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </>
     );
   }

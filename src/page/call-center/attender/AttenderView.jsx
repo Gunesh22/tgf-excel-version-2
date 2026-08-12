@@ -12,7 +12,8 @@ import {
   assignContactsToAttender, normalizePhone, getActiveTags,
   INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME, ensureIncomingProgram,
   OUTGOING_PROGRAM_ID, OUTGOING_PROGRAM_NAME, ensureOutgoingProgram,
-  globalSearchContacts, searchAttenderContacts, claimContact, removeAttenderFromContact, claimCRMContact
+  globalSearchContacts, searchAttenderContacts, claimContact, removeAttenderFromContact, claimCRMContact,
+  fetchHistoricalCachePartition, purgeStaleHistoricalCache
 } from "../../../lib/db";
 import { searchCRM } from "../../../lib/ghl";
 import {
@@ -145,6 +146,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
 
   useEffect(() => {
     loadPrograms();
+    purgeStaleHistoricalCache();
   }, []);
 
   useEffect(() => {
@@ -157,34 +159,111 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [attenderId, attenderName]);
 
-  // On-demand search: When user types in search bar, read matching leads directly from Firebase + merge with local cache
-  useEffect(() => {
-    const q = searchQuery.trim();
+  // Triggered when user clicks "Search" button or presses Enter in Search bar
+  const handleTriggerSearch = useCallback(async (overrideQuery) => {
+    const q = (typeof overrideQuery === "string" ? overrideQuery : searchQuery).trim();
     if (!q || q.length < 2) return;
 
-    const timer = setTimeout(async () => {
-      try {
-        const extraResults = await searchAttenderContacts(q, attenderId, attenderName);
-        if (Array.isArray(extraResults) && extraResults.length > 0) {
-          setCallLogs(prev => {
-            const existingMap = new Map(prev.map(item => [item.id, item]));
-            let hasNew = false;
-            extraResults.forEach(item => {
-              if (!existingMap.has(item.id)) {
-                existingMap.set(item.id, item);
-                hasNew = true;
-              }
-            });
-            return hasNew ? Array.from(existingMap.values()) : prev;
-          });
-        }
-      } catch (err) {
-        console.warn("Error fetching remote search results:", err);
-      }
-    }, 400);
+    // Check if matching leads exist in currently loaded memory
+    const qLower = q.toLowerCase();
+    const norm = normalizePhone(q);
+    const hasLocalMatch = callLogs.some(log => {
+      const name = String(log.Name || log.name || "").toLowerCase();
+      const phone = String(log.Phone || log.phone || log.Mobile || log.mobile || "");
+      const normPhone = normalizePhone(phone);
+      const email = String(log.Email || log.email || "").toLowerCase();
+      return name.includes(qLower) || (norm.length >= 4 && normPhone.includes(norm)) || email.includes(qLower);
+    });
 
-    return () => clearTimeout(timer);
-  }, [searchQuery, attenderId, attenderName]);
+    if (hasLocalMatch) {
+      console.log("[SEARCH] Local match found in memory/IndexedDB — skipping Firebase read");
+      return;
+    }
+
+    // Fallback to targeted master contacts query
+    try {
+      const extraResults = await searchAttenderContacts(q, attenderId, attenderName);
+      if (Array.isArray(extraResults) && extraResults.length > 0) {
+        setCallLogs(prev => {
+          const existingMap = new Map(prev.map(item => [item.id, item]));
+          let hasNew = false;
+          extraResults.forEach(item => {
+            if (!existingMap.has(item.id)) {
+              existingMap.set(item.id, item);
+              hasNew = true;
+            }
+          });
+          return hasNew ? Array.from(existingMap.values()) : prev;
+        });
+        toast.success(`Found ${extraResults.length} matching contact(s)`);
+      } else {
+        toast.error("No matching contact found in your assigned leads");
+      }
+    } catch (err) {
+      console.warn("Error fetching search results:", err);
+    }
+  }, [searchQuery, callLogs, attenderId, attenderName]);
+
+  // On-demand Historical Partition Fetcher: Triggered when filter requires older months outside the 3-Month Active Window
+  useEffect(() => {
+    if (filterDateType === "All" && filterDateRange === "All" && !customDateFrom) return;
+
+    // Determine target historical months if custom dates or date range is set
+    const targetMonths = new Set();
+    let dFrom = customDateFrom ? new Date(customDateFrom) : null;
+    let dTo = customDateTo ? new Date(customDateTo) : null;
+
+    if (dFrom && !isNaN(dFrom.getTime())) {
+      const start = new Date(dFrom.getFullYear(), dFrom.getMonth(), 1);
+      const end = (dTo && !isNaN(dTo.getTime())) 
+        ? new Date(dTo.getFullYear(), dTo.getMonth(), 1) 
+        : new Date(dFrom.getFullYear(), dFrom.getMonth(), 1);
+
+      let curr = new Date(start);
+      while (curr <= end) {
+        targetMonths.add(`${curr.getFullYear()}-${String(curr.getMonth() + 1).padStart(2, "0")}`);
+        curr.setMonth(curr.getMonth() + 1);
+      }
+    } else if (dTo && !isNaN(dTo.getTime())) {
+      targetMonths.add(`${dTo.getFullYear()}-${String(dTo.getMonth() + 1).padStart(2, "0")}`);
+    }
+
+    if (targetMonths.size === 0) return;
+
+    // Calculate active 3 months (Current Month + Previous 2 Months) to SKIP re-fetching
+    const now = new Date();
+    const curMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    
+    const p1 = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prev1MonthStr = `${p1.getFullYear()}-${String(p1.getMonth() + 1).padStart(2, "0")}`;
+    
+    const p2 = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+    const prev2MonthStr = `${p2.getFullYear()}-${String(p2.getMonth() + 1).padStart(2, "0")}`;
+
+    const active3Months = new Set([curMonthStr, prev1MonthStr, prev2MonthStr]);
+
+    targetMonths.forEach(async (monthStr) => {
+      if (active3Months.has(monthStr)) {
+        console.log(`[HISTORICAL FETCH SKIP] Month ${monthStr} is inside 3-Month Active Window — skipping Firebase read`);
+        return; // Already present in active 3-month realtime snapshot / local cache
+      }
+      console.log(`[HISTORICAL FETCH START] Month ${monthStr} is older than 3 months — checking IndexedDB / fetching partition on-demand`);
+      const historicalLogs = await fetchHistoricalCachePartition(monthStr, attenderId, attenderName);
+      if (Array.isArray(historicalLogs) && historicalLogs.length > 0) {
+        setCallLogs(prev => {
+          const existingMap = new Map(prev.map(item => [item.id, item]));
+          let hasNew = false;
+          historicalLogs.forEach(item => {
+            if (!existingMap.has(item.id)) {
+              existingMap.set(item.id, item);
+              hasNew = true;
+            }
+          });
+          return hasNew ? Array.from(existingMap.values()) : prev;
+        });
+      }
+    });
+  }, [filterDateType, filterDateRange, customDateFrom, customDateTo, attenderId, attenderName]);
 
   // Refresh callback-due flags every 60 seconds for long-running sessions
   useEffect(() => {
@@ -1205,6 +1284,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           setSelectedProgramId={setSelectedProgramId}
           handleGetNumbers={handleGetNumbers}
           isRequesting={isRequesting}
+          onTriggerSearch={handleTriggerSearch}
         />
       </div>
 
@@ -1341,14 +1421,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
             </button>
           </div>
 
-          <button onClick={() => setGlobalSearchOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition shadow-lg shadow-indigo-500/20">
-            <Search size={15} /> Global Search
-          </button>
           <button onClick={openCallEntryDialog} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition shadow-lg shadow-emerald-500/20">
             <PhoneIncoming size={15} /> Add Call Entry
-          </button>
-          <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-[#217346] text-[#217346] rounded-xl font-bold text-sm hover:bg-[#217346] hover:text-white transition">
-            <Download size={15} /> Export
           </button>
         </div>
       </header>
