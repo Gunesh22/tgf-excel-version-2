@@ -1145,6 +1145,9 @@ export const populateGlobalActivePartitionsCache = (snapDocs) => {
   });
 };
 
+// Global Active Snapshot Listeners Registry (Singleton Pattern per attender)
+const activeSnapshotRegistry = {};
+
 // Real-time subscription — queries by attenderId (Stale-While-Revalidate: Instant 0ms IndexedDB load + background real-time sync)
 export const subscribeToCallLogs = (...args) => {
   let tag = null, attenderId = null, attenderName = null, callback = null;
@@ -1165,146 +1168,183 @@ export const subscribeToCallLogs = (...args) => {
   }
 
   const cacheKey = `tgf_attender_logs_${attenderId}`;
-  let unsubFirestore = null;
-  let isCancelled = false;
+  const registryKey = `${attenderId || 'global'}_${attenderName || 'global'}`;
 
   // 1. Immediately emit cached logs from IndexedDB (0ms UI load, zero delay)
   if (attenderId) {
     getIDBCache(cacheKey).then(cachedLogs => {
-      if (isCancelled) return;
       if (Array.isArray(cachedLogs) && cachedLogs.length > 0) {
         console.log(`[LOCAL CACHE INSTANT LOAD] Served ${cachedLogs.length} leads from IndexedDB for ${attenderId}`);
         let filtered = cachedLogs;
         if (tag && tag !== "ALL") {
           filtered = cachedLogs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
         }
-        if (callback && !isCancelled) callback(filtered);
+        if (callback) callback(filtered);
       }
     }).catch(err => {
       console.warn("Failed to load attender logs from IndexedDB:", err);
     });
   }
 
-  // 2. Attach background onSnapshot listener on Current Month + Previous 2 Months partition (3 Months Active Cache)
-  const now = new Date();
-  const prev2Date = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-  const prev2MonthStr = `${prev2Date.getFullYear()}-${String(prev2Date.getMonth() + 1).padStart(2, "0")}`;
+  // 2. Reuse active global snapshot listener if already attached for this attender
+  if (!activeSnapshotRegistry[registryKey]) {
+    activeSnapshotRegistry[registryKey] = {
+      subscribers: new Map(),
+      unsub: null,
+      lastEmittedLogs: null
+    };
 
-  const cacheQuery = query(
-    collection(db, "callCenterCache"),
-    where(documentId(), ">=", prev2MonthStr)
-  );
+    const now = new Date();
+    const prev2Date = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+    const prev2MonthStr = `${prev2Date.getFullYear()}-${String(prev2Date.getMonth() + 1).padStart(2, "0")}`;
 
-  unsubFirestore = onSnapshot(cacheQuery, snap => {
-    if (isCancelled) return;
-    console.log(`[FIRESTORE REALTIME SYNC] snapshot received | docsCount: ${snap.docs.length}`);
-    populateGlobalActivePartitionsCache(snap.docs);
-    const contactsMap = {};
-    snap.docs.filter(d => d.id !== "contacts").forEach(docSnap => {
-      const docContacts = docSnap.data().contacts || {};
-      Object.entries(docContacts).forEach(([id, rawData]) => {
-        if (!rawData) return;
-        const isAssignedToMe = (attenderId && (
-          rawData.attenderId === attenderId || 
-          rawData.assignedTo === attenderId || 
-          (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderId)) ||
-          (rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined)
-        )) || (attenderName && (
-          rawData.assignedName === attenderName || 
-          rawData.attenderName === attenderName || 
-          rawData.assignedTo === attenderName ||
-          (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderName)) ||
-          (rawData.attenderStates && rawData.attenderStates[attenderName] !== undefined)
-        ));
+    const cacheQuery = query(
+      collection(db, "callCenterCache"),
+      where(documentId(), ">=", prev2MonthStr)
+    );
 
-        if (isAssignedToMe) {
-          const matchedKey = (rawData.attenderStates && attenderId && rawData.attenderStates[attenderId] !== undefined)
-            ? attenderId 
-            : (rawData.attenderStates && attenderName && rawData.attenderStates[attenderName] !== undefined) 
-              ? attenderName 
-              : null;
-          const hasState = Boolean(matchedKey);
-          const attState = hasState ? rawData.attenderStates[matchedKey] : {};
-          
-          const newLastCalledAt = attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null);
-          const getTimeMs = (val) => {
-            if (!val) return 0;
-            if (typeof val.toDate === "function") return val.toDate().getTime();
-            if (val.seconds !== undefined) return val.seconds * 1000;
-            const d = new Date(val);
-            return isNaN(d.getTime()) ? 0 : d.getTime();
-          };
+    const unsubFirestore = onSnapshot(cacheQuery, snap => {
+      console.log(`[FIRESTORE REALTIME SYNC] snapshot received | docsCount: ${snap.docs.length}`);
+      populateGlobalActivePartitionsCache(snap.docs);
+      const contactsMap = {};
+      snap.docs.filter(d => d.id !== "contacts").forEach(docSnap => {
+        const docContacts = docSnap.data().contacts || {};
+        Object.entries(docContacts).forEach(([id, rawData]) => {
+          if (!rawData) return;
+          const isAssignedToMe = (attenderId && (
+            rawData.attenderId === attenderId || 
+            rawData.assignedTo === attenderId || 
+            (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderId)) ||
+            (rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined)
+          )) || (attenderName && (
+            rawData.assignedName === attenderName || 
+            rawData.attenderName === attenderName || 
+            rawData.assignedTo === attenderName ||
+            (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderName)) ||
+            (rawData.attenderStates && rawData.attenderStates[attenderName] !== undefined)
+          ));
 
-          const existing = contactsMap[id];
-          if (!existing || (newLastCalledAt && getTimeMs(newLastCalledAt) > getTimeMs(existing.lastCalledAt))) {
-            contactsMap[id] = {
-              id: id,
-              ...rawData,
-              _rawData: rawData,
-              status: attState.status !== undefined ? attState.status : (rawData.status || ""),
-              remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
-              callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
-              history: attState.history !== undefined ? attState.history : (rawData.history || []),
-              callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
-              callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
-              objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
-              lastCalledAt: newLastCalledAt,
-              firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
-              registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : (rawData.registeredYearMonth || null),
-              Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
-              "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
-              _hidden: attState._hidden === true,
-              _partId: docSnap.id,
-              attenderId: attenderId,
-              attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
+          if (isAssignedToMe) {
+            const matchedKey = (rawData.attenderStates && attenderId && rawData.attenderStates[attenderId] !== undefined)
+              ? attenderId 
+              : (rawData.attenderStates && attenderName && rawData.attenderStates[attenderName] !== undefined) 
+                ? attenderName 
+                : null;
+            const hasState = Boolean(matchedKey);
+            const attState = hasState ? rawData.attenderStates[matchedKey] : {};
+            
+            const newLastCalledAt = attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null);
+            const getTimeMs = (val) => {
+              if (!val) return 0;
+              if (typeof val.toDate === "function") return val.toDate().getTime();
+              if (val.seconds !== undefined) return val.seconds * 1000;
+              const d = new Date(val);
+              return isNaN(d.getTime()) ? 0 : d.getTime();
             };
+
+            const existing = contactsMap[id];
+            if (!existing || (newLastCalledAt && getTimeMs(newLastCalledAt) > getTimeMs(existing.lastCalledAt))) {
+              contactsMap[id] = {
+                id: id,
+                ...rawData,
+                _rawData: rawData,
+                status: attState.status !== undefined ? attState.status : (rawData.status || ""),
+                remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
+                callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
+                history: attState.history !== undefined ? attState.history : (rawData.history || []),
+                callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
+                callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
+                objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
+                lastCalledAt: newLastCalledAt,
+                firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
+                registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : (rawData.registeredYearMonth || null),
+                Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
+                "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
+                _hidden: attState._hidden === true,
+                _partId: docSnap.id,
+                attenderId: attenderId,
+                attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
+              };
+            }
           }
-        }
+        });
       });
-    });
 
-    let logs = Object.values(contactsMap).filter(log => !log._deleted && !log._hidden);
+      let logs = Object.values(contactsMap).filter(log => !log._deleted && !log._hidden);
 
-    if (tag && tag !== "ALL") {
-      logs = logs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
-    }
-      
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const overdue = [];
-    const rest = [];
-    logs.forEach(log => {
-      if (log.callbackDate) {
-        let cbDate = null;
-        if (typeof log.callbackDate.toDate === "function") {
-          cbDate = log.callbackDate.toDate();
-        } else if (log.callbackDate.seconds !== undefined) {
-          cbDate = new Date(log.callbackDate.seconds * 1000);
-        } else {
-          cbDate = new Date(log.callbackDate);
-        }
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const overdue = [];
+      const rest = [];
+      logs.forEach(log => {
+        if (log.callbackDate) {
+          let cbDate = null;
+          if (typeof log.callbackDate.toDate === "function") {
+            cbDate = log.callbackDate.toDate();
+          } else if (log.callbackDate.seconds !== undefined) {
+            cbDate = new Date(log.callbackDate.seconds * 1000);
+          } else {
+            cbDate = new Date(log.callbackDate);
+          }
 
-        if (cbDate && !isNaN(cbDate.getTime())) {
-          cbDate.setHours(0, 0, 0, 0);
-          if (cbDate <= today) {
-            overdue.push({ ...log, _callbackDue: true });
-            return;
+          if (cbDate && !isNaN(cbDate.getTime())) {
+            cbDate.setHours(0, 0, 0, 0);
+            if (cbDate <= today) {
+              overdue.push({ ...log, _callbackDue: true });
+              return;
+            }
           }
         }
-      }
-      rest.push(log);
-    });
+        rest.push(log);
+      });
 
-    const finalLogs = [...overdue, ...rest];
-    if (attenderId) {
-      setIDBCache(cacheKey, finalLogs).catch(err => console.warn("Failed to update IndexedDB logs cache:", err));
+      const finalLogs = [...overdue, ...rest];
+      if (attenderId) {
+        setIDBCache(cacheKey, finalLogs).catch(err => console.warn("Failed to update IndexedDB logs cache:", err));
+      }
+
+      activeSnapshotRegistry[registryKey].lastEmittedLogs = finalLogs;
+      activeSnapshotRegistry[registryKey].subscribers.forEach(({ callback: subCb, tag: subTag }) => {
+        let subFiltered = finalLogs;
+        if (subTag && subTag !== "ALL") {
+          subFiltered = finalLogs.filter(log => Array.isArray(log.tags) && log.tags.includes(subTag));
+        }
+        if (subCb) subCb(subFiltered);
+      });
+    }, err => console.error("subscribeToCallLogs error:", err));
+
+    activeSnapshotRegistry[registryKey].unsub = unsubFirestore;
+  }
+
+  // Register this subscriber callback & tag filter
+  const subId = Symbol();
+  const entry = activeSnapshotRegistry[registryKey];
+  entry.subscribers.set(subId, { callback, tag });
+
+  // If data was already loaded in active registry, emit immediately to new subscriber
+  if (entry.lastEmittedLogs && callback) {
+    let filtered = entry.lastEmittedLogs;
+    if (tag && tag !== "ALL") {
+      filtered = entry.lastEmittedLogs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
     }
-    if (callback && !isCancelled) callback(finalLogs);
-  }, err => console.error("subscribeToCallLogs error:", err));
+    callback(filtered);
+  }
 
   return () => {
-    isCancelled = true;
-    if (unsubFirestore) unsubFirestore();
+    if (activeSnapshotRegistry[registryKey]) {
+      activeSnapshotRegistry[registryKey].subscribers.delete(subId);
+      // Keep listener open for 30s after unmount to handle rapid tab navigation without dropping connection
+      if (activeSnapshotRegistry[registryKey].subscribers.size === 0) {
+        setTimeout(() => {
+          if (activeSnapshotRegistry[registryKey] && activeSnapshotRegistry[registryKey].subscribers.size === 0) {
+            if (activeSnapshotRegistry[registryKey].unsub) {
+              activeSnapshotRegistry[registryKey].unsub();
+            }
+            delete activeSnapshotRegistry[registryKey];
+          }
+        }, 30000);
+      }
+    }
   };
 };
 
@@ -2848,7 +2888,7 @@ export const rebuildCallCenterCache = async () => {
         const testPart = { contacts: { ...currentPartContacts, [id]: contact } };
         const estimatedSize = getByteSize(testPart);
         
-        if (estimatedSize > 850 * 1024 || Object.keys(currentPartContacts).length >= 120) {
+        if (estimatedSize > 850 * 1024) {
           // Commit current part
           batch.set(doc(db, "callCenterCache", `${month}_part${partNum}`), { contacts: currentPartContacts });
           partNum++;
@@ -2880,16 +2920,25 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
         if (globalActivePartitionsCache[month]?.[knownPartId]?.contacts) {
           delete globalActivePartitionsCache[month][knownPartId].contacts[contactId];
         }
+        return;
       } else {
-        await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
-        if (globalActivePartitionsCache[month]?.[knownPartId]) {
-          if (!globalActivePartitionsCache[month][knownPartId].contacts) {
-            globalActivePartitionsCache[month][knownPartId].contacts = {};
+        const memoryData = globalActivePartitionsCache[month]?.[knownPartId]?.contacts || {};
+        const updatedContacts = { ...memoryData, [contactId]: prunedContact };
+        const newSize = getByteSize({ contacts: updatedContacts });
+
+        if (newSize < 850 * 1024) {
+          await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+          if (globalActivePartitionsCache[month]?.[knownPartId]) {
+            if (!globalActivePartitionsCache[month][knownPartId].contacts) {
+              globalActivePartitionsCache[month][knownPartId].contacts = {};
+            }
+            globalActivePartitionsCache[month][knownPartId].contacts[contactId] = prunedContact;
           }
-          globalActivePartitionsCache[month][knownPartId].contacts[contactId] = prunedContact;
+          return;
+        } else {
+          console.warn(`Known partition ${knownPartId} exceeded 850KB ceiling (${Math.round(newSize/1024)}KB). Falling back to shift to latest partition...`);
         }
       }
-      return;
     } catch (err) {
       console.warn("Direct update to knownPartId failed, falling back to in-memory/query search:", err);
     }
@@ -2930,23 +2979,24 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
         const updatedContacts = { ...(data.contacts || {}), [contactId]: prunedContact };
         const newSize = getByteSize({ contacts: updatedContacts });
 
-        if (newSize < 850 * 1024 && Object.keys(updatedContacts).length <= 120) {
+        if (newSize < 850 * 1024) {
           await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
           globalActivePartitionsCache[month][targetPartId].contacts[contactId] = prunedContact;
         } else {
-          // Remove from this part and move to another
+          // Remove from this part and move strictly to the LATEST part
           await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
           delete globalActivePartitionsCache[month][targetPartId].contacts[contactId];
 
-          Object.entries(memoryParts).forEach(([partId, partData]) => {
-            if (partId === targetPartId) return;
-            const dContacts = partData.contacts || {};
+          let latestPartId = maxPartNum > 0 ? `${month}_part${maxPartNum}` : `${month}_part1`;
+          let latestPartData = memoryParts[latestPartId];
+          if (latestPartData && latestPartId !== targetPartId) {
+            const dContacts = latestPartData.contacts || {};
             const testContacts = { ...dContacts, [contactId]: prunedContact };
             const testSize = getByteSize({ contacts: testContacts });
-            if (testSize < 850 * 1024 && Object.keys(testContacts).length <= 120 && !chosenPartId) {
-              chosenPartId = partId;
+            if (testSize < 850 * 1024) {
+              chosenPartId = latestPartId;
             }
-          });
+          }
 
           if (chosenPartId) {
             const chosenRef = doc(db, "callCenterCache", chosenPartId);
@@ -2968,14 +3018,17 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
     } else {
       if (prunedContact === null) return;
 
-      Object.entries(memoryParts).forEach(([partId, partData]) => {
-        const dContacts = partData.contacts || {};
+      // For a brand new lead, target ONLY the latest partition (highest part number)
+      let latestPartId = maxPartNum > 0 ? `${month}_part${maxPartNum}` : `${month}_part1`;
+      let latestPartData = memoryParts[latestPartId];
+      if (latestPartData) {
+        const dContacts = latestPartData.contacts || {};
         const testContacts = { ...dContacts, [contactId]: prunedContact };
         const testSize = getByteSize({ contacts: testContacts });
-        if (testSize < 850 * 1024 && Object.keys(testContacts).length <= 120 && !chosenPartId) {
-          chosenPartId = partId;
+        if (testSize < 850 * 1024) {
+          chosenPartId = latestPartId;
         }
-      });
+      }
 
       if (chosenPartId) {
         const chosenRef = doc(db, "callCenterCache", chosenPartId);
@@ -2997,7 +3050,8 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
 
   // 2. FALLBACK ONLY IF IN-MEMORY SNAPSHOT NOT LOADED
   const cacheColl = collection(db, "callCenterCache");
-  // Query parts belonging to this month to locate or create target cache document
+
+  // Query parts belonging to this month to locate existing contact or get latest partition
   const monthQuery = query(
     cacheColl,
     where(documentId(), ">=", month),
@@ -3005,110 +3059,84 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
   );
   console.log(`[FIRESTORE READ - getDocs] updateContactInActiveCache querying cache parts (fallback) for month: ${month}`);
   const snap = await getDocs(monthQuery);
-  console.log(`[FIRESTORE READ - getDocs] updateContactInActiveCache completed | partsFound: ${snap.docs.length} (document IDs: ${snap.docs.map(d=>d.id).join(", ")})`);
-  
+  console.log(`[FIRESTORE READ - getDocs] updateContactInActiveCache completed | partsFound: ${snap.docs.length}`);
+
   let targetDoc = null;
-  const parts = [];
-  
+  let latestDoc = null;
+  let maxPartNum = 0;
+
   snap.docs.forEach(d => {
     if (d.id === month || d.id.startsWith(`${month}_part`)) {
-      parts.push(d);
+      const match = d.id.match(/_part(\d+)$/);
+      const num = match ? parseInt(match[1]) : 1;
+      if (num >= maxPartNum) {
+        maxPartNum = num;
+        latestDoc = d;
+      }
+
       const contacts = d.data().contacts || {};
       if (contacts[contactId]) {
         targetDoc = d;
       }
     }
   });
-  
+
   if (targetDoc) {
+    // Existing contact found in a specific partition document (e.g. part1) -> update it directly
     const ref = doc(db, "callCenterCache", targetDoc.id);
     if (prunedContact === null) {
       await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
     } else {
-      // Check if updating in-place exceeds size limit (850 KB)
       const data = targetDoc.data();
-      const updatedContacts = { ...data.contacts, [contactId]: prunedContact };
+      const updatedContacts = { ...(data.contacts || {}), [contactId]: prunedContact };
       const newSize = getByteSize({ contacts: updatedContacts });
-      
-      if (newSize < 850 * 1024 && Object.keys(updatedContacts).length <= 120) {
+
+      if (newSize < 850 * 1024) {
         await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
       } else {
-        // Exceeds limit! Remove from this part and find another part or create one
+        // Exceeds limit! Delete from current part and move to latest doc
         await updateDoc(ref, { [`contacts.${contactId}`]: deleteField() });
-        
-        let chosenDoc = null;
-        let maxPartNum = 0;
-        
-        parts.forEach(d => {
-          if (d.id === targetDoc.id) return;
-          
-          const match = d.id.match(/_part(\d+)$/);
-          if (match) {
-            const num = parseInt(match[1]);
-            if (num > maxPartNum) maxPartNum = num;
-          } else {
-            maxPartNum = Math.max(maxPartNum, 1);
-          }
-          
-          const dContacts = d.data().contacts || {};
-          const testContacts = { ...dContacts, [contactId]: prunedContact };
+
+        if (latestDoc && latestDoc.id !== targetDoc.id) {
+          const lContacts = latestDoc.data().contacts || {};
+          const testContacts = { ...lContacts, [contactId]: prunedContact };
           const testSize = getByteSize({ contacts: testContacts });
-          if (testSize < 850 * 1024 && Object.keys(testContacts).length <= 120 && !chosenDoc) {
-            chosenDoc = d;
+
+          if (testSize < 850 * 1024) {
+            const chosenRef = doc(db, "callCenterCache", latestDoc.id);
+            await updateDoc(chosenRef, { [`contacts.${contactId}`]: prunedContact });
+            return;
           }
-        });
-        
-        if (chosenDoc) {
-          const chosenRef = doc(db, "callCenterCache", chosenDoc.id);
-          await updateDoc(chosenRef, { [`contacts.${contactId}`]: prunedContact });
-        } else {
-          const newPartNum = maxPartNum > 0 ? maxPartNum + 1 : 1;
-          const newPartId = `${month}_part${newPartNum}`;
-          const newRef = doc(db, "callCenterCache", newPartId);
-          await setDoc(newRef, {
-            contacts: {
-              [contactId]: prunedContact
-            }
-          }, { merge: true });
         }
+
+        const newPartId = `${month}_part${maxPartNum + 1}`;
+        const newRef = doc(db, "callCenterCache", newPartId);
+        await setDoc(newRef, { contacts: { [contactId]: prunedContact } }, { merge: true });
       }
     }
   } else {
-    // Contact doesn't exist in any active cache part
-    if (prunedContact === null) return; // Nothing to delete
-    
-    let chosenDoc = null;
-    let maxPartNum = 0;
-    
-    parts.forEach(d => {
-      const match = d.id.match(/_part(\d+)$/);
-      if (match) {
-        const num = parseInt(match[1]);
-        if (num > maxPartNum) maxPartNum = num;
-      } else {
-        maxPartNum = Math.max(maxPartNum, 1);
-      }
-      
-      const dContacts = d.data().contacts || {};
+    // Brand new lead not found in any partition -> target ONLY the latest partition doc
+    if (prunedContact === null) return;
+
+    if (latestDoc) {
+      const dContacts = latestDoc.data().contacts || {};
       const testContacts = { ...dContacts, [contactId]: prunedContact };
       const testSize = getByteSize({ contacts: testContacts });
-      if (testSize < 850 * 1024 && Object.keys(testContacts).length <= 120 && !chosenDoc) {
-        chosenDoc = d;
+
+      if (testSize < 850 * 1024) {
+        const ref = doc(db, "callCenterCache", latestDoc.id);
+        await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
+      } else {
+        // Latest partition is full -> create next partition
+        const newPartId = `${month}_part${maxPartNum + 1}`;
+        const ref = doc(db, "callCenterCache", newPartId);
+        await setDoc(newRef, { contacts: { [contactId]: prunedContact } }, { merge: true });
       }
-    });
-    
-    if (chosenDoc) {
-      const ref = doc(db, "callCenterCache", chosenDoc.id);
-      await updateDoc(ref, { [`contacts.${contactId}`]: prunedContact });
     } else {
-      const newPartNum = maxPartNum > 0 ? maxPartNum + 1 : 1;
-      const newPartId = `${month}_part${newPartNum}`;
+      // No partition doc exists yet for this month -> create part1
+      const newPartId = `${month}_part1`;
       const ref = doc(db, "callCenterCache", newPartId);
-      await setDoc(ref, {
-        contacts: {
-          [contactId]: prunedContact
-        }
-      });
+      await setDoc(newRef, { contacts: { [contactId]: prunedContact } }, { merge: true });
     }
   }
 };
