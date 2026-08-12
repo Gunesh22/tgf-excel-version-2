@@ -3107,6 +3107,8 @@ export const updateContactInActiveCache = async (month, contactId, prunedContact
       await setDoc(ref, {
         contacts: {
           [contactId]: prunedContact
+        }
+      });
     }
   }
 };
