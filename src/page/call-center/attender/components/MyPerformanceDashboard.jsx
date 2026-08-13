@@ -36,7 +36,7 @@ function getTimestampFromLog(log) {
 }
 
 function filterLogsByDate(logs, range, customStart, customEnd) {
-  if (range === "all") return logs;
+  if (range === "all") return logs.filter(log => !log._deleted);
   let start = null;
   let end = null;
   const now = new Date();
@@ -44,42 +44,67 @@ function filterLogsByDate(logs, range, customStart, customEnd) {
   if (range === "today") {
     start = new Date(now);
     start.setHours(0, 0, 0, 0);
+    end = new Date(now);
+    end.setHours(23, 59, 59, 999);
   } else if (range === "week") {
     start = new Date(now);
     start.setDate(now.getDate() - now.getDay()); // Sunday
     start.setHours(0, 0, 0, 0);
+    end = new Date(now);
+    end.setHours(23, 59, 59, 999);
   } else if (range === "month") {
     start = new Date(now);
     start.setDate(1);
     start.setHours(0, 0, 0, 0);
+    end = new Date(now);
+    end.setHours(23, 59, 59, 999);
   } else if (range === "custom") {
     if (customStart) {
-      start = new Date(customStart);
-      start.setHours(0, 0, 0, 0);
+      start = new Date(customStart + "T00:00:00");
     }
     if (customEnd) {
-      end = new Date(customEnd);
-      end.setHours(23, 59, 59, 999);
+      end = new Date(customEnd + "T23:59:59.999");
     }
   }
 
   return logs.filter(log => {
-    // Use history entries to determine activity in range
-    const hist = log.history || [];
-    if (hist.length > 0) {
-      return hist.some(h => {
-        const d = parseTimestamp(h.timestamp);
-        if (!d) return false;
-        if (start && d < start) return false;
-        if (end && d > end) return false;
-        return true;
+    if (log._deleted) return false;
+
+    const timestamps = [];
+
+    if (log.attenderStates && typeof log.attenderStates === "object") {
+      Object.values(log.attenderStates).forEach(state => {
+        if (!state) return;
+        if (Array.isArray(state.history)) {
+          state.history.forEach(h => {
+            const d = parseTimestamp(h.timestamp);
+            if (d) timestamps.push(d);
+          });
+        }
+        if (state.lastCalledAt || state.updatedAt) {
+          const d = parseTimestamp(state.lastCalledAt || state.updatedAt);
+          if (d) timestamps.push(d);
+        }
       });
     }
+
+    if (Array.isArray(log.history)) {
+      log.history.forEach(h => {
+        const d = parseTimestamp(h.timestamp);
+        if (d) timestamps.push(d);
+      });
+    }
+
     const ts = getTimestampFromLog(log);
-    if (!ts) return false;
-    if (start && ts < start) return false;
-    if (end && ts > end) return false;
-    return true;
+    if (ts) timestamps.push(ts);
+
+    if (timestamps.length === 0) return false;
+
+    return timestamps.some(d => {
+      if (start && d < start) return false;
+      if (end && d > end) return false;
+      return true;
+    });
   });
 }
 
@@ -119,11 +144,15 @@ function getAttenderAttempts(logs, attenderName, attenderId) {
     const isOurAttender = (name, id) => {
       if (attIdLower && id && String(id).toLowerCase().trim() === attIdLower) return true;
       if (attNameLower && name && String(name).toLowerCase().trim() === attNameLower) return true;
-      // If we don't have id/name matching but there's no other attender, count it (since logs are pre-filtered by parent)
+      if (attNameLower && id && String(id).toLowerCase().trim() === attNameLower) return true;
+      if (attIdLower && name && String(name).toLowerCase().trim() === attIdLower) return true;
       return !id && !name;
     };
 
-    if (log.attenderStates && Object.keys(log.attenderStates).length > 0) {
+    const logAttempts = [];
+
+    // 1. Collect from attenderStates
+    if (log.attenderStates && typeof log.attenderStates === "object") {
       Object.entries(log.attenderStates).forEach(([attId, state]) => {
         const stateAttName = state.attenderName || "";
         if (!isOurAttender(stateAttName, attId)) return;
@@ -136,66 +165,98 @@ function getAttenderAttempts(logs, attenderName, attenderId) {
                 status: h.status,
                 remark: h.remark,
                 callType: h.callType,
-                attenderName: h.attenderName
+                attenderName: h.attenderName || stateAttName
               },
               true,
               index
             );
-            if (att) attempts.push(att);
+            if (att) logAttempts.push(att);
           });
-        } else if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
-          const att = processAttemptObj(
-            {
-              timestamp: state.lastCalledAt || state.updatedAt,
-              status: state.status,
-              remark: state.remark,
-              callType: state.callType
-            },
-            false
-          );
-          if (att) attempts.push(att);
+        }
+        if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
+          const dateVal = state.lastCalledAt || state.updatedAt;
+          const ts = parseTimestamp(dateVal);
+          const existsInStateHistory = Array.isArray(state.history) && state.history.some(h => {
+            const hTs = parseTimestamp(h.timestamp);
+            return hTs && ts && Math.abs(hTs.getTime() - ts.getTime()) < 1000 && (h.status === state.status || h.remark === state.remark);
+          });
+          if (!existsInStateHistory) {
+            const att = processAttemptObj(
+              {
+                timestamp: state.lastCalledAt || state.updatedAt,
+                status: state.status,
+                remark: state.remark,
+                callType: state.callType,
+                attenderName: stateAttName
+              },
+              false,
+              0
+            );
+            if (att) logAttempts.push(att);
+          }
         }
       });
-    } else {
-      // Legacy structure
-      const stateAttName = log.attenderName || "";
-      const stateAttId = log.attenderId || "";
-      if (!isOurAttender(stateAttName, stateAttId)) return;
+    }
 
-      if (log.history && Array.isArray(log.history) && log.history.length > 0) {
-        log.history.forEach((h, index) => {
-          const histAttName = h.attenderName || log.attenderName || "";
-          const histAttId = h.attenderId || log.attenderId || "";
-          if (!isOurAttender(histAttName, histAttId)) return;
+    // 2. Collect from top-level log.history
+    if (log.history && Array.isArray(log.history) && log.history.length > 0) {
+      log.history.forEach((h, index) => {
+        const histAttName = h.attenderName || log.attenderName || "";
+        const histAttId = h.attenderId || log.attenderId || "";
+        if (!isOurAttender(histAttName, histAttId)) return;
 
+        const dateVal = h.timestamp || h.date || h.createdAt || h.updatedAt;
+        const ts = parseTimestamp(dateVal);
+        const alreadyAdded = logAttempts.some(ra => {
+          return ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 1000 && ra.status === (h.status || "Pending") && ra.remark === (h.remark || "");
+        });
+
+        if (!alreadyAdded) {
           const att = processAttemptObj(
             {
-              timestamp: h.timestamp,
+              timestamp: ts,
               status: h.status,
               remark: h.remark,
               callType: h.callType,
-              attenderName: histAttName
+              attenderName: histAttName || attenderName
             },
             true,
             index
           );
-          if (att) attempts.push(att);
+          if (att) logAttempts.push(att);
+        }
+      });
+    }
+
+    // 3. Collect from top-level log.lastCalledAt / status
+    const stateAttName = log.attenderName || "";
+    const stateAttId = log.attenderId || "";
+    if (isOurAttender(stateAttName, stateAttId)) {
+      if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
+        const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
+        const ts = parseTimestamp(dateVal);
+        const alreadyAdded = logAttempts.some(ra => {
+          return ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 1000 && ra.status === (log.status || "Pending") && ra.remark === (log.remark || "");
         });
-      } else {
-        if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
+
+        if (!alreadyAdded) {
           const att = processAttemptObj(
             {
-              timestamp: log.lastCalledAt || log.updatedAt || log.createdAt,
+              timestamp: dateVal,
               status: log.status,
               remark: log.remark,
-              callType: log.callType
+              callType: log.callType,
+              attenderName: stateAttName || attenderName
             },
-            false
+            false,
+            0
           );
-          if (att) attempts.push(att);
+          if (att) logAttempts.push(att);
         }
       }
     }
+
+    attempts.push(...logAttempts);
   });
 
   return attempts;
@@ -210,22 +271,26 @@ function filterAttemptsByDate(attempts, range, customStart, customEnd) {
   if (range === "today") {
     start = new Date(now);
     start.setHours(0, 0, 0, 0);
+    end = new Date(now);
+    end.setHours(23, 59, 59, 999);
   } else if (range === "week") {
     start = new Date(now);
     start.setDate(now.getDate() - now.getDay()); // Sunday
     start.setHours(0, 0, 0, 0);
+    end = new Date(now);
+    end.setHours(23, 59, 59, 999);
   } else if (range === "month") {
     start = new Date(now);
     start.setDate(1);
     start.setHours(0, 0, 0, 0);
+    end = new Date(now);
+    end.setHours(23, 59, 59, 999);
   } else if (range === "custom") {
     if (customStart) {
-      start = new Date(customStart);
-      start.setHours(0, 0, 0, 0);
+      start = new Date(customStart + "T00:00:00");
     }
     if (customEnd) {
-      end = new Date(customEnd);
-      end.setHours(23, 59, 59, 999);
+      end = new Date(customEnd + "T23:59:59.999");
     }
   }
 
@@ -322,36 +387,58 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
   const [customEnd, setCustomEnd] = useState(todayStrISO);
 
   // Extract all attempts all-time
-  const allAttempts = useMemo(() => getAttenderAttempts(logs, attenderName, attenderId), [logs, attenderName, attenderId]);
+  const allAttempts = useMemo(() => {
+    const res = getAttenderAttempts(logs, attenderName, attenderId);
+    console.log(`[MyPerformanceDashboard DEBUG] Total raw attempts found for ${attenderName} (${attenderId}):`, res.length, res);
+    return res;
+  }, [logs, attenderName, attenderId]);
 
   // Today's calls count
   const todayCallCount = useMemo(() => {
     const today = new Date();
     const start = new Date(today); start.setHours(0, 0, 0, 0);
     const end = new Date(today); end.setHours(23, 59, 59, 999);
-    return allAttempts.filter(att => {
+    const todayAttempts = allAttempts.filter(att => {
       const d = att.updatedAt;
       return d && d >= start && d <= end;
-    }).length;
+    });
+    console.log(`[MyPerformanceDashboard DEBUG] Today's attempts (${start.toISOString()} to ${end.toISOString()}):`, todayAttempts.length, todayAttempts);
+    return todayAttempts.length;
   }, [allAttempts]);
 
   // Callbacks Due (all time)
   const callbacksDue = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     return logs.filter(l => {
-      if (!l.callbackDate) return false;
-      const d = parseTimestamp(l.callbackDate);
+      if (l._deleted) return false;
+
+      let callbackDate = l.callbackDate;
+      let callbackStatus = l.callbackStatus;
+
+      if (attenderId && l.attenderStates?.[attenderId]) {
+        const state = l.attenderStates[attenderId];
+        if (state.callbackDate) callbackDate = state.callbackDate;
+        if (state.callbackStatus) callbackStatus = state.callbackStatus;
+      }
+
+      if (!callbackDate) return false;
+      const d = parseTimestamp(callbackDate);
       if (!d || isNaN(d.getTime())) return false;
-      d.setHours(0, 0, 0, 0);
-      return d <= today && l.callbackStatus !== "done";
+      const cbDay = new Date(d);
+      cbDay.setHours(0, 0, 0, 0);
+      return cbDay <= today && callbackStatus !== "done";
     }).length;
-  }, [logs]);
+  }, [logs, attenderId]);
 
   // Date-filtered logs (leads) - used for the "Assigned" lead count
   const filteredLogs = useMemo(() => filterLogsByDate(logs, dateRange, customStart, customEnd), [logs, dateRange, customStart, customEnd]);
 
   // Date-filtered call attempts
-  const filteredAttempts = useMemo(() => filterAttemptsByDate(allAttempts, dateRange, customStart, customEnd), [allAttempts, dateRange, customStart, customEnd]);
+  const filteredAttempts = useMemo(() => {
+    const res = filterAttemptsByDate(allAttempts, dateRange, customStart, customEnd);
+    console.log(`[MyPerformanceDashboard DEBUG] Filtered attempts for range "${dateRange}":`, res.length, res);
+    return res;
+  }, [allAttempts, dateRange, customStart, customEnd]);
 
   const stats = useMemo(() => {
     let connected = 0, notConnected = 0, registrations = 0, interested = 0, infoGiven = 0, nextTime = 0, notInterested = 0;

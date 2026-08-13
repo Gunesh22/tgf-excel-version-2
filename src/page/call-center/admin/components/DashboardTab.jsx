@@ -4,7 +4,7 @@ import * as XLSX from "xlsx";
 import { BarChart3, Download, Search, X, ChevronDown, Check } from "lucide-react";
 import { subscribeToAllCallLogs } from "../../../../lib/db";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from "recharts";
-import { COLORS, cleanExportRow, CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp } from "../utils.jsx";
+import { COLORS, cleanExportRow, CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp, getCanonicalStatus } from "../utils.jsx";
 import { isKhojiAffirmative, isKhojiNegative } from "../../attender/utils.js";
 
 // ── Multi-select dropdown ──────────────────────────────────────────────────
@@ -215,7 +215,7 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       };
 
       const processAttempt = (att, attId, state, isHistory, index) => {
-        const status = att.status || "Pending";
+        const status = getCanonicalStatus(att.status || "Pending");
 
         const dateVal = att.timestamp || att.updatedAt || state.lastCalledAt || state.updatedAt;
         const attemptDate = getAttemptDate(dateVal) || getAttemptDate(log.updatedAt || log.createdAt);
@@ -246,6 +246,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
         };
       };
 
+      const logAttempts = [];
+
       if (log.attenderStates && Object.keys(log.attenderStates).length > 0) {
         Object.entries(log.attenderStates).forEach(([attId, state]) => {
           if (state.history && Array.isArray(state.history) && state.history.length > 0) {
@@ -265,85 +267,111 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
                 true,
                 index
               );
-              if (att) list.push(att);
+              if (att) logAttempts.push(att);
             });
-          } else if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
-            const att = processAttempt(
-              {
-                timestamp: state.lastCalledAt || state.updatedAt,
-                status: state.status,
-                remark: state.remark,
-                callType: state.callType,
-                source: state.Source || state.source,
-                calledFor: state["Called For"] || state.calledFor
-              },
-              attId,
-              state,
-              false
-            );
-            if (att) list.push(att);
+          }
+          if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
+            const dateVal = state.lastCalledAt || state.updatedAt;
+            const ts = parseTimestamp(dateVal);
+            const existsInHistory = Array.isArray(state.history) && state.history.some(h => {
+              const hTs = parseTimestamp(h.timestamp);
+              const sameTime = hTs && ts && Math.abs(hTs.getTime() - ts.getTime()) < 5000;
+              const sameStatus = getCanonicalStatus(h.status) === getCanonicalStatus(state.status);
+              const sameRemark = (h.remark || "").trim().toLowerCase() === (state.remark || "").trim().toLowerCase();
+              return sameTime && (sameStatus || sameRemark);
+            });
+            if (!existsInHistory) {
+              const att = processAttempt(
+                {
+                  timestamp: state.lastCalledAt || state.updatedAt,
+                  status: state.status,
+                  remark: state.remark,
+                  callType: state.callType,
+                  source: state.Source || state.source,
+                  calledFor: state["Called For"] || state.calledFor
+                },
+                attId,
+                state,
+                false
+              );
+              if (att) logAttempts.push(att);
+            }
           }
         });
-      } else {
-        const attId = log.attenderId || "legacy";
-        const dummyState = {
-          attenderName: log.attenderName || "Legacy Attender",
-          status: log.status,
-          remark: log.remark,
-          callType: log.callType,
-          lastCalledAt: log.lastCalledAt,
-          updatedAt: log.updatedAt,
-          history: log.history,
-          callbackDate: log.callbackDate,
-          Source: log.Source || log.source,
-          calledFor: log["Called For"] || log.calledFor
-        };
+      }
 
-        if (log.history && Array.isArray(log.history) && log.history.length > 0) {
-          log.history.forEach((h, index) => {
+      // Collect from top-level log.history
+      if (log.history && Array.isArray(log.history) && log.history.length > 0) {
+        log.history.forEach((h, index) => {
+          const dateVal = h.timestamp || h.date || h.createdAt || h.updatedAt;
+          const ts = parseTimestamp(dateVal);
+          const alreadyAdded = logAttempts.some(ra => {
+            const sameTime = ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 5000;
+            const sameStatus = getCanonicalStatus(ra.status) === getCanonicalStatus(h.status);
+            const sameRemark = (ra.remark || "").trim().toLowerCase() === (h.remark || "").trim().toLowerCase();
+            return sameTime && (sameStatus || sameRemark);
+          });
+
+          if (!alreadyAdded) {
             const att = processAttempt(
               {
-                timestamp: h.timestamp,
+                timestamp: ts,
                 status: h.status,
                 remark: h.remark,
                 callType: h.callType,
                 source: h.source,
                 calledFor: h.calledFor,
-                attenderName: h.attenderName,
-                attenderId: h.attenderId
+                attenderName: h.attenderName || log.attenderName,
+                attenderId: h.attenderId || log.attenderId
               },
-              h.attenderId || attId,
-              dummyState,
+              h.attenderId || log.attenderId || "legacy",
+              { attenderName: h.attenderName || log.attenderName || "Legacy Attender" },
               true,
               index
             );
-            if (att) list.push(att);
-          });
-        } else {
-          if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
-            const att = processAttempt(
-              {
-                timestamp: log.lastCalledAt || log.updatedAt || log.createdAt,
-                status: log.status,
-                remark: log.remark,
-                callType: log.callType,
-                source: log.Source || log.source,
-                calledFor: log["Called For"] || log.calledFor
-              },
-              attId,
-              dummyState,
-              false
-            );
-            if (att) list.push(att);
+            if (att) logAttempts.push(att);
           }
+        });
+      }
+
+      // Collect from top-level log.lastCalledAt / status
+      if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
+        const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
+        const ts = parseTimestamp(dateVal);
+        const alreadyAdded = logAttempts.some(ra => {
+          const sameTime = ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 5000;
+          const sameStatus = getCanonicalStatus(ra.status) === getCanonicalStatus(log.status);
+          const sameRemark = (ra.remark || "").trim().toLowerCase() === (log.remark || "").trim().toLowerCase();
+          return sameTime && (sameStatus || sameRemark);
+        });
+        if (!alreadyAdded) {
+          const att = processAttempt(
+            {
+              timestamp: dateVal,
+              status: log.status,
+              remark: log.remark,
+              callType: log.callType,
+              source: log.Source || log.source,
+              calledFor: log["Called For"] || log.calledFor,
+              attenderName: log.attenderName,
+              attenderId: log.attenderId
+            },
+            log.attenderId || "legacy",
+            { attenderName: log.attenderName || "Legacy Attender" },
+            false,
+            0
+          );
+          if (att) logAttempts.push(att);
         }
       }
+
+      list.push(...logAttempts);
     });
     return list;
   }, [callLogs]);
 
   const filteredLogs = useMemo(() => {
-    return flattenedLogs.filter(log => {
+    const res = flattenedLogs.filter(log => {
       // Multi-tag filter with robust fallback
       if (selectedProgramIds.length > 0) {
         const selectedNames = selectedProgramIds.map(id => {
@@ -360,7 +388,15 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       }
 
       // Multi-attender filter
-      if (selectedAttenderIds.length > 0 && !selectedAttenderIds.includes(log.attenderId)) return false;
+      if (selectedAttenderIds.length > 0) {
+        const matchesId = selectedAttenderIds.includes(log.attenderId);
+        const selectedAttenderNames = selectedAttenderIds.map(id => {
+          const a = attenders.find(x => x.id === id);
+          return a ? a.name.toLowerCase().trim() : "";
+        });
+        const matchesName = selectedAttenderNames.includes((log.attenderName || "").toLowerCase().trim());
+        if (!matchesId && !matchesName) return false;
+      }
 
       // Source filter
       if (selectedSources.length > 0 && !selectedSources.includes(log.source || "")) return false;
@@ -408,7 +444,12 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
 
       return true;
     });
-  }, [flattenedLogs, selectedProgramIds, selectedAttenderIds, selectedSources, selectedCalledFors, selectedStatuses, selectedCallTypes, selectedKhojiStatuses, dateFrom, dateTo, programs]);
+    console.log(`[DashboardTab DEBUG] flattenedLogs total:`, flattenedLogs.length, `-> filteredLogs:`, res.length, `(Date: ${dateFrom} to ${dateTo}, Attender: ${selectedAttenderIds.join(",")})`);
+    res.forEach((log, idx) => {
+      console.log(`  #${idx+1} [DashboardTab] ${log.Name} (${log.Phone}) | Status: "${log.status}" | Time: ${log.updatedAt ? new Date(log.updatedAt).toISOString() : 'N/A'} | Remark: "${log.remark}"`);
+    });
+    return res;
+  }, [flattenedLogs, selectedProgramIds, selectedAttenderIds, selectedSources, selectedCalledFors, selectedStatuses, selectedCallTypes, selectedKhojiStatuses, dateFrom, dateTo, programs, attenders]);
 
   const attenderStats = useMemo(() => {
     const map = {};

@@ -276,6 +276,8 @@ export function getCanonicalStatus(status) {
   if (sLower === "not possible") return "Not possible";
   if (sLower === "shivir done") return "Shivir done";
   if (sLower === "no answer") return "no answer";
+  if (sLower === "not attended") return "Not Attended";
+  if (sLower === "call log added") return "Call Log Added";
   if (sLower === "no network") return "No Network";
   if (sLower === "wrong no" || sLower === "wrong no.") return "wrong no.";
   return status;

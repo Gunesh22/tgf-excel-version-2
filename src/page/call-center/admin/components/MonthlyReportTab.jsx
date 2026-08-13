@@ -496,7 +496,10 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             const ts = parseTimestamp(dateVal);
             const existsInStateHistory = Array.isArray(state.history) && state.history.some(h => {
               const hTs = parseTimestamp(h.timestamp);
-              return hTs && ts && Math.abs(hTs.getTime() - ts.getTime()) < 1000 && (h.status === state.status || h.remark === state.remark);
+              const sameTime = hTs && ts && Math.abs(hTs.getTime() - ts.getTime()) < 5000;
+              const sameStatus = getCanonicalStatus(h.status) === getCanonicalStatus(state.status);
+              const sameRemark = (h.remark || "").trim().toLowerCase() === (state.remark || "").trim().toLowerCase();
+              return sameTime && (sameStatus || sameRemark);
             });
             if (!existsInStateHistory) {
               rawAttempts.push({
@@ -519,7 +522,10 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         log.history.forEach(h => {
           const ts = parseTimestamp(h.timestamp) || parseTimestamp(h.date) || parseTimestamp(log.lastCalledAt || log.updatedAt);
           const alreadyAdded = rawAttempts.some(ra => {
-            return ra.timestamp && ts && Math.abs(ra.timestamp.getTime() - ts.getTime()) < 1000 && ra.status === (h.status || "Pending") && ra.remark === (h.remark || "");
+            const sameTime = ra.timestamp && ts && Math.abs(ra.timestamp.getTime() - ts.getTime()) < 5000;
+            const sameStatus = getCanonicalStatus(ra.status) === getCanonicalStatus(h.status);
+            const sameRemark = (ra.remark || "").trim().toLowerCase() === (h.remark || "").trim().toLowerCase();
+            return sameTime && (sameStatus || sameRemark);
           });
           if (!alreadyAdded) {
             rawAttempts.push({
@@ -541,7 +547,10 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
         const ts = parseTimestamp(dateVal);
         const alreadyAdded = rawAttempts.some(ra => {
-          return ra.timestamp && ts && Math.abs(ra.timestamp.getTime() - ts.getTime()) < 1000 && ra.status === (log.status || "Pending") && ra.remark === (log.remark || "");
+          const sameTime = ra.timestamp && ts && Math.abs(ra.timestamp.getTime() - ts.getTime()) < 5000;
+          const sameStatus = getCanonicalStatus(ra.status) === getCanonicalStatus(log.status);
+          const sameRemark = (ra.remark || "").trim().toLowerCase() === (log.remark || "").trim().toLowerCase();
+          return sameTime && (sameStatus || sameRemark);
         });
         if (!alreadyAdded) {
           rawAttempts.push({
@@ -610,24 +619,29 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
   }, [attenders]);
 
   const allAttempts = React.useMemo(() => {
-    return allHistoricalAttempts.filter(att => {
+    console.log(`[MonthlyReportTab DEBUG] total allHistoricalAttempts before date/attender filter:`, allHistoricalAttempts.length);
+    const filtered = allHistoricalAttempts.filter(att => {
       if (!att.timestamp || isNaN(att.timestamp.getTime())) return false;
       
-      const attDate = new Date(att.timestamp.getFullYear(), att.timestamp.getMonth(), att.timestamp.getDate());
-      
       if (startDate) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        if (attDate.getTime() < start.getTime()) return false;
+        const start = new Date(startDate + "T00:00:00");
+        if (att.timestamp < start) return false;
       }
       
       if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(0, 0, 0, 0);
-        if (attDate.getTime() > end.getTime()) return false;
+        const end = new Date(endDate + "T23:59:59.999");
+        if (att.timestamp > end) return false;
       }
 
-      if (selectedAttenderIds.length > 0 && !selectedAttenderIds.includes(att.attenderId)) return false;
+      if (selectedAttenderIds.length > 0) {
+        const matchesId = selectedAttenderIds.includes(att.attenderId);
+        const selectedAttenderNames = selectedAttenderIds.map(id => {
+          const a = attenders.find(x => x.id === id);
+          return a ? a.name.toLowerCase().trim() : "";
+        });
+        const matchesName = selectedAttenderNames.includes((att.attenderName || "").toLowerCase().trim());
+        if (!matchesId && !matchesName) return false;
+      }
 
       // Call Type filter
       if (selectedCallTypes.length > 0) {
@@ -657,7 +671,13 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
 
       return true;
     });
-  }, [allHistoricalAttempts, startDate, endDate, selectedAttenderIds, selectedCallTypes, selectedKhojiStatuses]);
+
+    console.log(`[MonthlyReportTab DEBUG] Filtered allAttempts count:`, filtered.length, `(Date range: ${startDate} to ${endDate}, Attenders: ${selectedAttenderIds.join(",")})`);
+    filtered.forEach((att, idx) => {
+      console.log(`  #${idx+1} [MonthlyReportTab] ${att.contactName} (${att.contactPhone}) | Status: "${att.status}" | Time: ${att.timestamp ? new Date(att.timestamp).toISOString() : 'N/A'} | Remark: "${att.remark}"`);
+    });
+    return filtered;
+  }, [allHistoricalAttempts, startDate, endDate, selectedAttenderIds, selectedCallTypes, selectedKhojiStatuses, attenders]);
 
   const monthFiltered = React.useMemo(() => {
     const contactIds = new Set(allAttempts.map(a => a.contactId));

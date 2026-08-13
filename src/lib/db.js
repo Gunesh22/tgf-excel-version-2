@@ -3514,7 +3514,7 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
     targetOption = getMonthStr(new Date());
   }
 
-  const cacheKey = `tgf_admin_logs_${targetOption}_${tag || "ALL"}`;
+  const cacheKey = `tgf_admin_logs_v3_${targetOption}_${tag || "ALL"}`;
 
   // 1. Immediately emit cached admin logs from IndexedDB if available (0ms, 0 Firebase reads)
   getIDBCache(cacheKey).then(cachedLogs => {
@@ -3526,6 +3526,12 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
   });
 
   const { startMonth, endMonth } = getMonthRange(targetOption);
+
+  // Query from 3 months prior to ensure leads imported in earlier months but called in targetMonth are loaded
+  const now = new Date();
+  const prev3Date = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+  const prev3MonthStr = `${prev3Date.getFullYear()}-${String(prev3Date.getMonth() + 1).padStart(2, "0")}`;
+  const queryStartMonth = (targetOption === "ALL" || !targetOption) ? "0000-00" : (targetOption < prev3MonthStr ? targetOption : prev3MonthStr);
 
   let lockedDocs = [];
   let cacheSnap = null;
@@ -3547,54 +3553,75 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
     
     finalDocs.sort((a, b) => a.id.localeCompare(b.id));
     
+    const getTimeMs = (val) => {
+      if (!val) return 0;
+      if (typeof val.toDate === "function") return val.toDate().getTime();
+      if (val.seconds !== undefined) return val.seconds * 1000;
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? 0 : d.getTime();
+    };
+
     const contactsMap = {};
     finalDocs.forEach(docSnap => {
       const docContacts = docSnap.data().contacts || {};
       Object.entries(docContacts).forEach(([id, c]) => {
-        if (!contactsMap[id]) {
-          contactsMap[id] = {
-            ...c,
-            history: [...(c.history || [])]
-          };
+        const existing = contactsMap[id];
+        if (!existing) {
+          contactsMap[id] = { ...c };
         } else {
-          const existing = contactsMap[id];
+          const newTime = getTimeMs(c.updatedAt || c.lastCalledAt);
+          const existingTime = getTimeMs(existing.updatedAt || existing.lastCalledAt);
           
-          existing.status = c.status;
-          existing.remark = c.remark;
-          existing.callType = c.callType;
-          existing.callbackDate = c.callbackDate;
-          existing.isCallbackDue = c.isCallbackDue;
-          existing.attenderId = c.attenderId;
-          existing.attenderName = c.attenderName;
-          existing.lastCalledAt = c.lastCalledAt;
-          existing.updatedAt = c.updatedAt;
-          
-          existing.history = [...(existing.history || []), ...(c.history || [])];
-          
-          if (c.attenderStates) {
-            if (!existing.attenderStates) existing.attenderStates = {};
-            Object.entries(c.attenderStates).forEach(([attId, state]) => {
-              if (!existing.attenderStates[attId]) {
-                existing.attenderStates[attId] = {
-                  ...state,
-                  history: [...(state.history || [])]
+          // Deduplicate top-level history
+          const topHistMap = new Map();
+          (existing.history || []).forEach(h => {
+            const tsMs = getTimeMs(h.timestamp || h.date);
+            const k = `${tsMs}_${h.status}_${h.remark}`;
+            topHistMap.set(k, h);
+          });
+          (c.history || []).forEach(h => {
+            const tsMs = getTimeMs(h.timestamp || h.date);
+            const k = `${tsMs}_${h.status}_${h.remark}`;
+            topHistMap.set(k, h);
+          });
+
+          // Merge attenderStates with deduplicated history per attender
+          const mergedStates = { ...(existing.attenderStates || {}), ...(c.attenderStates || {}) };
+          if (existing.attenderStates && c.attenderStates) {
+            Object.keys(mergedStates).forEach(attId => {
+              const stOld = existing.attenderStates[attId];
+              const stNew = c.attenderStates[attId];
+              if (stOld && stNew) {
+                const tOld = getTimeMs(stOld.updatedAt || stOld.lastCalledAt);
+                const tNew = getTimeMs(stNew.updatedAt || stNew.lastCalledAt);
+                const winner = tNew >= tOld ? stNew : stOld;
+                
+                const stateHistMap = new Map();
+                (stOld.history || []).forEach(h => {
+                  const tsMs = getTimeMs(h.timestamp || h.date);
+                  const k = `${tsMs}_${h.status}_${h.remark}`;
+                  stateHistMap.set(k, h);
+                });
+                (stNew.history || []).forEach(h => {
+                  const tsMs = getTimeMs(h.timestamp || h.date);
+                  const k = `${tsMs}_${h.status}_${h.remark}`;
+                  stateHistMap.set(k, h);
+                });
+
+                mergedStates[attId] = {
+                  ...winner,
+                  history: Array.from(stateHistMap.values())
                 };
-              } else {
-                const existingState = existing.attenderStates[attId];
-                existingState.status = state.status;
-                existingState.remark = state.remark;
-                existingState.callType = state.callType;
-                existingState.callbackDate = state.callbackDate;
-                existingState.lastCalledAt = state.lastCalledAt;
-                existingState.firstCalledAt = state.firstCalledAt;
-                existingState.updatedAt = state.updatedAt;
-                existingState.history = [
-                  ...(existingState.history || []),
-                  ...(state.history || [])
-                ];
               }
             });
           }
+
+          const baseObj = newTime >= existingTime ? c : existing;
+          contactsMap[id] = {
+            ...baseObj,
+            history: Array.from(topHistMap.values()),
+            attenderStates: mergedStates
+          };
         }
       });
     });
@@ -3618,7 +3645,7 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
   };
 
   // Fetch the locked monthly reports in range (served from IndexedDB cache first for 0 reads)
-  const lockedCacheKey = `tgf_locked_reports_${startMonth}_${endMonth}`;
+  const lockedCacheKey = `tgf_locked_reports_${queryStartMonth}_${endMonth}`;
   getIDBCache(lockedCacheKey).then(cachedLocked => {
     if (Array.isArray(cachedLocked) && cachedLocked.length > 0) {
       console.log(`[ADMIN IDB CACHE] Loaded ${cachedLocked.length} lockedMonthlyReports from IndexedDB (0 Reads)`);
@@ -3630,10 +3657,10 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
     } else {
       const lockedQuery = query(
         collection(db, "lockedMonthlyReports"),
-        where(documentId(), ">=", startMonth),
+        where(documentId(), ">=", queryStartMonth),
         where(documentId(), "<=", endMonth + "\uf8ff")
       );
-      console.log(`[ADMIN FIRESTORE READ - getDocs] subscribeToAllCallLogs checking lockedMonthlyReports | range: ${startMonth} to ${endMonth}`);
+      console.log(`[ADMIN FIRESTORE READ - getDocs] subscribeToAllCallLogs checking lockedMonthlyReports | range: ${queryStartMonth} to ${endMonth}`);
       getDocs(lockedQuery).then(snap => {
         console.log(`[ADMIN FIRESTORE READ - getDocs] lockedMonthlyReports completed | docsCount: ${snap.docs.length}`);
         lockedDocs = snap.docs;
@@ -3649,10 +3676,9 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
     triggerCallback();
   });
   
-  // Realtime subscription to cache scoped to the month range using documentId range
   const cacheQuery = query(
     collection(db, "callCenterCache"),
-    where(documentId(), ">=", startMonth),
+    where(documentId(), ">=", queryStartMonth),
     where(documentId(), "<=", endMonth + "\uf8ff")
   );
 
