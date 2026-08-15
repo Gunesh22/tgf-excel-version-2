@@ -228,6 +228,35 @@ const parseDate = (val) => {
   return null;
 };
 
+// Option 3: Primary Assigned Attender Priority Helper (Assigned Lead Owner Priority)
+export const getRegistrationPrimaryAttender = (r) => {
+  if (!r) return "Direct / Online";
+
+  // 1. Check assigned lead owner (attenderName, assignedTo, assignedAttender, attender)
+  const assigned = r.attenderName || r.assignedTo || r.assignedAttender || r.attender;
+  if (assigned && String(assigned).trim() && String(assigned).trim() !== "Unknown" && String(assigned).trim() !== "Unassigned") {
+    return String(assigned).trim();
+  }
+
+  // 2. Look back at prior call history array to find the primary nurturer
+  if (Array.isArray(r.history) && r.history.length > 0) {
+    for (let i = 0; i < r.history.length; i++) {
+      const h = r.history[i];
+      const hAttender = h.attenderName || h.convertedBy || h.user || h.attender;
+      if (hAttender && String(hAttender).trim() && String(hAttender).trim() !== "Unknown" && String(hAttender).trim() !== "Unassigned") {
+        return String(hAttender).trim();
+      }
+    }
+  }
+
+  // 3. Fallback to convertedBy or Direct / Online
+  if (r.convertedBy && String(r.convertedBy).trim() && String(r.convertedBy).trim() !== "Unknown") {
+    return String(r.convertedBy).trim();
+  }
+
+  return "Direct / Online";
+};
+
 // ── Main AbhivyaktiTab Component ──────────────────────────────────────────────
 export default function AbhivyaktiTab({
   registrations = [],
@@ -288,7 +317,7 @@ export default function AbhivyaktiTab({
   const attenderOptions = useMemo(() => {
     const set = new Set();
     registrations.forEach(r => {
-      const val = r.convertedBy || r.attenderName || "Direct / Online";
+      const val = getRegistrationPrimaryAttender(r);
       set.add(String(val).trim());
     });
     return Array.from(set).sort().map(val => ({ value: val, label: val }));
@@ -317,8 +346,8 @@ export default function AbhivyaktiTab({
         return false;
       }
 
-      // 4. Attender Filter
-      const rAttender = r.convertedBy || r.attenderName || "Direct / Online";
+      // 4. Attender Filter (Assigned Lead Owner Priority)
+      const rAttender = getRegistrationPrimaryAttender(r);
       if (selectedAttenders.length > 0 && !selectedAttenders.includes(String(rAttender).trim())) {
         return false;
       }
@@ -449,11 +478,13 @@ export default function AbhivyaktiTab({
   const attenderPerformance = useMemo(() => {
     const map = {};
     filteredRegistrations.forEach(r => {
-      const name = r.convertedBy || r.attenderName;
-      if (!name || name === "Unknown") return;
-      if (!map[name]) {
-        map[name] = {
-          name,
+      const primaryName = getRegistrationPrimaryAttender(r);
+
+      // Primary credit to Lead Owner
+      if (!primaryName || primaryName === "Unknown" || primaryName === "Direct / Online") return;
+      if (!map[primaryName]) {
+        map[primaryName] = {
+          name: primaryName,
           incomingConversions: 0,
           outgoingConversions: 0,
           count: 0,
@@ -465,11 +496,11 @@ export default function AbhivyaktiTab({
       const isIncoming = callType.startsWith("incoming");
 
       if (isIncoming) {
-        map[name].incomingConversions++;
+        map[primaryName].incomingConversions++;
       } else {
-        map[name].outgoingConversions++;
+        map[primaryName].outgoingConversions++;
       }
-      map[name].count++;
+      map[primaryName].count++;
 
       const rStatus = r.status || r.callStatus || "Reg.Done";
       const isRConnected = CONNECTED_STATUSES.includes(rStatus);
@@ -490,8 +521,8 @@ export default function AbhivyaktiTab({
       if (historyIncConn === 0 && isIncoming && isRConnected) historyIncConn = 1;
       if (historyOutConn === 0 && !isIncoming && isRConnected) historyOutConn = 1;
 
-      map[name].incomingConnected += Math.max(historyIncConn, isIncoming ? 1 : 0);
-      map[name].outgoingConnected += Math.max(historyOutConn, !isIncoming ? 1 : 0);
+      map[primaryName].incomingConnected += Math.max(historyIncConn, isIncoming ? 1 : 0);
+      map[primaryName].outgoingConnected += Math.max(historyOutConn, !isIncoming ? 1 : 0);
     });
 
     return Object.values(map).map(a => {
@@ -557,6 +588,36 @@ export default function AbhivyaktiTab({
     return totals;
   }, [attenderPerformance]);
 
+  // Separate Breakdown Table for Shared Conversions (Team Assists)
+  const sharedConversionsBreakdown = useMemo(() => {
+    const map = {};
+    filteredRegistrations.forEach(r => {
+      const primaryName = getRegistrationPrimaryAttender(r);
+      const finalRegistrar = (r.convertedBy || "").trim();
+
+      if (
+        finalRegistrar &&
+        finalRegistrar !== "Unknown" &&
+        finalRegistrar !== "Direct / Online" &&
+        primaryName &&
+        primaryName !== "Unknown" &&
+        primaryName !== "Direct / Online" &&
+        finalRegistrar !== primaryName
+      ) {
+        const key = `${finalRegistrar}__${primaryName}`;
+        if (!map[key]) {
+          map[key] = {
+            assistant: finalRegistrar,
+            primaryOwner: primaryName,
+            count: 0
+          };
+        }
+        map[key].count++;
+      }
+    });
+    return Object.values(map).sort((a, b) => b.count - a.count);
+  }, [filteredRegistrations]);
+
   // Breakdown table for Called For + Attender Name + Khoji Type + Call Type (Incoming/Outgoing) + Conversions Count
   const calledForAttenderBreakdown = useMemo(() => {
     const map = {};
@@ -567,7 +628,7 @@ export default function AbhivyaktiTab({
         : ["Unspecified"];
       if (calledForTags.length === 0) calledForTags.push("Unspecified");
 
-      const attender = r.convertedBy || r.attenderName || "Direct / Online";
+      const attender = getRegistrationPrimaryAttender(r);
       const khoji = getContactKhoji(r) || "No";
       const callType = (r.callType || "").toLowerCase();
       const isIncoming = callType.startsWith("incoming");
@@ -666,8 +727,7 @@ export default function AbhivyaktiTab({
       const nameVal = r.Name || r.name || "Unknown";
       const phoneVal = r.Phone || r.phone || "";
       const mobileVal = r.Mobile || r.mobile || "";
-      const attenderVal = r.attenderName || "Unassigned";
-      const convertedByVal = r.convertedBy || "Direct / Online";
+      const attenderVal = getRegistrationPrimaryAttender(r);
       const callsDoneVal = r.callCount !== undefined ? r.callCount : (r.history ? r.history.length : 0);
       const calledForVal = r.calledFor || r["Called For"] || "";
       const khojiVal = getContactKhoji(r) || "No";
@@ -679,7 +739,6 @@ export default function AbhivyaktiTab({
         "Phone Number": phoneVal,
         "Mobile Number": mobileVal,
         "Attender Name": attenderVal,
-        "Converted By": convertedByVal,
         "Calls Done": callsDoneVal,
         "Called For": calledForVal,
         "Khoji Type": khojiVal,
@@ -709,20 +768,32 @@ export default function AbhivyaktiTab({
     // 6. Called For & Attender Breakdown (With Attender Subtotals)
     const calledForAttenderExportRows = [];
     groupedCalledForAttender.forEach(group => {
-      calledForAttenderExportRows.push(...group.rows);
+      group.rows.forEach(r => {
+        calledForAttenderExportRows.push({ ...r });
+      });
       calledForAttenderExportRows.push({
         "Converted By (Attender)": `Total for ${group.attenderName}`,
-        "Called For": "-",
-        "Khoji Type": "-",
+        "Called For": "",
+        "Khoji Type": "",
         "Incoming Conversions": group.totalIncoming,
         "Outgoing Conversions": group.totalOutgoing,
         "Total Conversions": group.totalConversions
       });
     });
-    calledForAttenderExportRows.push(calledForAttenderTotals);
+    calledForAttenderExportRows.push({ ...calledForAttenderTotals });
 
-    const wsCalledForAttenders = XLSX.utils.json_to_sheet(calledForAttenderExportRows);
-    XLSX.utils.book_append_sheet(wb, wsCalledForAttenders, "CalledFor & Attenders");
+    const wsCalledForAttender = XLSX.utils.json_to_sheet(calledForAttenderExportRows);
+    XLSX.utils.book_append_sheet(wb, wsCalledForAttender, "Called For & Attender");
+
+    // 7. Team Assists Sheet
+    if (sharedConversionsBreakdown.length > 0) {
+      const wsShared = XLSX.utils.json_to_sheet(sharedConversionsBreakdown.map(item => ({
+        "Assisting Attender (Final Call)": item.assistant,
+        "Primary Lead Owner (Nurturer)": item.primaryOwner,
+        "Shared Registrations Finalized": item.count
+      })));
+      XLSX.utils.book_append_sheet(wb, wsShared, "Team Assists");
+    }
 
     XLSX.writeFile(wb, `Abhivyakti_RegistrationsReport_${new Date().toISOString().slice(0, 10)}.xlsx`);
     toast.success("Abhivyakti report downloaded successfully!");
@@ -1048,6 +1119,39 @@ export default function AbhivyaktiTab({
                 </ReportSection>
               )}
 
+              {/* Separate Table: Shared Conversions & Team Assists */}
+              {sharedConversionsBreakdown.length > 0 && (
+                <ReportSection
+                  title="🤝 Shared Conversions & Team Assists"
+                  subtitle="Registrations finalized by an attender on incoming calls for another lead owner (Note: These registrations are already counted under the primary lead owner. No double counting is done.)"
+                >
+                  <div className="overflow-x-auto rounded-2xl border border-gray-100 mt-2">
+                    <table className="w-full text-sm text-left">
+                      <thead className="bg-amber-50/60 text-[11px] font-bold text-amber-900 uppercase tracking-wider border-b border-amber-100">
+                        <tr>
+                          <th className="px-6 py-3">Assisting Attender (Final Call)</th>
+                          <th className="px-6 py-3">Primary Lead Owner (Nurturer)</th>
+                          <th className="px-6 py-3 text-right">Shared Registrations Finalized</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50 font-semibold text-gray-600">
+                        {sharedConversionsBreakdown.map((item, idx) => (
+                          <tr key={idx} className="hover:bg-amber-50/20 transition-colors">
+                            <td className="px-6 py-3.5 font-bold text-gray-900">{item.assistant}</td>
+                            <td className="px-6 py-3.5 font-bold text-indigo-700">{item.primaryOwner}</td>
+                            <td className="px-6 py-3.5 text-right font-black text-amber-700">
+                              <span className="px-3 py-1 bg-amber-100 text-amber-900 rounded-full text-xs font-extrabold border border-amber-200">
+                                🤝 {item.count}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </ReportSection>
+              )}
+
               {/* Called For & Attender Conversions Table */}
               {calledForAttenderBreakdown.length > 0 && (
                 <ReportSection
@@ -1142,7 +1246,6 @@ export default function AbhivyaktiTab({
                     <th className="px-6 py-3 bg-gray-50">Phone Number</th>
                     <th className="px-6 py-3 bg-gray-50">Mobile Number</th>
                     <th className="px-6 py-3 bg-gray-50">Attender Name</th>
-                    <th className="px-6 py-3 bg-gray-50">Converted By</th>
                     <th className="px-6 py-3 bg-gray-50 text-center">Calls Done</th>
                     <th className="px-6 py-3 bg-gray-50">Called For</th>
                     <th className="px-6 py-3 bg-gray-50">Khoji Type</th>
@@ -1155,8 +1258,7 @@ export default function AbhivyaktiTab({
                     const nameVal = r.Name || r.name || "Unknown";
                     const phoneVal = r.Phone || r.phone || "N/A";
                     const mobileVal = r.Mobile || r.mobile || "N/A";
-                    const attenderVal = r.attenderName || "Unassigned";
-                    const convertedByVal = r.convertedBy || "Direct / Online";
+                    const attenderVal = getRegistrationPrimaryAttender(r);
                     const callsDoneVal = r.callCount !== undefined ? r.callCount : (r.history ? r.history.length : 0);
                     const calledForVal = r.calledFor || r["Called For"] || "N/A";
                     const khojiVal = getContactKhoji(r) || "No";
@@ -1168,8 +1270,7 @@ export default function AbhivyaktiTab({
                         <td className="px-6 py-3.5 font-bold text-gray-800">{nameVal}</td>
                         <td className="px-6 py-3.5 font-mono text-xs">{phoneVal}</td>
                         <td className="px-6 py-3.5 font-mono text-xs">{mobileVal}</td>
-                        <td className="px-6 py-3.5">{attenderVal}</td>
-                        <td className="px-6 py-3.5 text-emerald-600">{convertedByVal}</td>
+                        <td className="px-6 py-3.5 font-bold text-indigo-700">{attenderVal}</td>
                         <td className="px-6 py-3.5 text-center font-black text-indigo-600">{callsDoneVal}</td>
                         <td className="px-6 py-3.5 font-bold">{calledForVal}</td>
                         <td className="px-6 py-3.5 text-xs text-purple-700 font-bold">{khojiVal}</td>
