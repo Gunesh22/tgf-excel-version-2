@@ -238,8 +238,20 @@ export default function AbhivyaktiTab({
   const [selectedCalledFors, setSelectedCalledFors] = useState([]);
   const [selectedSources, setSelectedSources] = useState([]);
   const [selectedAttenders, setSelectedAttenders] = useState([]);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFrom, setDateFrom] = useState(() => {
+    const todayObj = new Date();
+    const yr = todayObj.getFullYear();
+    const mn = String(todayObj.getMonth() + 1).padStart(2, "0");
+    return `${yr}-${mn}-01`;
+  });
+  const [dateTo, setDateTo] = useState(() => {
+    const todayObj = new Date();
+    const yr = todayObj.getFullYear();
+    const mn = todayObj.getMonth();
+    const lastDay = new Date(yr, mn + 1, 0).getDate();
+    const mnStr = String(mn + 1).padStart(2, "0");
+    return `${yr}-${mnStr}-${lastDay}`;
+  });
 
   // Derived filter options from registrations data
   const callTypeOptions = useMemo(() => {
@@ -619,6 +631,29 @@ export default function AbhivyaktiTab({
     return totals;
   }, [calledForAttenderBreakdown]);
 
+  // Grouped breakdown by attender with per-attender totals
+  const groupedCalledForAttender = useMemo(() => {
+    const attenderMap = new Map();
+    calledForAttenderBreakdown.forEach(row => {
+      const attender = row["Converted By (Attender)"];
+      if (!attenderMap.has(attender)) {
+        attenderMap.set(attender, {
+          attenderName: attender,
+          rows: [],
+          totalIncoming: 0,
+          totalOutgoing: 0,
+          totalConversions: 0
+        });
+      }
+      const group = attenderMap.get(attender);
+      group.rows.push(row);
+      group.totalIncoming += row["Incoming Conversions"];
+      group.totalOutgoing += row["Outgoing Conversions"];
+      group.totalConversions += row["Total Conversions"];
+    });
+    return Array.from(attenderMap.values());
+  }, [calledForAttenderBreakdown]);
+
   const handleExport = () => {
     if (!filteredRegistrations.length) {
       toast.error("No registration data to export.");
@@ -671,8 +706,22 @@ export default function AbhivyaktiTab({
     const wsAttenders = XLSX.utils.json_to_sheet([...attenderPerformance, attenderPerformanceTotals]);
     XLSX.utils.book_append_sheet(wb, wsAttenders, "Attender Breakdown");
 
-    // 6. Called For & Attender Breakdown
-    const wsCalledForAttenders = XLSX.utils.json_to_sheet([...calledForAttenderBreakdown, calledForAttenderTotals]);
+    // 6. Called For & Attender Breakdown (With Attender Subtotals)
+    const calledForAttenderExportRows = [];
+    groupedCalledForAttender.forEach(group => {
+      calledForAttenderExportRows.push(...group.rows);
+      calledForAttenderExportRows.push({
+        "Converted By (Attender)": `Total for ${group.attenderName}`,
+        "Called For": "-",
+        "Khoji Type": "-",
+        "Incoming Conversions": group.totalIncoming,
+        "Outgoing Conversions": group.totalOutgoing,
+        "Total Conversions": group.totalConversions
+      });
+    });
+    calledForAttenderExportRows.push(calledForAttenderTotals);
+
+    const wsCalledForAttenders = XLSX.utils.json_to_sheet(calledForAttenderExportRows);
     XLSX.utils.book_append_sheet(wb, wsCalledForAttenders, "CalledFor & Attenders");
 
     XLSX.writeFile(wb, `Abhivyakti_RegistrationsReport_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -874,44 +923,7 @@ export default function AbhivyaktiTab({
             </div>
           </div>
 
-          {/* Source breakdown */}
-          <ReportSection
-            title="Registration Channels Distribution"
-            action={
-              <FormulaInfoPopover
-                title="Registration Percentage Formula"
-                formulas={[
-                  {
-                    label: "Channel Registration Percentage (%)",
-                    formula: "(Source Registration Count ÷ Total Registrations) × 100"
-                  }
-                ]}
-              />
-            }
-          >
-                <div className="overflow-x-auto rounded-2xl border border-gray-100">
-                  <table className="w-full text-sm text-left">
-                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-100">
-                      <tr>
-                        <th className="px-6 py-3">Registration Source</th>
-                        <th className="px-6 py-3 text-right">Count</th>
-                        <th className="px-6 py-3 text-right">Percentage (%)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50 font-semibold text-gray-600">
-                      {sourceBreakdown.map((r, i) => (
-                        <tr key={i} className="hover:bg-gray-50/50 transition-colors">
-                          <td className="px-6 py-3.5 font-bold text-gray-800">{r["Registration Source"]}</td>
-                          <td className="px-6 py-3.5 text-right font-black text-indigo-600">{r["Count"]}</td>
-                          <td className="px-6 py-3.5 text-right">{r["Percentage (%)"]}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </ReportSection>
-
-              {/* Attender Productivity */}
+          {/* Attender Productivity */}
               {attenderPerformance.length > 0 && (
                 <ReportSection
                   title="Attender Assisted Conversions"
@@ -941,8 +953,8 @@ export default function AbhivyaktiTab({
                       <thead className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-100 sticky top-0">
                         <tr>
                           <th className="px-6 py-3 bg-gray-50">Attender Name</th>
-                          <th className="px-4 py-3 bg-gray-50 text-right">Incoming<br />Conversions</th>
                           <th className="px-4 py-3 bg-gray-50 text-right">Incoming<br />Connected Calls</th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">Incoming<br />Conversions</th>
                           <th className="px-4 py-3 bg-gray-50 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <span>Incoming<br />Conversion Rate (%)</span>
@@ -953,8 +965,8 @@ export default function AbhivyaktiTab({
                               />
                             </div>
                           </th>
-                          <th className="px-4 py-3 bg-gray-50 text-right">Outgoing<br />Conversions</th>
                           <th className="px-4 py-3 bg-gray-50 text-right">Outgoing<br />Connected Calls</th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">Outgoing<br />Conversions</th>
                           <th className="px-4 py-3 bg-gray-50 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <span>Outgoing<br />Conversion Rate (%)</span>
@@ -965,8 +977,8 @@ export default function AbhivyaktiTab({
                               />
                             </div>
                           </th>
-                          <th className="px-4 py-3 bg-gray-50 text-right">Total<br />Conversions</th>
                           <th className="px-4 py-3 bg-gray-50 text-right">Total<br />Connected Calls</th>
+                          <th className="px-4 py-3 bg-gray-50 text-right">Total<br />Conversions</th>
                           <th className="px-6 py-3 bg-gray-50 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <span>Overall<br />Conversion Rate (%)</span>
@@ -983,33 +995,33 @@ export default function AbhivyaktiTab({
                         {attenderPerformance.map((r, i) => (
                           <tr key={i} className="hover:bg-gray-50/50 transition-colors">
                             <td className="px-6 py-3.5 font-bold text-gray-800">{r["Attender Name"]}</td>
-                            <td className="px-4 py-3.5 text-right font-black text-emerald-700">
-                              {r["Incoming Conversions"]}
-                            </td>
                             <td className="px-4 py-3.5 text-right font-bold text-gray-600">
                               {r["Incoming Connected"]}
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-black text-emerald-700">
+                              {r["Incoming Conversions"]}
                             </td>
                             <td className="px-4 py-3.5 text-right font-bold">
                               <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold">
                                 {r["Incoming Conversion Rate (%)"]}
                               </span>
                             </td>
-                            <td className="px-4 py-3.5 text-right font-black text-blue-700">
-                              {r["Outgoing Conversions"]}
-                            </td>
                             <td className="px-4 py-3.5 text-right font-bold text-gray-600">
                               {r["Outgoing Connected"]}
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-black text-blue-700">
+                              {r["Outgoing Conversions"]}
                             </td>
                             <td className="px-4 py-3.5 text-right font-bold">
                               <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-bold">
                                 {r["Outgoing Conversion Rate (%)"]}
                               </span>
                             </td>
-                            <td className="px-4 py-3.5 text-right font-black text-indigo-600">
-                              {r["Total Conversions"]}
-                            </td>
                             <td className="px-4 py-3.5 text-right font-bold text-gray-700">
                               {r["Total Connected"]}
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-black text-indigo-600">
+                              {r["Total Conversions"]}
                             </td>
                             <td className="px-6 py-3.5 text-right font-bold">
                               <span className="px-2.5 py-1 bg-indigo-100 text-indigo-800 rounded-full text-xs font-black">
@@ -1020,14 +1032,14 @@ export default function AbhivyaktiTab({
                         ))}
                         <tr className="bg-gray-50/70 border-t border-gray-100 font-bold text-gray-900 sticky bottom-0">
                           <td className="px-6 py-4 bg-gray-50 font-black">Total Assisted</td>
-                          <td className="px-4 py-4 bg-gray-50 text-right text-emerald-700 font-extrabold">{attenderPerformanceTotals["Incoming Conversions"]}</td>
                           <td className="px-4 py-4 bg-gray-50 text-right text-gray-700 font-extrabold">{attenderPerformanceTotals["Incoming Connected"]}</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-emerald-700 font-extrabold">{attenderPerformanceTotals["Incoming Conversions"]}</td>
                           <td className="px-4 py-4 bg-gray-50 text-right text-emerald-800 font-extrabold">{attenderPerformanceTotals["Incoming Conversion Rate (%)"]}</td>
-                          <td className="px-4 py-4 bg-gray-50 text-right text-blue-700 font-extrabold">{attenderPerformanceTotals["Outgoing Conversions"]}</td>
                           <td className="px-4 py-4 bg-gray-50 text-right text-gray-700 font-extrabold">{attenderPerformanceTotals["Outgoing Connected"]}</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-blue-700 font-extrabold">{attenderPerformanceTotals["Outgoing Conversions"]}</td>
                           <td className="px-4 py-4 bg-gray-50 text-right text-blue-800 font-extrabold">{attenderPerformanceTotals["Outgoing Conversion Rate (%)"]}</td>
-                          <td className="px-4 py-4 bg-gray-50 text-right text-indigo-700 font-extrabold">{attenderPerformanceTotals["Total Conversions"]}</td>
                           <td className="px-4 py-4 bg-gray-50 text-right text-gray-800 font-extrabold">{attenderPerformanceTotals["Total Connected"]}</td>
+                          <td className="px-4 py-4 bg-gray-50 text-right text-indigo-700 font-extrabold">{attenderPerformanceTotals["Total Conversions"]}</td>
                           <td className="px-6 py-4 bg-gray-50 text-right text-indigo-900 font-black">{attenderPerformanceTotals["Overall Conversion Rate (%)"]}</td>
                         </tr>
                       </tbody>
@@ -1066,37 +1078,50 @@ export default function AbhivyaktiTab({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50 font-semibold text-gray-600">
-                        {calledForAttenderBreakdown.map((r, i) => (
-                          <tr key={i} className="hover:bg-gray-50/50 transition-colors">
-                            <td className="px-6 py-3.5 font-bold text-indigo-900">{r["Converted By (Attender)"]}</td>
-                            <td className="px-6 py-3.5 font-bold text-gray-800">{r["Called For"]}</td>
-                            <td className="px-6 py-3.5 font-medium text-purple-700">{r["Khoji Type"]}</td>
-                            <td className="px-6 py-3.5 text-right font-black">
-                              {r["Incoming Conversions"] > 0 ? (
-                                <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold">
-                                  {r["Incoming Conversions"]}
-                                </span>
-                              ) : (
-                                <span className="text-gray-300">0</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-3.5 text-right font-black">
-                              {r["Outgoing Conversions"] > 0 ? (
-                                <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-bold">
-                                  {r["Outgoing Conversions"]}
-                                </span>
-                              ) : (
-                                <span className="text-gray-300">0</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-3.5 text-right font-black text-indigo-600">{r["Total Conversions"]}</td>
-                          </tr>
+                        {groupedCalledForAttender.map((group, groupIdx) => (
+                          <React.Fragment key={groupIdx}>
+                            {group.rows.map((r, i) => (
+                              <tr key={i} className="hover:bg-gray-50/50 transition-colors">
+                                <td className="px-6 py-3.5 font-bold text-indigo-900">{r["Converted By (Attender)"]}</td>
+                                <td className="px-6 py-3.5 font-bold text-gray-800">{r["Called For"]}</td>
+                                <td className="px-6 py-3.5 font-medium text-purple-700">{r["Khoji Type"]}</td>
+                                <td className="px-6 py-3.5 text-right font-black">
+                                  {r["Incoming Conversions"] > 0 ? (
+                                    <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold">
+                                      {r["Incoming Conversions"]}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300">0</span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-3.5 text-right font-black">
+                                  {r["Outgoing Conversions"] > 0 ? (
+                                    <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-bold">
+                                      {r["Outgoing Conversions"]}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300">0</span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-3.5 text-right font-black text-indigo-600">{r["Total Conversions"]}</td>
+                              </tr>
+                            ))}
+                            {/* Per-Attender Subtotal Row */}
+                            <tr className="bg-indigo-50/60 border-t border-b border-indigo-100 font-extrabold text-indigo-950">
+                              <td className="px-6 py-3 font-black text-xs uppercase tracking-wider text-indigo-900" colSpan={3}>
+                                📊 Total for {group.attenderName}
+                              </td>
+                              <td className="px-6 py-3 text-right text-emerald-700 font-black">{group.totalIncoming}</td>
+                              <td className="px-6 py-3 text-right text-blue-700 font-black">{group.totalOutgoing}</td>
+                              <td className="px-6 py-3 text-right text-indigo-800 font-black">{group.totalConversions}</td>
+                            </tr>
+                          </React.Fragment>
                         ))}
-                        <tr className="bg-gray-50/70 border-t border-gray-100 font-bold text-gray-900">
-                          <td className="px-6 py-4 bg-gray-50" colSpan={3}>Total Conversions</td>
-                          <td className="px-6 py-4 bg-gray-50 text-right text-emerald-700 font-extrabold">{calledForAttenderTotals["Incoming Conversions"]}</td>
-                          <td className="px-6 py-4 bg-gray-50 text-right text-blue-700 font-extrabold">{calledForAttenderTotals["Outgoing Conversions"]}</td>
-                          <td className="px-6 py-4 bg-gray-50 text-right text-indigo-700 font-extrabold">{calledForAttenderTotals["Total Conversions"]}</td>
+                        <tr className="bg-gray-100/90 border-t-2 border-gray-300 font-black text-gray-900">
+                          <td className="px-6 py-4 bg-gray-100 font-black uppercase text-xs tracking-wider" colSpan={3}>Grand Total</td>
+                          <td className="px-6 py-4 bg-gray-100 text-right text-emerald-700 font-extrabold">{calledForAttenderTotals["Incoming Conversions"]}</td>
+                          <td className="px-6 py-4 bg-gray-100 text-right text-blue-700 font-extrabold">{calledForAttenderTotals["Outgoing Conversions"]}</td>
+                          <td className="px-6 py-4 bg-gray-100 text-right text-indigo-700 font-extrabold">{calledForAttenderTotals["Total Conversions"]}</td>
                         </tr>
                       </tbody>
                     </table>

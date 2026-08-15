@@ -137,12 +137,12 @@ export const COLORS = ["#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#
 
 export const TAB_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: <BarChart3 size={18} /> },
-  { id: "all-attenders", label: "All Attenders Sheet", icon: <FileSpreadsheet size={18} /> },
   { id: "monthly", label: "Report", icon: <FileText size={18} /> },
+  { id: "abhivyakti", label: "Abhivyakti", icon: <ClipboardCheck size={18} /> },
+  { id: "all-attenders", label: "All Attenders Sheet", icon: <FileSpreadsheet size={18} /> },
   { id: "programs", label: "Programs", icon: <FolderOpen size={18} /> },
   { id: "import", label: "Lead Distribution 📂", icon: <Upload size={18} /> },
   { id: "attenders", label: "Attenders", icon: <Users size={18} /> },
-  { id: "abhivyakti", label: "Abhivyakti", icon: <ClipboardCheck size={18} /> },
   { id: "settings", label: "Settings", icon: <Settings size={18} /> },
 ];
 
