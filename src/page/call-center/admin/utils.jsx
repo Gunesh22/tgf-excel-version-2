@@ -333,8 +333,9 @@ export const getAllCallEntries = (log) => {
       if (!state) return;
       if (Array.isArray(state.history)) {
         state.history.forEach(h => {
+          if ((!h.status || h.status === "Pending") && !h.timestamp) return;
           addCall(
-            h.timestamp || h.date || h.createdAt || h.updatedAt,
+            h.timestamp || h.date || h.createdAt,
             h.status,
             h.remark,
             h.attenderName || state.attenderName,
@@ -342,22 +343,29 @@ export const getAllCallEntries = (log) => {
           );
         });
       }
-      if (state.remark || state.status) {
-        addCall(
-          state.updatedAt || state.lastCalledAt || state.createdAt,
-          state.status,
-          state.remark,
-          state.attenderName,
-          state.callType
-        );
+      if (state.remark || (state.status && state.status !== "Pending") || state.lastCalledAt) {
+        const ts = state.lastCalledAt ? new Date(state.lastCalledAt).getTime() : 0;
+        const existsInHistory = Array.isArray(state.history) && state.history.some(h => {
+          const hTs = h.timestamp || h.date ? new Date(h.timestamp || h.date).getTime() : 0;
+          return hTs && ts && Math.abs(hTs - ts) < 5000;
+        });
+        if (!existsInHistory) {
+          addCall(
+            state.lastCalledAt || state.createdAt,
+            state.status,
+            state.remark,
+            state.attenderName,
+            state.callType
+          );
+        }
       }
     });
   }
 
-  // 3. Standalone log.remark or log.status
-  if (log.remark || (log.status && log.status !== "Pending")) {
+  // 3. Standalone log.remark or log.status (only if no calls were collected from attenderStates or history)
+  if (calls.length === 0 && (log.remark || (log.status && log.status !== "Pending") || log.lastCalledAt)) {
     addCall(
-      log.lastCalledAt || log.updatedAt || log.createdAt,
+      log.lastCalledAt || log.createdAt,
       log.status,
       log.remark,
       log.attenderName,

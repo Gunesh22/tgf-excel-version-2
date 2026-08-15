@@ -127,6 +127,198 @@ export const removeActiveTag = async (tag) => {
   }
 };
 
+export function findMatchingAttenderState(attenderStates, attenderId, attenderName) {
+  if (!attenderStates || typeof attenderStates !== "object") return null;
+
+  const idLower = attenderId ? String(attenderId).toLowerCase().trim() : "";
+  const nameLower = attenderName ? String(attenderName).toLowerCase().trim() : "";
+
+  const matches = [];
+
+  for (const [key, stateObj] of Object.entries(attenderStates)) {
+    if (!stateObj || typeof stateObj !== "object") continue;
+
+    const keyLower = String(key).toLowerCase().trim();
+    const stId = stateObj.attenderId ? String(stateObj.attenderId).toLowerCase().trim() : "";
+    const stName = stateObj.attenderName ? String(stateObj.attenderName).toLowerCase().trim() : "";
+
+    let isMatch = false;
+    if (idLower && (keyLower === idLower || stId === idLower)) {
+      isMatch = true;
+    } else if (nameLower) {
+      if (keyLower === nameLower || stName === nameLower) {
+        isMatch = true;
+      } else if (stName && (stName.includes(nameLower) || nameLower.includes(stName))) {
+        isMatch = true;
+      } else if (keyLower && (keyLower.includes(nameLower) || nameLower.includes(keyLower))) {
+        isMatch = true;
+      }
+    }
+
+    if (isMatch) {
+      matches.push({ key, stateObj });
+    }
+  }
+
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0].stateObj;
+
+  const getTimeMs = (val) => {
+    if (!val) return 0;
+    if (typeof val.toDate === "function") return val.toDate().getTime();
+    if (val.seconds !== undefined) return val.seconds * 1000;
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  };
+
+  matches.sort((a, b) => {
+    const tA = getTimeMs(a.stateObj.updatedAt || a.stateObj.lastCalledAt);
+    const tB = getTimeMs(b.stateObj.updatedAt || b.stateObj.lastCalledAt);
+    return tA - tB;
+  });
+
+  const mergedHistory = [];
+  const seenHistoryKeys = new Set();
+  let mergedState = {};
+
+  matches.forEach(({ stateObj }) => {
+    mergedState = { ...mergedState, ...stateObj };
+
+    const hList = Array.isArray(stateObj.history) ? stateObj.history : [];
+    hList.forEach(h => {
+      const hTime = getTimeMs(h.timestamp);
+      const hKey = `${hTime}_${h.remark || ""}_${h.status || ""}_${h.attenderName || ""}`;
+      if (!seenHistoryKeys.has(hKey)) {
+        seenHistoryKeys.add(hKey);
+        mergedHistory.push(h);
+      }
+    });
+
+    if (stateObj.remark && String(stateObj.remark).trim()) {
+      const rStr = String(stateObj.remark).trim();
+      const rKey = `${getTimeMs(stateObj.lastCalledAt || stateObj.updatedAt)}_${rStr}_${stateObj.status || ""}_${stateObj.attenderName || ""}`;
+      if (!seenHistoryKeys.has(rKey) && !mergedHistory.some(h => h.remark === rStr)) {
+        seenHistoryKeys.add(rKey);
+        mergedHistory.push({
+          status: stateObj.status || "",
+          remark: rStr,
+          calledFor: stateObj["Called For"] || stateObj.calledFor || "",
+          source: stateObj.Source || stateObj.source || "",
+          callType: stateObj.callType || "outgoing",
+          attenderName: stateObj.attenderName || attenderName || "Attender",
+          timestamp: stateObj.lastCalledAt || stateObj.updatedAt || new Date().toISOString()
+        });
+      }
+    }
+  });
+
+  mergedHistory.sort((a, b) => getTimeMs(a.timestamp) - getTimeMs(b.timestamp));
+  mergedState.history = mergedHistory;
+
+  return mergedState;
+}
+
+export function combineContactHistories(rawData, attState = {}, attenderName = "") {
+  if (!rawData && !attState) return [];
+  const rawList = [];
+
+  const getTimeMs = (val) => {
+    if (!val) return 0;
+    if (typeof val.toDate === "function") return val.toDate().getTime();
+    if (val.seconds !== undefined) return val.seconds * 1000;
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  };
+
+  const addHistoryItem = (h, fallbackName = "") => {
+    if (!h || typeof h !== "object") return;
+    const rTrim = String(h.remark || "").trim();
+    const sTrim = String(h.status || "").trim();
+    if (!rTrim && (!sTrim || sTrim === "Pending") && !h.timestamp && !h.date) return;
+
+    const attName = h.attenderName || (attState && attState.attenderName) || fallbackName || attenderName || "Attender";
+
+    rawList.push({
+      status: sTrim,
+      remark: rTrim,
+      calledFor: h.calledFor || h.called_for || h["Called For"] || (attState && (attState["Called For"] || attState.calledFor)) || (rawData && rawData["Called For"]) || "",
+      source: h.source || h.sourse || h.Source || (attState && (attState.Source || attState.source)) || (rawData && rawData.Source) || "",
+      callType: h.callType || (attState && attState.callType) || (rawData && rawData.callType) || "outgoing",
+      attenderName: attName,
+      timestamp: h.timestamp || h.date || h.createdAt || h.updatedAt || h.lastCalledAt || new Date().toISOString()
+    });
+  };
+
+  if (rawData && Array.isArray(rawData.history)) {
+    rawData.history.forEach(h => addHistoryItem(h, rawData.assignedName || rawData.attenderName));
+  }
+
+  if (attState && Array.isArray(attState.history)) {
+    attState.history.forEach(h => addHistoryItem(h, attState.attenderName));
+  }
+
+  if (attState && attState.remark && String(attState.remark).trim()) {
+    addHistoryItem({
+      status: attState.status || "",
+      remark: attState.remark,
+      calledFor: attState["Called For"] || attState.calledFor,
+      source: attState.Source || attState.source,
+      callType: attState.callType,
+      attenderName: attState.attenderName,
+      timestamp: attState.lastCalledAt || attState.updatedAt
+    }, attState.attenderName);
+  }
+
+  if (rawData && rawData.remark && String(rawData.remark).trim()) {
+    addHistoryItem({
+      status: rawData.status || "",
+      remark: rawData.remark,
+      calledFor: rawData["Called For"],
+      source: rawData.Source,
+      callType: rawData.callType,
+      attenderName: rawData.assignedName || rawData.attenderName,
+      timestamp: rawData.lastCalledAt || rawData.updatedAt || rawData.createdAt
+    }, rawData.assignedName || rawData.attenderName);
+  }
+
+  rawList.sort((a, b) => getTimeMs(a.timestamp) - getTimeMs(b.timestamp));
+
+  const unique = [];
+  const clean = s => String(s || "").trim().toLowerCase();
+
+  rawList.forEach(item => {
+    const itemRemark = clean(item.remark);
+    const itemStatus = clean(item.status);
+    const itemMs = getTimeMs(item.timestamp);
+
+    const isDuplicate = unique.some(ex => {
+      const exRemark = clean(ex.remark);
+      const exStatus = clean(ex.status);
+      const exMs = getTimeMs(ex.timestamp);
+
+      const timeDiff = (itemMs > 0 && exMs > 0) ? Math.abs(itemMs - exMs) : 0;
+      const isTimeUnknown = itemMs === 0 || exMs === 0;
+
+      // Rule 1: Identical non-empty remarks logged within 30 minutes of each other (or unknown timestamp)
+      if (itemRemark && exRemark && itemRemark === exRemark) {
+        if (isTimeUnknown || timeDiff < 1800000) return true;
+      }
+
+      // Rule 2: Same status logged within 3 minutes of each other
+      if (itemStatus && exStatus && itemStatus === exStatus && itemMs > 0 && exMs > 0) {
+        if (timeDiff < 180000) return true;
+      }
+      return false;
+    });
+
+    if (!isDuplicate) {
+      unique.push(item);
+    }
+  });
+
+  return unique;
+}
+
 // Fixed ID for the dedicated "Incoming Calls" program — never changes
 export const INCOMING_PROGRAM_ID = "incoming-calls";
 export const INCOMING_PROGRAM_NAME = "Incoming Calls";
@@ -1211,27 +1403,22 @@ export const subscribeToCallLogs = (...args) => {
         const docContacts = docSnap.data().contacts || {};
         Object.entries(docContacts).forEach(([id, rawData]) => {
           if (!rawData) return;
+          const matchedStateObj = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName);
           const isAssignedToMe = (attenderId && (
             rawData.attenderId === attenderId || 
             rawData.assignedTo === attenderId || 
             (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderId)) ||
-            (rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined)
+            Boolean(matchedStateObj)
           )) || (attenderName && (
             rawData.assignedName === attenderName || 
             rawData.attenderName === attenderName || 
             rawData.assignedTo === attenderName ||
             (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderName)) ||
-            (rawData.attenderStates && rawData.attenderStates[attenderName] !== undefined)
+            Boolean(matchedStateObj)
           ));
 
           if (isAssignedToMe) {
-            const matchedKey = (rawData.attenderStates && attenderId && rawData.attenderStates[attenderId] !== undefined)
-              ? attenderId 
-              : (rawData.attenderStates && attenderName && rawData.attenderStates[attenderName] !== undefined) 
-                ? attenderName 
-                : null;
-            const hasState = Boolean(matchedKey);
-            const attState = hasState ? rawData.attenderStates[matchedKey] : {};
+            const attState = matchedStateObj || {};
             
             const newLastCalledAt = attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null);
             const getTimeMs = (val) => {
@@ -1251,7 +1438,7 @@ export const subscribeToCallLogs = (...args) => {
                 status: attState.status !== undefined ? attState.status : (rawData.status || ""),
                 remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
                 callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
-                history: attState.history !== undefined ? attState.history : (rawData.history || []),
+                history: combineContactHistories(rawData, attState, attenderName),
                 callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
                 callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
                 objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
@@ -1271,6 +1458,12 @@ export const subscribeToCallLogs = (...args) => {
       });
 
       let logs = Object.values(contactsMap).filter(log => !log._deleted && !log._hidden);
+
+      console.log(`[ATTENDER_LOGS_SYNC] Logged in attender: "${attenderName}" (${attenderId}) | Total contacts fetched: ${logs.length}`);
+      const sanjay = logs.find(l => String(l.Name || l.name || "").toLowerCase().includes("sanjay pathak"));
+      if (sanjay) {
+        console.log(`[DIAGNOSTIC] Sanjay Pathak historyCount: ${(sanjay.history || []).length} | status: "${sanjay.status}" | remark: "${sanjay.remark}"`, sanjay.history);
+      }
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -2202,27 +2395,22 @@ export const searchAttenderContacts = async (queryStr, attenderId, attenderName)
     globalResults.forEach(item => {
       if (!item || !item.id) return;
       
-      const isAssignedToMe = (attenderId && (
-        item.attenderId === attenderId || 
-        item.assignedTo === attenderId || 
-        (Array.isArray(item.assignedTo) && item.assignedTo.includes(attenderId)) ||
-        (item.attenderStates && item.attenderStates[attenderId] !== undefined)
-      )) || (attenderName && (
-        item.assignedName === attenderName || 
-        item.attenderName === attenderName || 
-        item.assignedTo === attenderName ||
-        (Array.isArray(item.assignedTo) && item.assignedTo.includes(attenderName)) ||
-        (item.attenderStates && item.attenderStates[attenderName] !== undefined)
-      ));
+        const matchedStateObj = findMatchingAttenderState(item.attenderStates, attenderId, attenderName);
+        const isAssignedToMe = (attenderId && (
+          item.attenderId === attenderId || 
+          item.assignedTo === attenderId || 
+          (Array.isArray(item.assignedTo) && item.assignedTo.includes(attenderId)) ||
+          Boolean(matchedStateObj)
+        )) || (attenderName && (
+          item.assignedName === attenderName || 
+          item.attenderName === attenderName || 
+          item.assignedTo === attenderName ||
+          (Array.isArray(item.assignedTo) && item.assignedTo.includes(attenderName)) ||
+          Boolean(matchedStateObj)
+        ));
 
-      if (isAssignedToMe) {
-        const matchedKey = (item.attenderStates && attenderId && item.attenderStates[attenderId] !== undefined)
-          ? attenderId 
-          : (item.attenderStates && attenderName && item.attenderStates[attenderName] !== undefined) 
-            ? attenderName 
-            : null;
-        const hasState = Boolean(matchedKey);
-        const attState = hasState ? item.attenderStates[matchedKey] : {};
+        if (isAssignedToMe) {
+          const attState = matchedStateObj || {};
 
         allResultsMap.set(item.id, {
           id: item.id,
@@ -2295,27 +2483,22 @@ export const fetchHistoricalCachePartition = async (monthStr, attenderId, attend
       const docContacts = docSnap.data().contacts || {};
       Object.entries(docContacts).forEach(([id, rawData]) => {
         if (!rawData || rawData._deleted) return;
+        const matchedStateObj = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName);
         const isAssignedToMe = (attenderId && (
           rawData.attenderId === attenderId || 
           rawData.assignedTo === attenderId || 
           (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderId)) ||
-          (rawData.attenderStates && rawData.attenderStates[attenderId] !== undefined)
+          Boolean(matchedStateObj)
         )) || (attenderName && (
           rawData.assignedName === attenderName || 
           rawData.attenderName === attenderName || 
           rawData.assignedTo === attenderName ||
           (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderName)) ||
-          (rawData.attenderStates && rawData.attenderStates[attenderName] !== undefined)
+          Boolean(matchedStateObj)
         ));
 
         if (isAssignedToMe) {
-          const matchedKey = (rawData.attenderStates && attenderId && rawData.attenderStates[attenderId] !== undefined)
-            ? attenderId 
-            : (rawData.attenderStates && attenderName && rawData.attenderStates[attenderName] !== undefined) 
-              ? attenderName 
-              : null;
-          const hasState = Boolean(matchedKey);
-          const attState = hasState ? rawData.attenderStates[matchedKey] : {};
+          const attState = matchedStateObj || {};
 
           contactsMap[id] = {
             id,

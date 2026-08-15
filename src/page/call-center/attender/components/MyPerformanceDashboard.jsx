@@ -26,8 +26,8 @@ function parseTimestamp(t) {
 }
 
 function getTimestampFromLog(log) {
-  if (log.updatedAt) {
-    return parseTimestamp(log.updatedAt);
+  if (log.lastCalledAt) {
+    return parseTimestamp(log.lastCalledAt);
   }
   if (log.createdAt) {
     return parseTimestamp(log.createdAt);
@@ -81,8 +81,8 @@ function filterLogsByDate(logs, range, customStart, customEnd) {
             if (d) timestamps.push(d);
           });
         }
-        if (state.lastCalledAt || state.updatedAt) {
-          const d = parseTimestamp(state.lastCalledAt || state.updatedAt);
+        if (state.lastCalledAt) {
+          const d = parseTimestamp(state.lastCalledAt);
           if (d) timestamps.push(d);
         }
       });
@@ -122,10 +122,10 @@ function getAttenderAttempts(logs, attenderName, attenderId) {
       || Object.keys(log).find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
     const contactPhone = phoneKey ? log[phoneKey] : "";
 
-    const processAttemptObj = (att, isHistory, index) => {
+    const processAttemptObj = (att, isHistory, index, state) => {
       const status = att.status || "Pending";
-      const dateVal = att.timestamp || att.updatedAt;
-      const attemptDate = parseTimestamp(dateVal) || parseTimestamp(log.updatedAt || log.createdAt);
+      const dateVal = att.timestamp || state?.lastCalledAt;
+      const attemptDate = parseTimestamp(dateVal) || parseTimestamp(log.createdAt);
 
       return {
         ...log,
@@ -168,14 +168,15 @@ function getAttenderAttempts(logs, attenderName, attenderId) {
                 attenderName: h.attenderName || stateAttName
               },
               true,
-              index
+              index,
+              state
             );
             if (att) logAttempts.push(att);
           });
         }
         if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
-          const dateVal = state.lastCalledAt || state.updatedAt;
-          const ts = parseTimestamp(dateVal);
+          const dateVal = state.lastCalledAt;
+          const ts = parseTimestamp(dateVal) || parseTimestamp(log.createdAt);
           const existsInStateHistory = Array.isArray(state.history) && state.history.some(h => {
             const hTs = parseTimestamp(h.timestamp);
             return hTs && ts && Math.abs(hTs.getTime() - ts.getTime()) < 1000 && (h.status === state.status || h.remark === state.remark);
@@ -183,14 +184,15 @@ function getAttenderAttempts(logs, attenderName, attenderId) {
           if (!existsInStateHistory) {
             const att = processAttemptObj(
               {
-                timestamp: state.lastCalledAt || state.updatedAt,
+                timestamp: state.lastCalledAt,
                 status: state.status,
                 remark: state.remark,
                 callType: state.callType,
                 attenderName: stateAttName
               },
               false,
-              0
+              0,
+              state
             );
             if (att) logAttempts.push(att);
           }
@@ -205,7 +207,7 @@ function getAttenderAttempts(logs, attenderName, attenderId) {
         const histAttId = h.attenderId || log.attenderId || "";
         if (!isOurAttender(histAttName, histAttId)) return;
 
-        const dateVal = h.timestamp || h.date || h.createdAt || h.updatedAt;
+        const dateVal = h.timestamp || h.date || h.createdAt;
         const ts = parseTimestamp(dateVal);
         const alreadyAdded = logAttempts.some(ra => {
           return ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 1000 && ra.status === (h.status || "Pending") && ra.remark === (h.remark || "");
@@ -233,7 +235,7 @@ function getAttenderAttempts(logs, attenderName, attenderId) {
     const stateAttId = log.attenderId || "";
     if (isOurAttender(stateAttName, stateAttId)) {
       if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
-        const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
+        const dateVal = log.lastCalledAt || log.createdAt;
         const ts = parseTimestamp(dateVal);
         const alreadyAdded = logAttempts.some(ra => {
           return ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 1000 && ra.status === (log.status || "Pending") && ra.remark === (log.remark || "");

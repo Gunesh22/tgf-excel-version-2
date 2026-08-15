@@ -479,8 +479,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         Object.entries(log.attenderStates).forEach(([attId, state]) => {
           if (state.history && Array.isArray(state.history) && state.history.length > 0) {
             state.history.forEach(h => {
+              if ((!h.status || h.status === "Pending") && !h.timestamp) return;
               rawAttempts.push({
-                timestamp: parseTimestamp(h.timestamp) || parseTimestamp(h.date) || parseTimestamp(state.lastCalledAt || state.updatedAt),
+                timestamp: parseTimestamp(h.timestamp) || parseTimestamp(h.date) || parseTimestamp(state.lastCalledAt),
                 attenderId: attId,
                 attenderName: h.attenderName || state.attenderName || "Unknown",
                 status: h.status || state.status || "Pending",
@@ -492,7 +493,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             });
           }
           if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
-            const dateVal = state.lastCalledAt || state.updatedAt;
+            const dateVal = state.lastCalledAt;
             const ts = parseTimestamp(dateVal);
             const existsInStateHistory = Array.isArray(state.history) && state.history.some(h => {
               const hTs = parseTimestamp(h.timestamp);
@@ -503,7 +504,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
             });
             if (!existsInStateHistory) {
               rawAttempts.push({
-                timestamp: ts || parseTimestamp(log.updatedAt || log.createdAt),
+                timestamp: ts,
                 attenderId: attId,
                 attenderName: state.attenderName || "Unknown",
                 status: state.status || "Pending",
@@ -520,7 +521,8 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       // B. Collect from top-level log.history
       if (log.history && Array.isArray(log.history) && log.history.length > 0) {
         log.history.forEach(h => {
-          const ts = parseTimestamp(h.timestamp) || parseTimestamp(h.date) || parseTimestamp(log.lastCalledAt || log.updatedAt);
+          if ((!h.status || h.status === "Pending") && !h.timestamp) return;
+          const ts = parseTimestamp(h.timestamp) || parseTimestamp(h.date) || parseTimestamp(log.lastCalledAt || log.createdAt);
           const alreadyAdded = rawAttempts.some(ra => {
             const sameTime = ra.timestamp && ts && Math.abs(ra.timestamp.getTime() - ts.getTime()) < 5000;
             const sameStatus = getCanonicalStatus(ra.status) === getCanonicalStatus(h.status);
@@ -542,9 +544,9 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
         });
       }
 
-      // C. Collect top-level log standalone call if not in history
-      if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
-        const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
+      // C. Collect top-level log standalone call if no attempts were found in attenderStates/history
+      if (rawAttempts.length === 0 && (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark)) {
+        const dateVal = log.lastCalledAt || log.createdAt;
         const ts = parseTimestamp(dateVal);
         const alreadyAdded = rawAttempts.some(ra => {
           const sameTime = ra.timestamp && ts && Math.abs(ra.timestamp.getTime() - ts.getTime()) < 5000;

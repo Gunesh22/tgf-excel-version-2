@@ -122,6 +122,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
   const [dateTo, setDateTo] = useState(todayStr);
   const [conversionSearch, setConversionSearch] = useState("");
   const [convPage, setConvPage] = useState(1);
+  const [selectedAttenderDetails, setSelectedAttenderDetails] = useState(null);
+  const [attenderModalSearch, setAttenderModalSearch] = useState("");
 
   const callTypeOptions = useMemo(() => [
     { value: "incoming", label: "Incoming" },
@@ -217,8 +219,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       const processAttempt = (att, attId, state, isHistory, index) => {
         const status = getCanonicalStatus(att.status || "Pending");
 
-        const dateVal = att.timestamp || att.updatedAt || state.lastCalledAt || state.updatedAt;
-        const attemptDate = getAttemptDate(dateVal) || getAttemptDate(log.updatedAt || log.createdAt);
+        const dateVal = att.timestamp || state.lastCalledAt;
+        const attemptDate = getAttemptDate(dateVal);
 
         return {
           ...log,
@@ -252,6 +254,9 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
         Object.entries(log.attenderStates).forEach(([attId, state]) => {
           if (state.history && Array.isArray(state.history) && state.history.length > 0) {
             state.history.forEach((h, index) => {
+              // Skip uncalled placeholder history entries (e.g. initial upload/assignment)
+              if ((!h.status || h.status === "Pending") && !h.timestamp) return;
+
               const att = processAttempt(
                 {
                   timestamp: h.timestamp,
@@ -267,12 +272,15 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
                 true,
                 index
               );
-              if (att) logAttempts.push(att);
+              if (att) {
+                console.log(`[DashboardTab HISTORY ITEM] Contact: "${contactName}" | attId: "${attId}" | h.status: "${h.status}" | h.timestamp: ${h.timestamp} -> attemptDate: ${att.updatedAt ? new Date(att.updatedAt).toISOString() : 'N/A'}`);
+                logAttempts.push(att);
+              }
             });
           }
           if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
-            const dateVal = state.lastCalledAt || state.updatedAt;
-            const ts = parseTimestamp(dateVal);
+            const dateVal = state.lastCalledAt;
+            const ts = parseTimestamp(dateVal) || parseTimestamp(log.createdAt);
             const existsInHistory = Array.isArray(state.history) && state.history.some(h => {
               const hTs = parseTimestamp(h.timestamp);
               const sameTime = hTs && ts && Math.abs(hTs.getTime() - ts.getTime()) < 5000;
@@ -283,7 +291,7 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
             if (!existsInHistory) {
               const att = processAttempt(
                 {
-                  timestamp: state.lastCalledAt || state.updatedAt,
+                  timestamp: state.lastCalledAt,
                   status: state.status,
                   remark: state.remark,
                   callType: state.callType,
@@ -294,7 +302,10 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
                 state,
                 false
               );
-              if (att) logAttempts.push(att);
+              if (att) {
+                console.log(`[DashboardTab STATE ITEM] Contact: "${contactName}" | attId: "${attId}" | state.status: "${state.status}" | state.lastCalledAt: ${state.lastCalledAt} -> attemptDate: ${att.updatedAt ? new Date(att.updatedAt).toISOString() : 'N/A'}`);
+                logAttempts.push(att);
+              }
             }
           }
         });
@@ -303,7 +314,10 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       // Collect from top-level log.history
       if (log.history && Array.isArray(log.history) && log.history.length > 0) {
         log.history.forEach((h, index) => {
-          const dateVal = h.timestamp || h.date || h.createdAt || h.updatedAt;
+          // Skip uncalled placeholder history entries
+          if ((!h.status || h.status === "Pending") && !h.timestamp) return;
+
+          const dateVal = h.timestamp || h.date || h.createdAt;
           const ts = parseTimestamp(dateVal);
           const alreadyAdded = logAttempts.some(ra => {
             const sameTime = ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 5000;
@@ -329,14 +343,17 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
               true,
               index
             );
-            if (att) logAttempts.push(att);
+            if (att) {
+              console.log(`[DashboardTab TOP HISTORY ITEM] Contact: "${contactName}" | h.status: "${h.status}" | h.timestamp: ${dateVal} -> attemptDate: ${att.updatedAt ? new Date(att.updatedAt).toISOString() : 'N/A'}`);
+              logAttempts.push(att);
+            }
           }
         });
       }
 
-      // Collect from top-level log.lastCalledAt / status
-      if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
-        const dateVal = log.lastCalledAt || log.updatedAt || log.createdAt;
+      // Collect from top-level log.lastCalledAt / status ONLY if no attenderStates/history attempts were found
+      if (logAttempts.length === 0 && (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark)) {
+        const dateVal = log.lastCalledAt || log.createdAt;
         const ts = parseTimestamp(dateVal);
         const alreadyAdded = logAttempts.some(ra => {
           const sameTime = ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 5000;
@@ -361,7 +378,10 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
             false,
             0
           );
-          if (att) logAttempts.push(att);
+          if (att) {
+            console.log(`[DashboardTab TOP LOG ITEM] Contact: "${contactName}" | log.status: "${log.status}" | log.lastCalledAt: ${log.lastCalledAt} -> attemptDate: ${att.updatedAt ? new Date(att.updatedAt).toISOString() : 'N/A'}`);
+            logAttempts.push(att);
+          }
         }
       }
 
@@ -436,17 +456,17 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
         if (!match) return false;
       }
 
-      // Date range based on action update time
-      const logDate = log.updatedAt;
-      if (!logDate || isNaN(logDate)) return false;
+      // Date range based on actual call action timestamp (updatedAt from processAttempt or lastCalledAt)
+      const logDate = parseTimestamp(log.updatedAt) || parseTimestamp(log.lastCalledAt);
+      if (!logDate || isNaN(logDate.getTime())) return false;
       if (dateFrom && logDate < new Date(dateFrom + "T00:00:00")) return false;
       if (dateTo && logDate > new Date(dateTo + "T23:59:59")) return false;
 
       return true;
     });
-    console.log(`[DashboardTab DEBUG] flattenedLogs total:`, flattenedLogs.length, `-> filteredLogs:`, res.length, `(Date: ${dateFrom} to ${dateTo}, Attender: ${selectedAttenderIds.join(",")})`);
+    console.log(`[DashboardTab DEBUG] flattenedLogs total:`, flattenedLogs.length, `-> filteredLogs:`, res.length, `(Date range: ${dateFrom} to ${dateTo}, Attenders: ${selectedAttenderIds.join(",")})`);
     res.forEach((log, idx) => {
-      console.log(`  #${idx+1} [DashboardTab] ${log.Name} (${log.Phone}) | Status: "${log.status}" | Time: ${log.updatedAt ? new Date(log.updatedAt).toISOString() : 'N/A'} | Remark: "${log.remark}"`);
+      console.log(`  #${idx+1} [DashboardTab MATCH] ${log.Name} (${log.Phone}) | Status: "${log.status}" | attenderId: "${log.attenderId}" | lastCalledAt: ${log.lastCalledAt} | createdAt: ${log.createdAt} | updatedAt(background): ${log.updatedAt}`);
     });
     return res;
   }, [flattenedLogs, selectedProgramIds, selectedAttenderIds, selectedSources, selectedCalledFors, selectedStatuses, selectedCallTypes, selectedKhojiStatuses, dateFrom, dateTo, programs, attenders]);
@@ -466,6 +486,23 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
     });
     return Object.values(map).sort((a, b) => b.total - a.total);
   }, [filteredLogs]);
+
+  const attenderModalLeads = useMemo(() => {
+    if (!selectedAttenderDetails) return [];
+    const target = selectedAttenderDetails.toLowerCase().trim();
+    const leads = filteredLogs.filter(log => {
+      const logAttender = (log.attenderName || "").toLowerCase().trim();
+      return logAttender === target || logAttender.includes(target) || target.includes(logAttender);
+    });
+    if (!attenderModalSearch.trim()) return leads;
+    const q = attenderModalSearch.toLowerCase();
+    return leads.filter(l =>
+      (l.Name || "").toLowerCase().includes(q) ||
+      (l.Phone || "").toLowerCase().includes(q) ||
+      (l.status || "").toLowerCase().includes(q) ||
+      (l.remark || "").toLowerCase().includes(q)
+    );
+  }, [filteredLogs, selectedAttenderDetails, attenderModalSearch]);
 
   const outcomeData = useMemo(() => {
     const map = {};
@@ -782,8 +819,11 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
 
       {/* Attender Breakdown Table */}
       <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-gray-100">
-          <h3 className="font-bold text-gray-800">Per Attender Breakdown</h3>
+        <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-gray-800">Per Attender Breakdown</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Click any attender row to inspect the exact leads & calls being counted.</p>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -796,8 +836,16 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
             </thead>
             <tbody className="divide-y divide-gray-50">
               {attenderStats.map(a => (
-                <tr key={a.name} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-6 py-4 font-bold text-gray-800">{a.name}</td>
+                <tr 
+                  key={a.name} 
+                  onClick={() => { setSelectedAttenderDetails(a.name); setAttenderModalSearch(""); }}
+                  className="hover:bg-indigo-50/60 transition-colors cursor-pointer group"
+                  title="Click to view full leads list"
+                >
+                  <td className="px-6 py-4 font-bold text-gray-800 group-hover:text-indigo-600 flex items-center gap-2">
+                    {a.name}
+                    <span className="text-[10px] text-gray-400 font-normal group-hover:text-indigo-500 group-hover:underline">🔍 Inspect</span>
+                  </td>
                   <td className="px-6 py-4 font-black text-indigo-600">{a.total}</td>
                   <td className="px-6 py-4 text-blue-600 font-semibold">{a.outgoing}</td>
                   <td className="px-6 py-4 text-green-600 font-semibold">{a.incoming}</td>
@@ -954,6 +1002,123 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
           </div>
         )}
       </div>
+
+      {/* Drill-down Modal for Selected Attender */}
+      {selectedAttenderDetails && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-gray-100 shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="p-6 border-b border-gray-100 bg-gradient-to-r from-indigo-50/50 via-white to-purple-50/30 flex items-center justify-between">
+              <div>
+                <h3 className="font-extrabold text-xl text-gray-900 flex items-center gap-2">
+                  <span>📊</span> Calls & Leads Breakdown for <span className="text-indigo-600 underline decoration-indigo-300">{selectedAttenderDetails}</span>
+                </h3>
+                <p className="text-xs text-gray-500 mt-1 font-medium">
+                  Showing {attenderModalLeads.length} counted entries for date range <span className="font-bold text-gray-700">{dateFrom}</span> to <span className="font-bold text-gray-700">{dateTo}</span>
+                </p>
+              </div>
+              <button 
+                onClick={() => setSelectedAttenderDetails(null)}
+                className="p-2 rounded-full hover:bg-gray-200/60 text-gray-400 hover:text-gray-700 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Controls Bar */}
+            <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="relative w-full sm:max-w-sm">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search leads by name, phone, status..."
+                  value={attenderModalSearch}
+                  onChange={e => setAttenderModalSearch(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+                />
+                {attenderModalSearch && (
+                  <button onClick={() => setAttenderModalSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-xs font-semibold text-gray-500">
+                <span>Total Counted Items: <strong className="text-indigo-600 font-extrabold">{attenderModalLeads.length}</strong></span>
+              </div>
+            </div>
+
+            {/* Content Table */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {attenderModalLeads.length === 0 ? (
+                <div className="text-center py-16">
+                  <div className="text-4xl mb-2">🔍</div>
+                  <p className="text-gray-500 font-bold">No matching leads found for this attender.</p>
+                  <p className="text-xs text-gray-400 mt-1">Try adjusting the search query or date range filters.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-gray-100 rounded-2xl shadow-sm">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 font-bold uppercase tracking-wider">
+                      <tr>
+                        <th className="px-4 py-3">#</th>
+                        <th className="px-4 py-3">Lead Name</th>
+                        <th className="px-4 py-3">Phone</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Call Time (IST)</th>
+                        <th className="px-4 py-3">Call Type</th>
+                        <th className="px-4 py-3">Remark</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 font-medium text-gray-700">
+                      {attenderModalLeads.map((log, i) => {
+                        const callTime = parseTimestamp(log.updatedAt || log.lastCalledAt);
+                        const timeStr = callTime && !isNaN(callTime.getTime()) 
+                          ? callTime.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) 
+                          : "N/A";
+                        const st = log.status || "Pending";
+                        const isInterested = st === "Interested";
+                        const isReg = st === "Reg.Done";
+                        const isPending = st === "Pending";
+
+                        return (
+                          <tr key={log.id + "_" + i} className="hover:bg-indigo-50/30 transition-colors">
+                            <td className="px-4 py-3 text-gray-400 font-mono font-bold">{i + 1}</td>
+                            <td className="px-4 py-3 font-extrabold text-gray-900">{log.Name || "Unknown"}</td>
+                            <td className="px-4 py-3 font-mono font-medium text-gray-600">{log.Phone || "—"}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                isReg ? "bg-emerald-100 text-emerald-800" :
+                                isInterested ? "bg-purple-100 text-purple-800" :
+                                isPending ? "bg-amber-100 text-amber-800" :
+                                "bg-blue-100 text-blue-800"
+                              }`}>
+                                {st}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{timeStr}</td>
+                            <td className="px-4 py-3 capitalize">{log.callType || "outgoing"}</td>
+                            <td className="px-4 py-3 text-gray-500 max-w-xs truncate">{log.remark || "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-gray-100 bg-gray-50 flex items-center justify-end">
+              <button
+                onClick={() => setSelectedAttenderDetails(null)}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs shadow-md transition-colors"
+              >
+                Close Breakdown
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

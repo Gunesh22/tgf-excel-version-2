@@ -6,7 +6,7 @@ import {
   CalendarDays, Loader, Flame, Edit3, ArrowLeft
 } from "lucide-react";
 import {
-  addIncomingCallLog, updateCallLog, checkGlobalDuplicate
+  addIncomingCallLog, updateCallLog, checkGlobalDuplicate, findMatchingAttenderState
 } from "../../../../lib/db";
 import { searchCRMByPhone } from "../../../../lib/ghl";
 import {
@@ -128,7 +128,7 @@ export default function MobileEditModal({
 
   const getEditable = (field) => {
     if (row._isNew) return true;
-    const attState = row.attenderStates && row.attenderStates[attenderId];
+    const attState = findMatchingAttenderState(row.attenderStates, attenderId, attenderName);
     if (!attState) return true;
     return true;
   };
@@ -234,8 +234,11 @@ export default function MobileEditModal({
     // 2. All other attenders' histories from savedRow.attenderStates
     if (savedRow.attenderStates) {
       Object.keys(savedRow.attenderStates).forEach(otherAttenderId => {
-        if (otherAttenderId === attenderId) return;
         const state = savedRow.attenderStates[otherAttenderId];
+        const isMe = otherAttenderId === attenderId || 
+                     otherAttenderId === attenderName || 
+                     (state && (state.attenderId === attenderId || state.attenderName === attenderName));
+        if (isMe) return; // Already included in currentHist above
         if (state) {
           const progName = state.programName || "Other Attender";
           if (Array.isArray(state.history)) {
@@ -290,13 +293,37 @@ export default function MobileEditModal({
 
     list.sort((a, b) => getMs(a.timestamp) - getMs(b.timestamp));
 
-    const seen = new Set();
+    // Semantic Deduplication: Filter out any entries with identical remarks or close timestamps/statuses
     const uniqueList = [];
+    const clean = s => String(s || "").trim().toLowerCase();
+
     list.forEach(item => {
-      const timeStr = String(getMs(item.timestamp));
-      const key = `${timeStr}_${item.remark}_${item.status}_${item.attenderName}`;
-      if (!seen.has(key)) {
-        seen.add(key);
+      const itemRemark = clean(item.remark);
+      const itemStatus = clean(item.status);
+      const itemMs = getMs(item.timestamp);
+
+      const isDuplicate = uniqueList.some(ex => {
+        const exRemark = clean(ex.remark);
+        const exStatus = clean(ex.status);
+        const exMs = getMs(ex.timestamp);
+
+        const timeDiff = (itemMs > 0 && exMs > 0) ? Math.abs(itemMs - exMs) : 0;
+        const isTimeUnknown = itemMs === 0 || exMs === 0;
+
+        // Rule 1: Identical non-empty remarks logged within 30 minutes of each other (or unknown timestamp)
+        if (itemRemark && exRemark && itemRemark === exRemark) {
+          if (isTimeUnknown || timeDiff < 1800000) return true;
+        }
+
+        // Rule 2: Same status logged within 3 minutes of each other
+        if (itemStatus && exStatus && itemStatus === exStatus && itemMs > 0 && exMs > 0) {
+          if (timeDiff < 180000) return true;
+        }
+
+        return false;
+      });
+
+      if (!isDuplicate) {
         uniqueList.push(item);
       }
     });

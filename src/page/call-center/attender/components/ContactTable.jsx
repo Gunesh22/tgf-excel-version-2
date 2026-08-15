@@ -293,7 +293,7 @@ export function ContactTable({
                   {!hiddenColumns.includes("Remark") && (
                     <td className="py-2 px-4 border-r border-gray-100 text-gray-700 text-sm leading-relaxed min-w-[300px] whitespace-normal align-top">
                       {(() => {
-                        const directRemark = log.remark || log.Remark || "";
+                        const directRemark = getFieldWithFallback(log, "remark") || log.remark || log.Remark || "";
                         if (directRemark) return directRemark;
                         if (Array.isArray(log.history) && log.history.length > 0) {
                           const lastRemark = [...log.history].reverse().find(h => h.remark)?.remark;

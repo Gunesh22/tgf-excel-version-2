@@ -593,7 +593,7 @@ export default function AllAttendersSheetTab({
       if (filterStatus === "Pending" && (log.status && log.status !== "Pending")) return false;
 
       if (filterStatus === "Today Activity") {
-        const lastCall = parseTimestamp(log.lastCalledAt || log.updatedAt);
+        const lastCall = parseTimestamp(log.lastCalledAt);
         if (!lastCall || lastCall < today) return false;
       }
       if (filterStatus === "Callback") {
@@ -604,7 +604,7 @@ export default function AllAttendersSheetTab({
 
       // Date Range Filter (dateFrom to dateTo)
       if (dateFrom || dateTo) {
-        const targetDate = parseTimestamp(log.lastCalledAt || log.updatedAt || log.createdAt);
+        const targetDate = parseTimestamp(log.lastCalledAt || log.updatedAt);
         if (dateFrom) {
           if (!targetDate || isNaN(targetDate.getTime())) return false;
           const fromD = new Date(dateFrom + "T00:00:00");
@@ -619,6 +619,11 @@ export default function AllAttendersSheetTab({
 
       return true;
     });
+    console.log(`[AllAttendersSheetTab DEBUG] total flattened:`, flattenedLogs.length, `-> filtered:`, res.length, `(filterStatus: "${filterStatus}", dateFrom: ${dateFrom}, dateTo: ${dateTo})`);
+    res.forEach((log, idx) => {
+      console.log(`  #${idx+1} [AllAttendersSheetTab MATCH] ${log.Name} (${log.Phone}) | status: "${log.status}" | attender: "${log.attenderName}" | lastCalledAt: ${log.lastCalledAt} | createdAt: ${log.createdAt}`);
+    });
+    return res;
   }, [
     flattenedLogs,
     searchQuery,
@@ -650,8 +655,8 @@ export default function AllAttendersSheetTab({
         return tB - tA;
       }
       // default: activityDesc
-      const tA = parseTimestamp(a.lastCalledAt || a.updatedAt || a.createdAt)?.getTime() || 0;
-      const tB = parseTimestamp(b.lastCalledAt || b.updatedAt || b.createdAt)?.getTime() || 0;
+      const tA = parseTimestamp(a.lastCalledAt || a.createdAt)?.getTime() || 0;
+      const tB = parseTimestamp(b.lastCalledAt || b.createdAt)?.getTime() || 0;
       return tB - tA;
     });
   }, [filteredLogs, sortBy]);
@@ -1394,7 +1399,7 @@ export default function AllAttendersSheetTab({
 
                     {!hiddenColumns.includes("Remark") && (
                       <td className="py-2.5 px-4 border-r border-gray-100 text-slate-700 leading-relaxed min-w-[280px] align-top">
-                        {log.remark || <span className="text-gray-300 font-medium">—</span>}
+                        {getFieldWithFallback(log, "remark") || log.remark || <span className="text-gray-300 font-medium">—</span>}
                       </td>
                     )}
 

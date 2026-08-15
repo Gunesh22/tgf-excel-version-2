@@ -7,7 +7,7 @@ import {
   ChevronDown, Check, Search
 } from "lucide-react";
 import {
-  addIncomingCallLog, updateCallLog, createProgram, checkGlobalDuplicate
+  addIncomingCallLog, updateCallLog, createProgram, checkGlobalDuplicate, findMatchingAttenderState, combineContactHistories
 } from "../../../../lib/db";
 import { searchCRMByPhone } from "../../../../lib/ghl";
 import {
@@ -103,13 +103,8 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     if (!normalized.Tags && Array.isArray(row.tags) && row.tags.length > 0) {
       normalized.Tags = row.tags.join(", ");
     }
-    if (normalized.attenderStates?.[attenderId]?.history !== undefined) {
-      normalized.history = normalized.attenderStates[attenderId].history || [];
-    } else if (normalized.attenderStates && Object.keys(normalized.attenderStates).length > 0) {
-      normalized.history = [];
-    }
-    if (true) {
-    }
+    const attState = findMatchingAttenderState(normalized.attenderStates, attenderId, attenderName);
+    normalized.history = combineContactHistories(normalized, attState, attenderName);
     return {
       ...normalized,
       // Always start with empty remark for a new note — previous remarks are shown in the history timeline
@@ -840,8 +835,11 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     // 2. Iterate over row.attenderStates to collect history of all sessions
     if (savedRow.attenderStates) {
       Object.keys(savedRow.attenderStates).forEach(otherAttenderId => {
-        if (otherAttenderId === attenderId) return;
         const state = savedRow.attenderStates[otherAttenderId];
+        const isMe = otherAttenderId === attenderId || 
+                     otherAttenderId === attenderName || 
+                     (state && (state.attenderId === attenderId || state.attenderName === attenderName));
+        if (isMe) return; // Already included in currentHist above
         if (state) {
           const progName = state.programName || "Other Attender";
           // Add history entries
@@ -987,20 +985,47 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       return timeA - timeB;
     });
 
-    // Deduplicate by timestamp + remark + status + attenderName
-    const seen = new Set();
+    // Semantic Deduplication: Filter out any entries with identical remarks or close timestamps/statuses
     const uniqueList = [];
+    const clean = s => String(s || "").trim().toLowerCase();
+
     list.forEach(item => {
-      const timeStr = String(getMs(item.timestamp));
-      const key = `${timeStr}_${item.remark}_${item.status}_${item.attenderName}`;
-      if (!seen.has(key)) {
-        seen.add(key);
+      const itemRemark = clean(item.remark);
+      const itemStatus = clean(item.status);
+      const itemMs = getMs(item.timestamp);
+
+      const isDuplicate = uniqueList.some(ex => {
+        const exRemark = clean(ex.remark);
+        const exStatus = clean(ex.status);
+        const exMs = getMs(ex.timestamp);
+
+        const timeDiff = (itemMs > 0 && exMs > 0) ? Math.abs(itemMs - exMs) : 0;
+        const isTimeUnknown = itemMs === 0 || exMs === 0;
+
+        // Rule 1: Identical non-empty remarks logged within 30 minutes of each other (or unknown timestamp)
+        if (itemRemark && exRemark && itemRemark === exRemark) {
+          if (isTimeUnknown || timeDiff < 1800000) return true;
+        }
+
+        // Rule 2: Same status logged within 3 minutes of each other
+        if (itemStatus && exStatus && itemStatus === exStatus && itemMs > 0 && exMs > 0) {
+          if (timeDiff < 180000) return true;
+        }
+
+        return false;
+      });
+
+      if (!isDuplicate) {
         uniqueList.push(item);
       }
     });
 
     return uniqueList;
   }, [savedRow.history, savedRow.remark, savedRow.status, savedRow.programName, savedRow.attenderName, savedRow.assignedName, savedRow.updatedAt, savedRow.createdAt, savedRow.attenderStates, globalDup, edited.history, attenderId]);
+
+  useEffect(() => {
+    console.log(`[DIAGNOSTIC] EditModal opened for "${savedRow.Name || savedRow.name}" | rawHistoryCount: ${(savedRow.history || []).length} | mergedHistoryCount: ${(mergedHistory || []).length}`, mergedHistory);
+  }, [savedRow, attenderId, attenderName, mergedHistory]);
 
   // Identity helpers
   const getLogName = () => {
