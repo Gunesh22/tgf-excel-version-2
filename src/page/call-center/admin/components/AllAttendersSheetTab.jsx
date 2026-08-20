@@ -326,7 +326,24 @@ export default function AllAttendersSheetTab({
     "Remark",
     "Callback"
   ];
-  const [hiddenColumns, setHiddenColumns] = useState([]);
+  const DEFAULT_HIDDEN_COLS = ["Attender", "Phone", "Mobile", "Email", "City", "State", "Tags", "Sub Program", "Calls Done", "Callback"];
+
+  const [hiddenColumns, setHiddenColumns] = useState(() => {
+    try {
+      const saved = localStorage.getItem("admin_hidden_cols");
+      return saved ? JSON.parse(saved) : DEFAULT_HIDDEN_COLS;
+    } catch {
+      return DEFAULT_HIDDEN_COLS;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("admin_hidden_cols", JSON.stringify(hiddenColumns));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [hiddenColumns]);
 
   // Flattened entries for multi-attender support
   const flattenedLogs = useMemo(() => {
@@ -1782,8 +1799,8 @@ export default function AllAttendersSheetTab({
       {editingRow && (
         <EditModal
           row={editingRow}
-          attenderId={editingRow._isNew ? "" : (editingRow.attenderId || "admin")}
-          attenderName={editingRow._isNew ? "" : (editingRow.attenderName || "Admin")}
+          attenderId={editingRow.attenderId || "admin"}
+          attenderName={editingRow.attenderName || "Admin"}
           attenders={attenderOptions.map(opt => ({ id: opt.value, name: opt.label }))}
           allowAttenderSelection={true}
           programs={programs}

@@ -1,7 +1,7 @@
 import React from "react";
 import {
   ArrowLeft, Search, Plus, MapPin, PhoneOutgoing, Flame, Clock, CheckCircle2, AlertCircle,
-  Bell, Sparkles, UserCheck
+  Bell, Sparkles, UserCheck, Download
 } from "lucide-react";
 import { formatContactName } from "../utils";
 import { AttenderFilters } from "../components/AttenderFilters";
@@ -186,6 +186,15 @@ export default function MobileAttenderView({
               </div>
             )}
           </div>
+
+          <button
+            type="button"
+            onClick={() => exportTelemetryJSON(attenderName || "Attender")}
+            className="w-9 h-9 rounded-full bg-slate-900 border border-slate-700 flex items-center justify-center text-emerald-400 hover:bg-slate-800 transition active:scale-95 shadow-sm"
+            title="Download Today's EOD Telemetry Log"
+          >
+            <Download size={16} />
+          </button>
 
           <button
             type="button"

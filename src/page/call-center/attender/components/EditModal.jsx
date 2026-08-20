@@ -54,18 +54,16 @@ export const EditModal = ({
   onDelete,
   onClose
 }) => {
-  const [selectedAttenderId, setSelectedAttenderId] = useState(() => (row?._isNew ? "" : (attenderId || "")));
-  const [selectedAttenderName, setSelectedAttenderName] = useState(() => (row?._isNew ? "" : (attenderName || "")));
+  const [selectedAttenderId, setSelectedAttenderId] = useState(() => (attenderId || row?.attenderId || ""));
+  const [selectedAttenderName, setSelectedAttenderName] = useState(() => (attenderName || row?.attenderName || ""));
 
   useEffect(() => {
-    if (!row?._isNew) {
-      if (attenderId) setSelectedAttenderId(attenderId);
-      if (attenderName) setSelectedAttenderName(attenderName);
-    }
-  }, [attenderId, attenderName, row?._isNew]);
+    if (attenderId) setSelectedAttenderId(attenderId);
+    if (attenderName) setSelectedAttenderName(attenderName);
+  }, [attenderId, attenderName]);
 
-  const activeAttenderId = selectedAttenderId || (row?._isNew ? "" : attenderId);
-  const activeAttenderName = selectedAttenderName || (row?._isNew ? "" : attenderName);
+  const activeAttenderId = selectedAttenderId || attenderId || row?.attenderId || "";
+  const activeAttenderName = selectedAttenderName || attenderName || row?.attenderName || "";
 
   const getNormalizedRow = () => {
     const normalized = { ...row };
@@ -1269,6 +1267,11 @@ export const EditModal = ({
         if (!targetEdited.Khoji || !String(targetEdited.Khoji).trim()) {
           targetEdited.Khoji = "No";
         }
+      }
+
+      if (allowAttenderSelection && !activeAttenderId) {
+        toast.error("Please select an Attender before saving.", { duration: 4000, position: 'top-center' });
+        return;
       }
 
       // Compulsory Khoji Validation

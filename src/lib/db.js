@@ -104,15 +104,18 @@ export const getActiveTags = async () => {
   }
 };
 
+const registeredTagsCache = new Set();
+
 export const registerActiveTag = async (tag) => {
   if (!tag) return;
   const cleanTag = tag.trim();
-  if (!cleanTag) return;
+  if (!cleanTag || registeredTagsCache.has(cleanTag)) return;
   try {
     await setDoc(doc(db, "activeTags", cleanTag), {
       name: cleanTag,
       createdAt: serverTimestamp()
     }, { merge: true });
+    registeredTagsCache.add(cleanTag);
   } catch (e) {
     console.error("Failed to register active tag:", e);
   }
@@ -1395,6 +1398,9 @@ export const subscribeToCallLogs = (...args) => {
       where(documentId(), ">=", prev2MonthStr)
     );
 
+    const listenerId = `callCenterCache_monthly_partitions_${registryKey}`;
+    const targetQueryStr = `collection("callCenterCache").where(documentId() >= "${prev2MonthStr}")`;
+
     const unsubFirestore = onSnapshot(cacheQuery, snap => {
       console.log(`[FIRESTORE REALTIME SYNC] snapshot received | docsCount: ${snap.docs.length}`);
       populateGlobalActivePartitionsCache(snap.docs);
@@ -2070,13 +2076,15 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
         ? existingData.assignedTo
         : (existingData.assignedTo ? [existingData.assignedTo] : []))
     : [];
-  const assignedToSet = new Set(prevAssigned);
-  assignedToSet.add(attenderId);
+  const assignedToSet = new Set(prevAssigned.filter(Boolean));
+  if (attenderId) {
+    assignedToSet.add(attenderId);
+  }
   const newAssignedTo = Array.from(assignedToSet);
 
   // Initialize or fetch attender-specific state
   const prevStates = isExisting ? (existingData.attenderStates || {}) : {};
-  const currentAttState = prevStates[attenderId] || {};
+  const currentAttState = attenderId ? (prevStates[attenderId] || {}) : {};
   
   const callTimeISO = data.callTimestamp ? new Date(data.callTimestamp).toISOString() : new Date().toISOString();
 
@@ -2100,9 +2108,9 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
   const targetCallbackDate = data.status === "Reg.Done" ? null : (data.callbackDate !== undefined ? data.callbackDate : (currentAttState.callbackDate || null));
 
   // Update attender-specific states
-  const updatedStates = {
-    ...prevStates,
-    [attenderId]: {
+  const updatedStates = { ...prevStates };
+  if (attenderId) {
+    updatedStates[attenderId] = {
       ...currentAttState,
       status: data.status !== undefined ? data.status : (currentAttState.status || ""),
       remark: data.remark !== undefined ? data.remark : (currentAttState.remark || ""),
@@ -2117,8 +2125,8 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
       firstCalledAt: currentAttState.firstCalledAt || callTimeISO,
       attenderName: attenderName,
       updatedAt: new Date().toISOString()
-    }
-  };
+    };
+  }
 
   // Format Name:
   const rawName = rest.Name || existingData.Name || "";
@@ -5002,29 +5010,9 @@ export const logInteraction = async ({
   callbackDate = null,
   timestamp = null
 }) => {
-  try {
-    const payload = {
-      contactId,
-      contactName: contactName || "Unknown",
-      programId: programId || "unknown-program",
-      programName: programName || "Unknown Program",
-      attenderId: attenderId || "unknown-attender",
-      attenderName: attenderName || "Unknown Attender",
-      status: status || "Pending",
-      remark: remark || "",
-      callType: callType || "outgoing",
-      callbackDate: callbackDate || null,
-      timestamp: timestamp || serverTimestamp()
-    };
-    Object.keys(payload).forEach(key => {
-      if (payload[key] === undefined) {
-        delete payload[key];
-      }
-    });
-    await addDoc(collection(db, "interactions"), payload);
-  } catch (e) {
-    console.error("Error logging interaction:", e);
-  }
+  // Interaction logging to separate collection is disabled to optimize Firestore writes;
+  // full call history is stored directly inside the contact's attenderStates history array.
+  return;
 };
 
 export const subscribeToInteractions = (programId, callback) => {

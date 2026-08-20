@@ -7,12 +7,51 @@ import AttenderView from "./attender/AttenderView";
 import AdminPanel from "./admin/AdminPanel";
 import CelebrationFeed from "./components/CelebrationFeed";
 
+const SESSION_KEY = "tgf_user_session";
+
 export default function CallCenterApp() {
-  const [mode, setMode] = useState(null); // null | "attender" | "admin"
-  const [activeTab, setActiveTab] = useState("attender"); // "attender" | "admin"
+  const [mode, setMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.mode === "attender" && parsed.attenderId) return "attender";
+        if (parsed.mode === "admin") return "admin";
+      }
+    } catch (e) {}
+    return null;
+  });
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.mode === "admin") return "admin";
+      }
+    } catch (e) {}
+    return "attender";
+  });
   const [attenders, setAttenders] = useState([]);
-  const [selectedAttenderId, setSelectedAttenderId] = useState("");
-  const [selectedAttenderName, setSelectedAttenderName] = useState("");
+  const [selectedAttenderId, setSelectedAttenderId] = useState(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.mode === "attender" && parsed.attenderId) return parsed.attenderId;
+      }
+    } catch (e) {}
+    return "";
+  });
+  const [selectedAttenderName, setSelectedAttenderName] = useState(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.mode === "attender" && parsed.attenderName) return parsed.attenderName;
+      }
+    } catch (e) {}
+    return "";
+  });
   const [attenderPassword, setAttenderPassword] = useState("");
   const [showAttenderPass, setShowAttenderPass] = useState(false);
 
@@ -95,6 +134,14 @@ export default function CallCenterApp() {
 
     setAttenderFailedCount(0);
     setAttenderLockoutUntil(0);
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        mode: "attender",
+        attenderId: selectedAttenderId,
+        attenderName: attenderObj.name
+      }));
+    } catch (e) {}
+    setSelectedAttenderName(attenderObj.name);
     setMode("attender");
   };
 
@@ -117,6 +164,9 @@ export default function CallCenterApp() {
         setAdminFailedCount(0);
         setAdminLockoutUntil(0);
         setAdminPasswordInput("");
+        try {
+          localStorage.setItem(SESSION_KEY, JSON.stringify({ mode: "admin" }));
+        } catch (e) {}
         setMode("admin");
       } else {
         const nextFail = adminFailedCount + 1;
@@ -158,6 +208,7 @@ export default function CallCenterApp() {
           attenderName={selectedAttenderName}
           optionsVersion={optionsVersion}
           onExit={() => {
+            try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
             setMode(null);
             setSelectedAttenderId("");
             setSelectedAttenderName("");
@@ -173,7 +224,13 @@ export default function CallCenterApp() {
       <>
         <Toaster position="top-right" />
         <CelebrationFeed />
-        <AdminPanel onExit={() => setMode(null)} onAttendersChange={load} />
+        <AdminPanel
+          onExit={() => {
+            try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+            setMode(null);
+          }}
+          onAttendersChange={load}
+        />
       </>
     );
   }

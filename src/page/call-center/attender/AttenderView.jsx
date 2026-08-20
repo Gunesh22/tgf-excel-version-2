@@ -97,12 +97,14 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   const [selectedTags, setSelectedTags] = useState([]);
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
   const [tagSearchQuery, setTagSearchQuery] = useState("");
+  const DEFAULT_HIDDEN_COLS = ["Phone", "Mobile", "Email", "City", "State", "Tags", "Callback", "Sub Program", "Calls Done", "Attender"];
+
   const [hiddenColumns, setHiddenColumns] = useState(() => {
     try {
       const saved = localStorage.getItem(`hidden_cols_${attenderId}`);
-      return saved ? JSON.parse(saved) : [];
+      return saved ? JSON.parse(saved) : DEFAULT_HIDDEN_COLS;
     } catch {
-      return [];
+      return DEFAULT_HIDDEN_COLS;
     }
   });
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
