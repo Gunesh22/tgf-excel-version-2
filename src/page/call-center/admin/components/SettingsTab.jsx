@@ -3,7 +3,7 @@ import { toast } from "react-hot-toast";
 import { 
   ShieldCheck, Tag, HelpCircle, Loader, RefreshCw, CheckCircle2, 
   AlertTriangle, Activity, Archive, Sliders, PhoneCall, PhoneOff, 
-  GripVertical, Search, X
+  GripVertical, Search, X, Download, Layers, GitMerge
 } from "lucide-react";
 import { OptionsManagerCard } from "./OptionsManagerCard";
 import { WhatsAppTemplatesCard } from "./WhatsAppTemplatesCard";
@@ -15,6 +15,10 @@ import {
   updateCallCenterOptions, 
   rebuildCallCenterCache, 
   verifyCallCenterCache,
+  exportCallCenterCacheToJson,
+  getCachePartitionsDetail,
+  mergePartitionPair,
+  mergeAllCompatiblePartitionsOneByOne,
   getActiveCacheMonths,
   getLockedMonthlyReports,
   DEFAULT_CONNECTED_STATUSES,
@@ -245,13 +249,80 @@ export default function SettingsTab() {
     }
   };
 
+  const handleDryRunCache = async () => {
+    setIsRebuilding(true);
+    try {
+      const res = await rebuildCallCenterCache(true);
+      const partsSummary = res.partsToSet.map(p => `• ${p.docId}: ${p.count} contacts (${p.sizeKb} KB)`).join("\n");
+      alert(`[DRY RUN AUDIT SUCCESS]\n0 WRITES PERFORMED!\n\nTotal Contacts: ${res.totalContacts}\nPartitions Prepared (${res.newPartsCount}):\n${partsSummary}`);
+      toast.success("Dry Run verification complete! Check console for full breakdown.");
+    } catch (err) {
+      console.error(err);
+      toast.error("Dry Run audit failed: " + err.message);
+    } finally {
+      setIsRebuilding(false);
+    }
+  };
+
+  const [isExporting, setIsExporting] = useState(false);
+  const [partitionsList, setPartitionsList] = useState([]);
+  const [isLoadingPartitions, setIsLoadingPartitions] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
+
+  const fetchPartitionsList = async () => {
+    setIsLoadingPartitions(true);
+    try {
+      const details = await getCachePartitionsDetail();
+      setPartitionsList(details);
+    } catch (err) {
+      console.error("Error fetching partition list:", err);
+    } finally {
+      setIsLoadingPartitions(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPartitionsList();
+  }, []);
+
+  const handleMergeOneByOne = async () => {
+    setIsMerging(true);
+    try {
+      const res = await mergeAllCompatiblePartitionsOneByOne();
+      if (res.mergedTotalCount > 0) {
+        toast.success(`Merged ${res.mergedTotalCount} partition pair(s) successfully!`);
+      } else {
+        toast("No partition pairs could be safely merged further (all fit safety limits).", { icon: "ℹ️" });
+      }
+      await fetchPartitionsList();
+    } catch (err) {
+      console.error(err);
+      toast.error("Merge failed: " + err.message);
+    } finally {
+      setIsMerging(false);
+    }
+  };
+
+  const handleExportJson = async () => {
+    setIsExporting(true);
+    try {
+      const res = await exportCallCenterCacheToJson();
+      toast.success(`Exported ${res.docCount} cache partitions (${Math.round(res.byteSize / 1024)} KB) to JSON!`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Export failed: " + err.message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleRebuildCache = async () => {
     if (!window.confirm("Are you sure you want to force-rebuild the cache document? This will fetch all active contacts and reset the cache.")) {
       return;
     }
     setIsRebuilding(true);
     try {
-      await rebuildCallCenterCache();
+      await rebuildCallCenterCache(false);
       toast.success("Cache document rebuilt successfully!");
       setVerificationResult(null);
     } catch (err) {
@@ -642,24 +713,95 @@ export default function SettingsTab() {
               Validate or force-rebuild the single-document cloud cache used to load the Admin Dashboard and reports in exactly 1 read.
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleExportJson}
+              disabled={isExporting || isVerifying || isRebuilding || isMerging}
+              className="px-4 py-2 border border-emerald-300 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-semibold hover:bg-emerald-100 flex items-center gap-2 disabled:opacity-50 transition-colors"
+              title="Download all partition documents directly as a single JSON file"
+            >
+              {isExporting ? <Loader size={14} className="animate-spin" /> : <Download size={14} />}
+              Export Cache JSON
+            </button>
+            <button
+              onClick={handleMergeOneByOne}
+              disabled={isMerging || isVerifying || isRebuilding || isExporting}
+              className="px-4 py-2 border border-purple-300 bg-purple-50 text-purple-800 rounded-xl text-xs font-semibold hover:bg-purple-100 flex items-center gap-2 disabled:opacity-50 transition-colors"
+              title="Safely merge adjacent partition pairs 1-by-1 up to ~700 KB per doc without triggering index limits"
+            >
+              {isMerging ? <Loader size={14} className="animate-spin" /> : <GitMerge size={14} />}
+              Merge Partitions (1-by-1)
+            </button>
             <button
               onClick={handleVerifyCache}
-              disabled={isVerifying || isRebuilding}
+              disabled={isVerifying || isRebuilding || isExporting || isMerging}
               className="px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 flex items-center gap-2 disabled:opacity-50 transition-colors"
             >
               {isVerifying ? <Loader size={14} className="animate-spin" /> : <RefreshCw size={14} />}
               Verify Cache Health
             </button>
             <button
+              onClick={handleDryRunCache}
+              disabled={isVerifying || isRebuilding || isExporting || isMerging}
+              className="px-4 py-2 border border-amber-300 bg-amber-50 text-amber-800 rounded-xl text-xs font-semibold hover:bg-amber-100 flex items-center gap-2 disabled:opacity-50 transition-colors"
+              title="Test partition building in memory without executing any deletes or writes to Firestore"
+            >
+              {isRebuilding ? <Loader size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              Test Rebuild (Dry Run)
+            </button>
+            <button
               onClick={handleRebuildCache}
-              disabled={isVerifying || isRebuilding}
+              disabled={isVerifying || isRebuilding || isExporting || isMerging}
               className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 flex items-center gap-2 disabled:opacity-50 transition-colors"
             >
               {isRebuilding ? <Loader size={14} className="animate-spin" /> : <RefreshCw size={14} />}
               Force Rebuild Cache
             </button>
           </div>
+        </div>
+
+        {/* Live Partition Inspector & Size Table */}
+        <div className="border border-gray-100 rounded-xl p-4 bg-gray-50/50 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers size={16} className="text-indigo-600" />
+              <span className="text-xs font-bold text-gray-900">Active Firestore Cache Partition Inspector</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-semibold">
+                {partitionsList.length} Partitions Active
+              </span>
+            </div>
+            <button
+              onClick={fetchPartitionsList}
+              disabled={isLoadingPartitions}
+              className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
+            >
+              <RefreshCw size={12} className={isLoadingPartitions ? "animate-spin" : ""} />
+              Refresh
+            </button>
+          </div>
+
+          {isLoadingPartitions ? (
+            <div className="flex items-center justify-center py-6 text-xs text-gray-400 gap-2">
+              <Loader size={16} className="animate-spin text-indigo-500" />
+              Loading active partition metrics...
+            </div>
+          ) : partitionsList.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">No cache partitions detected. Click "Force Rebuild Cache" to initialize.</p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2 pt-1">
+              {partitionsList.map(p => (
+                <div key={p.docId} className="p-2.5 bg-white border border-gray-200 rounded-lg flex flex-col justify-between space-y-1 shadow-xs">
+                  <div className="font-mono text-[11px] font-bold text-gray-800 truncate" title={p.docId}>
+                    {p.docId}
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-gray-500">
+                    <span>{p.count} contacts</span>
+                    <span className="font-semibold text-gray-700">{p.sizeKb} KB</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {verificationResult && (

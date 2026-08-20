@@ -5,7 +5,8 @@ import {
   Phone, ArrowLeft, Plus, Download, Search, ChevronLeft, ChevronRight, ChevronDown,
   Edit3, X, Save, FileText, Calendar, Tag, User, MapPin, MessageSquare,
   Hash, Clock, PhoneOff, CheckCircle2, AlertCircle, Trash2,
-  PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame, SlidersHorizontal, FileSpreadsheet, CheckSquare
+  PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame, SlidersHorizontal, FileSpreadsheet, CheckSquare,
+  Bell, Sparkles, UserCheck
 } from "lucide-react";
 import {
   subscribeToCallLogs, updateCallLog, addIncomingCallLog,
@@ -116,6 +117,93 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       console.error(e);
     }
   }, [hiddenColumns, attenderId]);
+
+  // ── Assisted Notifications Logic (Leads owned by attender but registered by a team member) ──
+  const [readNotifIds, setReadNotifIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`read_notifs_${attenderId}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showNotifPopover, setShowNotifPopover] = useState(false);
+  const notifRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (notifRef.current && !notifRef.current.contains(e.target)) {
+        setShowNotifPopover(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const assistedNotifications = useMemo(() => {
+    if (!attenderName || !callLogs || callLogs.length === 0) return [];
+    
+    const currentAttenderLower = String(attenderName).trim().toLowerCase();
+    const notifications = [];
+
+    callLogs.forEach(log => {
+      if (log._deleted) return;
+
+      const status = getCanonicalStatus(log.status || "");
+      if (status !== "Reg.Done") return;
+
+      let convertedBy = log.convertedBy || "";
+
+      if (!convertedBy && Array.isArray(log.history)) {
+        const regHist = log.history.find(h => getCanonicalStatus(h.status || "") === "Reg.Done");
+        if (regHist && regHist.attenderName) {
+          convertedBy = regHist.attenderName;
+        }
+      }
+      if (!convertedBy && log.attenderStates) {
+        Object.values(log.attenderStates).forEach(st => {
+          if (st && getCanonicalStatus(st.status || "") === "Reg.Done" && st.attenderName) {
+            convertedBy = st.attenderName;
+          }
+        });
+      }
+
+      if (convertedBy && String(convertedBy).trim().toLowerCase() !== currentAttenderLower) {
+        const nameKey = Object.keys(log).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase())) || "Name";
+        const leadName = log[nameKey] || "Lead";
+
+        notifications.push({
+          id: log.id,
+          leadName: leadName,
+          phone: log.Phone || log.phone || log.Mobile || log.mobile || "",
+          convertedBy: convertedBy,
+          program: log["Called For"] || log["Sub Program"] || log.programName || "Program",
+          registeredAt: log.registeredAt || log.lastCalledAt || log.updatedAt || log.createdAt,
+          log: log
+        });
+      }
+    });
+
+    return notifications.sort((a, b) => {
+      const da = parseTimestamp(a.registeredAt) || new Date(0);
+      const db = parseTimestamp(b.registeredAt) || new Date(0);
+      return db - da;
+    });
+  }, [callLogs, attenderName]);
+
+  const unreadNotifCount = useMemo(() => {
+    return assistedNotifications.filter(n => !readNotifIds.includes(n.id)).length;
+  }, [assistedNotifications, readNotifIds]);
+
+  const markAllNotificationsRead = () => {
+    const allIds = assistedNotifications.map(n => n.id);
+    setReadNotifIds(allIds);
+    try {
+      localStorage.setItem(`read_notifs_${attenderId}`, JSON.stringify(allIds));
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const resetOtherFilters = () => {
     setFilterStatus("All");
@@ -1285,6 +1373,12 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           handleGetNumbers={handleGetNumbers}
           isRequesting={isRequesting}
           onTriggerSearch={handleTriggerSearch}
+          assistedNotifications={assistedNotifications}
+          unreadNotifCount={unreadNotifCount}
+          showNotifPopover={showNotifPopover}
+          setShowNotifPopover={setShowNotifPopover}
+          markAllNotificationsRead={markAllNotificationsRead}
+          readNotifIds={readNotifIds}
         />
       </div>
 
@@ -1332,6 +1426,93 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
             >
               My Performance
             </button>
+          </div>
+
+          {/* Assisted Registration Notification Bell */}
+          <div className="relative" ref={notifRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setShowNotifPopover(prev => !prev);
+                if (unreadNotifCount > 0) markAllNotificationsRead();
+              }}
+              className={`p-2 rounded-xl border transition-all flex items-center justify-center relative cursor-pointer ${
+                unreadNotifCount > 0
+                  ? "bg-amber-50 border-amber-300 text-amber-600 hover:bg-amber-100 shadow-xs"
+                  : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+              }`}
+              title="Team Assisted Registrations"
+            >
+              <Bell size={18} className={unreadNotifCount > 0 ? "animate-bounce" : ""} />
+              {unreadNotifCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white font-extrabold text-[10px] w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-xs">
+                  {unreadNotifCount}
+                </span>
+              )}
+            </button>
+
+            {/* Notification Popover Dropdown */}
+            {showNotifPopover && (
+              <div className="absolute left-0 sm:left-auto sm:right-0 mt-2 w-80 sm:w-96 bg-white border border-gray-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fadeIn">
+                <div className="p-3.5 bg-slate-900 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={16} className="text-amber-400" />
+                    <div>
+                      <h3 className="font-extrabold text-xs">Team Assisted Registrations</h3>
+                      <p className="text-[10px] text-slate-300 font-medium">Registrations completed on your leads</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
+                  {assistedNotifications.length === 0 ? (
+                    <div className="p-6 text-center text-gray-400">
+                      <UserCheck size={28} className="mx-auto mb-2 text-gray-300" />
+                      <p className="text-xs font-semibold">No team-assisted registrations yet</p>
+                      <p className="text-[10px] mt-1 text-gray-400">When a team member closes a registration for your assigned lead, it will show up here.</p>
+                    </div>
+                  ) : (
+                    assistedNotifications.map(notif => {
+                      const isRead = readNotifIds.includes(notif.id);
+                      return (
+                        <div
+                          key={notif.id}
+                          onClick={() => {
+                            setEditingRow(notif.log);
+                            setShowNotifPopover(false);
+                          }}
+                          className={`p-3.5 hover:bg-blue-50/60 cursor-pointer transition flex items-start gap-3 ${
+                            !isRead ? "bg-amber-50/40" : ""
+                          }`}
+                        >
+                          <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-extrabold text-xs shrink-0 mt-0.5 shadow-xs">
+                            {notif.convertedBy.charAt(0).toUpperCase()}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-xs font-black text-slate-900 truncate">{notif.leadName}</span>
+                              <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 shrink-0">
+                                +1 Primary Credit
+                              </span>
+                            </div>
+
+                            <p className="text-xs text-slate-600 mt-0.5 leading-snug">
+                              Registered by <span className="font-extrabold text-blue-600">{notif.convertedBy}</span> on your behalf.
+                            </p>
+
+                            <div className="flex items-center justify-between text-[10px] text-gray-400 font-semibold mt-1.5">
+                              <span className="truncate">{notif.program}</span>
+                              <span>{notif.phone}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

@@ -1,0 +1,44 @@
+[
+  {
+    "lastSentHeartbeatDate": "2026-08-13",
+    "heartbeats": [
+      {
+        "date": "2026-08-15",
+        "agent": "fire-core/0.14.10 fire-core-esm2020/0.14.10 fire-js/ fire-fst/4.13.0 fire-fst-esm2020/4.13.0 fire-js-all-app/12.11.0 fire-iid/0.6.21 fire-iid-esm2020/0.6.21 fire-analytics/0.10.21 fire-analytics-esm2020/0.10.21"
+      },
+      {
+        "date": "2026-08-17",
+        "agent": "fire-core/0.14.10 fire-core-esm2020/0.14.10 fire-js/ fire-fst/4.13.0 fire-fst-esm2020/4.13.0 fire-js-all-app/12.11.0 fire-iid/0.6.21 fire-iid-esm2020/0.6.21 fire-analytics/0.10.21 fire-analytics-esm2020/0.10.21"
+      },
+      {
+        "date": "2026-08-18",
+        "agent": "fire-core/0.14.10 fire-core-esm2020/0.14.10 fire-js/ fire-fst/4.13.0 fire-fst-esm2020/4.13.0 fire-js-all-app/12.11.0 fire-iid/0.6.21 fire-iid-esm2020/0.6.21 fire-analytics/0.10.21 fire-analytics-esm2020/0.10.21"
+      },
+      {
+        "date": "2026-08-19",
+        "agent": "fire-core/0.14.10 fire-core-esm2020/0.14.10 fire-js/ fire-fst/4.13.0 fire-fst-esm2020/4.13.0 fire-js-all-app/12.11.0 fire-iid/0.6.21 fire-iid-esm2020/0.6.21 fire-analytics/0.10.21 fire-analytics-esm2020/0.10.21"
+      },
+      {
+        "date": "2026-08-20",
+        "agent": "fire-core/0.14.10 fire-core-esm2020/0.14.10 fire-js/ fire-fst/4.13.0 fire-fst-esm2020/4.13.0 fire-js-all-app/12.11.0 fire-iid/0.6.21 fire-iid-esm2020/0.6.21 fire-analytics/0.10.21 fire-analytics-esm2020/0.10.21"
+      }
+    ]
+  },
+  {
+    "fid": "fOeaBZkfdnwXJRk9xF8-3s",
+    "registrationStatus": 2,
+    "refreshToken": "3_AS3qfwKlOuAoRB9iaLcwBVjhcqXuzdZ7N2XzYBZ4iJsuAJLAbyYQf1-YosSCt5FnqouAE1hX804lfjgKfjFm050rPoWH0cGHcyJQ9Yu6xszBFg",
+    "authToken": {
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhcHBJZCI6IjE6NTYxNDE4MjI1MjQ0OndlYjo2ODMyNGFjY2Q1ZDNjNzE2MzZjODk5IiwiZXhwIjoxNzg3MjE3ODQxLCJmaWQiOiJmT2VhQlprZmRud1hKUms5eEY4LTNzIiwicHJvamVjdE51bWJlciI6NTYxNDE4MjI1MjQ0fQ.AB2LPV8wRgIhAPDb7YBcSkA3Y1ERrkNKtnufimtpYr1JzgNN-tP_uh9YAiEArp0lbo4FL_k9v0oprJ3iUg_ZA3MBPOb9E5X_32UaNIs",
+      "requestStatus": 2,
+      "expiresIn": 604800000,
+      "creationTime": 1786613030013
+    }
+  },
+  {
+    "clientId": "csbbJvuFQ3tyyxRjuN3U",
+    "updateTimeMs": 1787212986078,
+    "networkEnabled": true,
+    "inForeground": true
+  }
+]

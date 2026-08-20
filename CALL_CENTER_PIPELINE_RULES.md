@@ -317,60 +317,106 @@ We minimize the caller's dropdown options down to **only 5 primary options**. Th
 ### Automated Pipeline Setup Function (Code Blueprint)
 
 ```javascript
+## 8. Automated Pipeline Transition Engine (Zero Attender Pipeline Control)
+
+### Core Architectural Principle
+Attenders **NEVER** select or control pipeline stages manually. Attenders only log simple real-world **Call Outcomes / Statuses** (`Unanswered`, `Info Given`, `reminder`, `Reg.Done`, `Not Interested`, `Invalid No`).
+
+The **Software Engine** automatically calculates, advances, and locks the **Pipeline Stage** behind the scenes using the following 8 deterministic cases:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       ATTENDER ACTION: LOG CALL OUTCOME                      │
+│       (Selects simple status: Unanswered, Info Given, Reg.Done, etc.)        │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │
+                         SOFTWARE ENGINE EVALUATION (RULES)
+                                       │
+┌──────────────────────────────────────▼──────────────────────────────────────┐
+│  Case 1: Fresh Import                  ➔ STAGE 1: New Lead                   │
+│  Case 2: 1-4 Unanswered Dials          ➔ STAGE 2: Attempting Contact         │
+│  Case 3: 5 Consecutive Failed Dials    ➔ STAGE: Closed / Invalid (5x Rule)    │
+│  Case 4: Spoke & Info Shared           ➔ STAGE 3: In Discussion              │
+│  Case 5: Callback Date/Time Scheduled  ➔ STAGE 4: Follow-Up Scheduled          │
+│  Case 6: Registration Completed        ➔ STAGE 5: Registered / Won           │
+│  Case 7: Bad Number / Explicit Refusal ➔ STAGE: Closed / Invalid             │
+│  Case 8: Shivir Done in Past           ➔ STAGE: Existing Alumni              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 📋 Detailed Automated System Cases
+
+| Case # | Trigger Event / Status Logged | Underlying System Logic & Conditions | Software Automated Pipeline Stage |
+| :---: | :--- | :--- | :--- |
+| **Case 1** | Fresh Lead Import | `attemptCount == 0` AND never dialed. | **`1. New Lead`** |
+| **Case 2** | `Unanswered / Unreachable` | `attemptCount` increments (+1). Total dials = 1 to 4. Lead never reached `In Discussion`. | **`2. Attempting Contact`** |
+| **Case 3** | `Unanswered / Unreachable` (5th dial) | `attemptCount >= 5` with zero successful connections. | **`Closed / Invalid`**<br>*(Reason: Automated 5x Unanswered)* |
+| **Case 4** | `Info Given` or `Next time` | Live call connected, pitch made. Stage becomes sticky so 1-3 subsequent unanswered calls don't drop lead back. Sub-badge shows `🚨 2-3 Unanswered Follow-ups`. | **`3. In Discussion`**<br>*(Sticky Stage)* |
+| **Case 4B** | `Unanswered` (3-4x after Info Given) | If lead does not answer 4-5 consecutive follow-up dials after receiving info, software auto-moves them to Stale pool. | **`Closed / Unresponsive`**<br>*(Stale Nurture Pool)* |
+| **Case 5** | `reminder` (With Date & Time) | `callbackDate != null` AND `callbackStatus == "pending"`. System enforces Date/Time lock. | **`4. Follow-Up Scheduled`** |
+| **Case 6** | `Reg.Done` | Payment verified / Abhivyakti enrolled. Lead owner awarded +1 Sales Credit. | **`5. Registered / Won`** |
+| **Case 7** | `Invalid / Wrong Number` OR `Not Interested` | Bad line or explicit opt-out. Instantly purged from active queues. | **`Closed / Invalid`**<br>*(Reason: Bad Number / Opt-Out)* |
+| **Case 8** | `Already Reg.d` / `Shivir done` | Completed Shivir previously. Parked as Alumni with 0 sales credit. | **`Existing Alumni`** |
+
+---
+
+### ⚙️ Automated Pipeline Evaluator Function (Code Reference)
+
+```javascript
 /**
- * Automatically sets and drives the pipeline stage based on streamlined caller outcome.
+ * Software Engine: Automatically calculates and assigns the Pipeline Stage.
+ * Zero manual pipeline intervention by attenders.
  */
-export function processAutomatedPipeline(lead, selectedOutcome, callbackTask = null) {
-  const updatedLead = { ...lead };
+export function calculateAutomatedPipelineStage(lead, latestCallOutcome, callbackDetails = null) {
+  const currentAttempts = (lead.attemptCount || 0) + (isUnconnected(latestCallOutcome) ? 1 : 0);
 
-  // 1. Registered / Won
-  if (selectedOutcome === "Registered / Won") {
-    updatedLead.pipelineStage = "Registered / Won";
-    updatedLead.closedReason = null;
-    return updatedLead;
+  // Case 6: Registered / Won
+  if (latestCallOutcome === "Reg.Done") {
+    return { stage: "Registered / Won", credit: true };
   }
 
-  // 2. Permanent Fails -> Closed / Invalid
-  if (selectedOutcome === "Invalid / Not Interested") {
-    updatedLead.pipelineStage = "Closed / Invalid";
-    updatedLead.closedReason = "Marked Invalid/Not Interested by Attender";
-    return updatedLead;
+  // Case 8: Existing Alumni
+  if (latestCallOutcome === "Already Reg.d" || latestCallOutcome === "Shivir done") {
+    return { stage: "Existing Alumni", credit: false };
   }
 
-  // 3. Callback -> Follow-Up Scheduled
-  if (selectedOutcome === "Connected: Callback Requested") {
-    if (!callbackTask?.date || !callbackTask?.time) {
-      throw new Error("Validation Error: Please specify callback Date & Time.");
+  // Case 7: Invalid / Wrong Number or Not Interested
+  if (["Invalid No", "Wrong No", "Called by mistake", "Not possible"].includes(latestCallOutcome)) {
+    return { stage: "Closed / Invalid", reason: "Invalid / Bad Number" };
+  }
+  if (latestCallOutcome === "Not Interested") {
+    return { stage: "Closed / Invalid", reason: "Not Interested" };
+  }
+
+  // Case 5: Follow-Up Scheduled (Callback)
+  if (latestCallOutcome === "reminder" || callbackDetails?.date) {
+    if (!callbackDetails?.date) {
+      throw new Error("Validation Error: Callback requires a valid Date & Time task.");
     }
-    updatedLead.pipelineStage = "Follow-Up Scheduled";
-    updatedLead.callbackDate = callbackTask.date;
-    updatedLead.callbackTime = callbackTask.time;
-    updatedLead.callbackStatus = "pending";
-    return updatedLead;
+    return { stage: "Follow-Up Scheduled", callbackDate: callbackDetails.date };
   }
 
-  // 4. Info Given -> In Communication
-  if (selectedOutcome === "Connected: Info Given") {
-    updatedLead.pipelineStage = "In Communication";
-    return updatedLead;
+  // Case 4: In Discussion (Sticky Stage)
+  if (["Info Given", "Next time"].includes(latestCallOutcome) || lead.pipelineStage === "In Discussion") {
+    return { stage: "In Discussion" }; // Keeps stage sticky even if current call is unanswered
   }
 
-  // 5. Unanswered / Temporary Fail -> 5-Attempt Rule
-  if (selectedOutcome === "Unanswered / Unreachable") {
-    const attempts = (updatedLead.attemptCount || 0) + 1;
-    updatedLead.attemptCount = attempts;
-
-    if (attempts >= 5) {
-      updatedLead.pipelineStage = "Closed / Invalid";
-      updatedLead.closedReason = "Automated: 5 Unanswered Dials";
-    } else {
-      updatedLead.pipelineStage = "Attempting Contact";
-    }
-    return updatedLead;
+  // Case 3: 5-Attempt Auto Purge Rule
+  if (currentAttempts >= 5) {
+    return { stage: "Closed / Invalid", reason: "Automated 5x Unanswered Dials" };
   }
 
-  return updatedLead;
+  // Case 2: Attempting Contact
+  if (currentAttempts >= 1) {
+    return { stage: "Attempting Contact", attemptCount: currentAttempts };
+  }
+
+  // Case 1: New Lead Default
+  return { stage: "New Lead" };
 }
+```
 ```
 
 ### 8.1 Status Definitions & Operational Clarifications
@@ -551,20 +597,89 @@ To ensure zero leads are lost and no system loopholes exist, the software enforc
 - **Scenario**: An attender schedules a callback task for `10:00 AM`, but forgets or is absent.
 - **Rule**: If a callback task is overdue by **> 24 hours**, the lead auto-flags as `🚨 Overdue Task` on Akash's Admin Dashboard and can be reassigned with 1 click.
 
-### 10.3 Safeguard 3: Inbound Call Re-Activation
-- **Scenario**: A lead was auto-closed after 5 unanswered dials (`Closed / Invalid`), but calls the center back 2 weeks later.
-- **Rule**: An incoming call from any `Closed / Invalid` lead **automatically re-opens** the record and places it into **`In Discussion`** or **`Query Desk`**.
+### 10.3 Safeguard 3: Inbound Call Re-Activation & Desk Helpline Handoff
+
+#### The Real-World Scenario:
+1. Lead was auto-closed after 5 failed dials or 4 unanswered follow-ups ➔ **`Closed / Unresponsive`**.
+2. Two weeks later, the lead calls the main helpline / desk number.
+3. **Attender B** (desk agent on duty) picks up the call.
+
+#### System Automated Workflow:
+```text
+[Incoming Desk Call from Closed Lead]
+                 │
+                 ▼
+ 🤖 1. Software Auto-Detects Number in Closed State
+                 │
+                 ▼
+ 🤖 2. Auto-Reopens Lead ➔ Stage: "In Discussion" (or Query Desk)
+                 │
+                 ▼
+ 🤖 3. Attender B Logs Outcome: "Reg.Done"
+                 │
+                 ├──────────────────────────────────────┐
+                 ▼                                      ▼
+   Primary Lead Owner (Attender A)         Desk Agent (Attender B)
+   +1 Primary Sales Conversion Credit      Logged in "Team Assists" Table
+   + Notification Bell Triggered           (convertedBy = "Attender B")
+```
+
+#### Key Safeguard Rules:
+* **Instant Auto-Reopen:** The lead NEVER remains blocked or hidden in `Closed`. The moment the incoming call is answered, the system instantly restores it to **`In Discussion`**.
+* **Zero Ownership Loss:** Attender A retains primary ownership credit for their historical nurturing.
+* **Full Handoff Transparency:** Attender B gets explicit credit under **Team Assists** for answering the helpline call and completing the registration.
 
 ### 10.4 Safeguard 4: Sales Credit Refund Adjustment
 - **Scenario**: A lead is marked `Reg.Done` (Converted / Won), but requests a refund or payment fails later.
 - **Rule**: Admin updates stage to `Closed / Refunded`, which automatically adjusts the attender's monthly sales conversion tally to preserve reporting integrity.
 
+---
 
+## 11. Data Hygiene: Strict Preservation of Original Source vs. Call Campaign
 
+### 11.1 The Core Problem Solved
+When attenders call past participants of a Shivir (e.g. `CBT Basic`) to pitch an advanced program (e.g. `CBT Advance`), they previously selected `Source = CBT Basic`. In a single-source database, this overwrote and permanently erased the true initial acquisition channel (e.g., `Instagram Ad`), destroying marketing ROI analytics.
 
+---
 
+### 11.2 Database Schema Architecture
 
+To prevent data corruption while supporting both marketing attribution and Shivir upsell tracking, the lead record strictly maintains **Two Core Field Layers**:
 
+| Field Name | Data Type & Mutability | Purpose & Business Logic |
+| :--- | :--- | :--- |
+| **`original_source`** | `String` **(🔒 Immutable / Locked)** | Set **ONLY ONCE** when the lead first enters the database (e.g., `Instagram Ad`, `Website`, `Facebook`). Locked against routine edits or call logs. |
+| **`called_for`** | `String` **(✏️ Dynamic per Call)** | The specific Shivir program being pitched on the **current** call attempt (e.g., `CBT Advance`). |
+| **`call_history`** | `Array of Call Log Objects` | Appends a timestamped log for **every** call entry: contains `{ timestamp, attenderId, campaignSource, calledFor, status }`. |
 
+---
 
+### 11.3 Operational "Add Call Entry" Attender Workflow
 
+Attenders log calls using the standard **"Add Call Entry"** modal with two clean dropdowns:
+
+1. **Source / Campaign Origin Dropdown:** Pre-filled or selected by attender (e.g. `Past Shivir List - CBT Basic`).
+2. **Called For Dropdown:** Selected by attender for current pitch (e.g. `CBT Advance`).
+
+#### Execution Path:
+```text
+Lead Created (original_source: "Instagram") 
+  ➔ Call 1 Logged: Source: "Instagram" | Called For: "CBT Basic" ➔ Status: Reg.Done
+  ➔ Call 2 Logged: Source: "CBT Basic"   | Called For: "CBT Advance" ➔ Status: Reg.Done
+```
+
+---
+
+### 11.4 Double-Reporting Analytics Capability
+
+With this architecture, the CRM instantly generates two completely isolated, high-value reports:
+
+1. **Master Marketing Attribution Report:**
+   * Reads `original_source`.
+   * Tells management exact total revenue and registrations originating from `Instagram Ads`, `Facebook Ads`, or `Helpline`.
+   * **Result:** Initial ad source is 100% preserved forever.
+
+2. **Shivir Upsell & Progression Funnel:**
+   * Reads `call_history` records.
+   * Tells management exact conversion rates between programs: e.g., *"How many CBT Basic graduates converted into CBT Advance?"*
+   * **Result:** Attenders and managers get accurate campaign upsell data without corrupting marketing metrics.

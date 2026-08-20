@@ -1,6 +1,7 @@
 import React from "react";
 import {
-  ArrowLeft, Search, Plus, MapPin, PhoneOutgoing, Flame, Clock, CheckCircle2, AlertCircle
+  ArrowLeft, Search, Plus, MapPin, PhoneOutgoing, Flame, Clock, CheckCircle2, AlertCircle,
+  Bell, Sparkles, UserCheck
 } from "lucide-react";
 import { formatContactName } from "../utils";
 import { AttenderFilters } from "../components/AttenderFilters";
@@ -64,9 +65,30 @@ export default function MobileAttenderView({
   stats,
   programs,
   selectedProgramId,
-  setSelectedProgramId
+  setSelectedProgramId,
+  assistedNotifications = [],
+  unreadNotifCount = 0,
+  showNotifPopover = false,
+  setShowNotifPopover = () => {},
+  markAllNotificationsRead = () => {},
+  readNotifIds = []
 }) {
   const [displayCount, setDisplayCount] = React.useState(30);
+  const mobileNotifRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (mobileNotifRef.current && !mobileNotifRef.current.contains(e.target)) {
+        setShowNotifPopover(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [setShowNotifPopover]);
 
   React.useEffect(() => {
     setDisplayCount(30);
@@ -98,6 +120,73 @@ export default function MobileAttenderView({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Notification Bell Icon */}
+          <div className="relative" ref={mobileNotifRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setShowNotifPopover(prev => !prev);
+                if (unreadNotifCount > 0) markAllNotificationsRead();
+              }}
+              className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition relative"
+              title="Team Assisted Registrations"
+            >
+              <Bell size={18} />
+              {unreadNotifCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white font-extrabold text-[9px] w-4 h-4 rounded-full flex items-center justify-center border border-emerald-900 shadow-xs">
+                  {unreadNotifCount}
+                </span>
+              )}
+            </button>
+
+            {/* Mobile Notification Dropdown Popover */}
+            {showNotifPopover && (
+              <div className="absolute right-0 mt-2 w-72 bg-white text-slate-800 border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden text-left">
+                <div className="p-3 bg-slate-900 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles size={14} className="text-amber-400" />
+                    <div>
+                      <h3 className="font-extrabold text-xs">Team Assists</h3>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                  {assistedNotifications.length === 0 ? (
+                    <div className="p-4 text-center text-slate-400">
+                      <UserCheck size={24} className="mx-auto mb-1 text-slate-300" />
+                      <p className="text-xs font-semibold">No team assists yet</p>
+                    </div>
+                  ) : (
+                    assistedNotifications.map(notif => {
+                      const isRead = readNotifIds.includes(notif.id);
+                      return (
+                        <div
+                          key={notif.id}
+                          onClick={() => {
+                            setEditingRow(notif.log);
+                            setShowNotifPopover(false);
+                          }}
+                          className={`p-3 hover:bg-slate-50 cursor-pointer transition ${!isRead ? "bg-amber-50/50" : ""}`}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-xs font-bold text-slate-900 truncate">{notif.leadName}</span>
+                            <span className="text-[8px] font-extrabold text-emerald-700 bg-emerald-100 px-1 py-0.5 rounded shrink-0">
+                              +1 Credit
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-600 mt-0.5">
+                            Registered by <span className="font-bold text-blue-600">{notif.convertedBy}</span>
+                          </p>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             onClick={() => setGlobalSearchOpen(true)}

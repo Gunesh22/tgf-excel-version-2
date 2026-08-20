@@ -273,7 +273,6 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
                 index
               );
               if (att) {
-                console.log(`[DashboardTab HISTORY ITEM] Contact: "${contactName}" | attId: "${attId}" | h.status: "${h.status}" | h.timestamp: ${h.timestamp} -> attemptDate: ${att.updatedAt ? new Date(att.updatedAt).toISOString() : 'N/A'}`);
                 logAttempts.push(att);
               }
             });
@@ -303,7 +302,6 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
                 false
               );
               if (att) {
-                console.log(`[DashboardTab STATE ITEM] Contact: "${contactName}" | attId: "${attId}" | state.status: "${state.status}" | state.lastCalledAt: ${state.lastCalledAt} -> attemptDate: ${att.updatedAt ? new Date(att.updatedAt).toISOString() : 'N/A'}`);
                 logAttempts.push(att);
               }
             }
@@ -344,7 +342,6 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
               index
             );
             if (att) {
-              console.log(`[DashboardTab TOP HISTORY ITEM] Contact: "${contactName}" | h.status: "${h.status}" | h.timestamp: ${dateVal} -> attemptDate: ${att.updatedAt ? new Date(att.updatedAt).toISOString() : 'N/A'}`);
               logAttempts.push(att);
             }
           }
@@ -379,7 +376,6 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
             0
           );
           if (att) {
-            console.log(`[DashboardTab TOP LOG ITEM] Contact: "${contactName}" | log.status: "${log.status}" | log.lastCalledAt: ${log.lastCalledAt} -> attemptDate: ${att.updatedAt ? new Date(att.updatedAt).toISOString() : 'N/A'}`);
             logAttempts.push(att);
           }
         }
@@ -463,10 +459,6 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       if (dateTo && logDate > new Date(dateTo + "T23:59:59")) return false;
 
       return true;
-    });
-    console.log(`[DashboardTab DEBUG] flattenedLogs total:`, flattenedLogs.length, `-> filteredLogs:`, res.length, `(Date range: ${dateFrom} to ${dateTo}, Attenders: ${selectedAttenderIds.join(",")})`);
-    res.forEach((log, idx) => {
-      console.log(`  #${idx+1} [DashboardTab MATCH] ${log.Name} (${log.Phone}) | Status: "${log.status}" | attenderId: "${log.attenderId}" | lastCalledAt: ${log.lastCalledAt} | createdAt: ${log.createdAt} | updatedAt(background): ${log.updatedAt}`);
     });
     return res;
   }, [flattenedLogs, selectedProgramIds, selectedAttenderIds, selectedSources, selectedCalledFors, selectedStatuses, selectedCallTypes, selectedKhojiStatuses, dateFrom, dateTo, programs, attenders]);

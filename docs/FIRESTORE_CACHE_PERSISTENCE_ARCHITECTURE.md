@@ -122,14 +122,35 @@ To prevent duplicate subscriptions when switching tabs inside the application, `
 | **Navigating Between App Pages** | **0 Reads** | 0 Writes |
 | **Saving / Editing a Call Log** | **0 Reads** | **2 Writes** |
 | **Adding a Brand-New Lead** | **0 Reads** | **2 Writes** |
+| **Bulk Lead Queue Assignment** | **1 Read per chunk** | **1 Batch Write per chunk** |
 
 ---
 
-## 🛠️ 7. Maintenance & Code References
+## ⚡ 7. Core Read & Write Optimization Pillars
+
+1. **Stale-While-Revalidate Caching (0ms Load Times)**
+   * All call logs and contacts load **instantly (0ms)** from browser memory / IndexedDB (`globalActivePartitionsCache`). Real-time WebSocket subscriptions only sync incoming delta updates.
+
+2. **Deduplicated Singleton Listeners (`activeSnapshotRegistry`)**
+   * Eliminates duplicate listeners when attenders toggle views. Keeps active snapshot channels warm during page navigation (with a 30-second grace period) to prevent connection re-initialization.
+
+3. **Batched & Chunked Writes (`writeBatch` & `runTransaction`)**
+   * Bulk processes like lead distribution (`assignContactsToAttender`), Excel sheet imports (`importContacts`), and tag remapping (`remapProgramContacts`) are chunked into 200–499 operations per transaction.
+
+4. **Partitioned Historical Data Storage**
+   * Archives historical logs into monthly partition chunks (`call_logs_YYYY-MM_partX`). Prevents full historical data re-fetches during daily operation.
+
+5. **Selective Atomic Field Updates**
+   * Uses targeted Firestore updates (`updateDoc`, `setDoc` with `{ merge: true }`, `arrayUnion`) so only modified attributes (`status`, `remark`, `callbackDate`) are written without re-transmitting entire documents.
+
+---
+
+## 🛠️ 8. Maintenance & Code References
 
 * **Primary Logic File:** `src/lib/db.js`
   * `updateContactInActiveCache()` — Partition lookup, 850 KB size check, overflow shift.
   * `subscribeToCallLogs()` — Singleton snapshot manager & IndexedDB sync.
+  * `assignContactsToAttender()` — Transactional batched lead queue assignments.
   * `rebuildCacheCollection()` — Background partition builder.
 * **Firebase Config File:** `src/lib/firebase.js`
   * `persistentLocalCache` configuration for multi-tab disk caching.
