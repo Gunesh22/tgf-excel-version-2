@@ -72,18 +72,18 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
     loadMonths();
   }, []);
 
-  // Hoisted subscription to registrations — month-scoped and cached in IndexedDB
+  // Hoisted subscription to registrations — ALL months scope cached in IndexedDB
   useEffect(() => {
-    if (activeTab !== "abhivyakti" || !selectedMonth) return;
+    if (activeTab !== "abhivyakti") return;
     setRegistrationsLoading(true);
-    const unsubRegs = subscribeToRegistrations(selectedMonth, (data) => {
+    const unsubRegs = subscribeToRegistrations("ALL", (data) => {
       setRegistrations(data);
       setRegistrationsLoading(false);
     });
     return () => {
       if (unsubRegs) unsubRegs();
     };
-  }, [activeTab, selectedMonth]);
+  }, [activeTab]);
 
   const loadAll = async () => {
     setIsLoading(true);

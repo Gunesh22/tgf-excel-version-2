@@ -3899,8 +3899,7 @@ export const verifyCallCenterCache = async () => {
       const addIfValidMonth = (ts) => {
         if (!ts) return;
         try {
-          const dt = ts.toDate ? ts.toDate() : (ts.toMillis ? new Date(ts.toMillis()) : new Date(ts));
-          const m = getMonthStr(dt);
+          const m = getMonthStr(ts);
           if (m) contactMonths.add(m);
         } catch (e) {}
       };
@@ -3975,14 +3974,20 @@ export const verifyCallCenterCache = async () => {
           return;
         }
         
-        if (liveC.status !== cacheC.status) {
-          mismatches.push(`Month ${month}, Contact ${id} status mismatch: Live "${liveC.status}" vs Cached "${cacheC.status}"`);
+        const liveStatus = liveC.status || "";
+        const cacheStatus = cacheC.status || "";
+        if (liveStatus !== cacheStatus) {
+          mismatches.push(`Month ${month}, Contact ${id} status mismatch: Live "${liveStatus}" vs Cached "${cacheStatus}"`);
         }
-        if (liveC.source !== cacheC.source) {
-          mismatches.push(`Month ${month}, Contact ${id} source mismatch: Live "${liveC.source}" vs Cached "${cacheC.source}"`);
+        const liveSource = liveC.Source || liveC.source || "";
+        const cacheSource = cacheC.Source || cacheC.source || "";
+        if (liveSource !== cacheSource) {
+          mismatches.push(`Month ${month}, Contact ${id} source mismatch: Live "${liveSource}" vs Cached "${cacheSource}"`);
         }
-        if (liveC.calledFor !== cacheC.calledFor) {
-          mismatches.push(`Month ${month}, Contact ${id} calledFor mismatch: Live "${liveC.calledFor}" vs Cached "${cacheC.calledFor}"`);
+        const liveCalledFor = liveC["Called For"] || liveC.calledFor || "";
+        const cacheCalledFor = cacheC["Called For"] || cacheC.calledFor || "";
+        if (liveCalledFor !== cacheCalledFor) {
+          mismatches.push(`Month ${month}, Contact ${id} calledFor mismatch: Live "${liveCalledFor}" vs Cached "${cacheCalledFor}"`);
         }
         
         const liveHistoryLen = (liveC.history || []).length;

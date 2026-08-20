@@ -891,8 +891,16 @@ export default function AbhivyaktiTab({
               const lastDayStr = `${yr}-${String(mn + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
               const isThisMonthSelected = dateFrom === firstDayStr && dateTo === lastDayStr;
 
+              const prevMnObj = new Date(yr, mn - 1, 1);
+              const prevYr = prevMnObj.getFullYear();
+              const prevMn = prevMnObj.getMonth();
+              const prevFirstDayStr = `${prevYr}-${String(prevMn + 1).padStart(2, "0")}-01`;
+              const prevLastDay = new Date(prevYr, prevMn + 1, 0).getDate();
+              const prevLastDayStr = `${prevYr}-${String(prevMn + 1).padStart(2, "0")}-${String(prevLastDay).padStart(2, "0")}`;
+              const isLastMonthSelected = dateFrom === prevFirstDayStr && dateTo === prevLastDayStr;
+
               return (
-                <div className="flex gap-2 ml-2">
+                <div className="flex flex-wrap items-center gap-2 ml-2">
                   <button
                     onClick={() => {
                       setDateFrom(todayStr);
@@ -918,6 +926,19 @@ export default function AbhivyaktiTab({
                     }`}
                   >
                     📅 This Month
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDateFrom(prevFirstDayStr);
+                      setDateTo(prevLastDayStr);
+                    }}
+                    className={`px-3 py-1.5 rounded-2xl text-xs font-black border transition-all duration-200 cursor-pointer ${
+                      isLastMonthSelected
+                        ? "bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-600/20 scale-[1.03]"
+                        : "bg-blue-50 text-blue-600 border-blue-100 hover:bg-blue-100/80 hover:scale-[1.01]"
+                    }`}
+                  >
+                    📅 Last Month
                   </button>
                 </div>
               );
