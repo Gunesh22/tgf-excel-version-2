@@ -1,9 +1,9 @@
 import {
   collection, addDoc, getDocs, getDoc, doc, setDoc,
-  updateDoc, deleteDoc, query, where, or, and,
+  updateDoc, deleteDoc, query, where,
   serverTimestamp, writeBatch, onSnapshot,
-  limit, Timestamp, runTransaction, arrayUnion, arrayRemove, orderBy,
-  deleteField, increment, startAfter, documentId, getCountFromServer
+  limit, Timestamp, orderBy,
+  deleteField, documentId
 } from "firebase/firestore";
 import { db } from "./firebase.js";
 import { isKhojiField } from "./khojiHelper.js";
@@ -26,7 +26,7 @@ export const formatContactName = (name) => {
 // ─────────────────────────────────────────────
 // IGNORED FIELDS DEFINITIONS
 // ─────────────────────────────────────────────
-const IGNORED_FIELDS = [
+const IGNORED_FIELDS = new Set([
   "consent", "consent in hindi", "current date", "current_date",
   "21day current date", "21day_current date", "21day challenge day", "21day_challenge_day",
   "date added", "date_added", "program name", "razorpay", "program payment status",
@@ -74,30 +74,48 @@ const IGNORED_FIELDS = [
   "फोटोग्राफी और वीडियो शूटिंग", "photography & video shooting", "वीडियो एडिटिंग", "video editing",
   "वेबसाइट और लैंडिंग पेज", "website & landing page",
   "date", "content", "enter trainer name", "how would you like to attend the shivir", "how would you like to attend"
-];
+]);
 
 const isIgnoredField = (key) => {
   if (!key) return true;
   const k = key.toLowerCase().trim().replace(/_/g, " ");
-  return IGNORED_FIELDS.some(ignored => {
-    // Only allow substring matching for longer ignored terms,
-    // require exact match for short terms like "date" and "content" to prevent blocking valid fields like "Registration Date"
-    if (ignored === "date" || ignored === "content") {
-      return k === ignored;
+  if (IGNORED_FIELDS.has(k)) return true;
+  for (const ignored of IGNORED_FIELDS) {
+    if (ignored !== "date" && ignored !== "content" && k.includes(ignored)) {
+      return true;
     }
-    return k === ignored || k.includes(ignored);
-  });
+  }
+  return false;
 };
 
 // ─────────────────────────────────────────────
 // PROGRAMS (Folders)
 // ─────────────────────────────────────────────
 
+let inMemoryActiveTags = null;
+
 // ACTIVE TAGS METADATA
-export const getActiveTags = async () => {
+export const getActiveTags = async (forceRefresh = false) => {
+  if (!forceRefresh && Array.isArray(inMemoryActiveTags) && inMemoryActiveTags.length > 0) {
+    return inMemoryActiveTags;
+  }
+
+  if (!forceRefresh) {
+    try {
+      const cached = await getIDBCache("tgf_cached_active_tags");
+      if (Array.isArray(cached) && cached.length > 0) {
+        inMemoryActiveTags = cached;
+        return cached;
+      }
+    } catch (e) {}
+  }
+
   try {
     const snap = await getDocs(collection(db, "activeTags"));
-    return snap.docs.map(d => d.id).sort();
+    const tags = snap.docs.map(d => d.id).sort();
+    inMemoryActiveTags = tags;
+    setIDBCache("tgf_cached_active_tags", tags).catch(() => {});
+    return tags;
   } catch (e) {
     console.error("Failed to get active tags:", e);
     return [];
@@ -110,12 +128,21 @@ export const registerActiveTag = async (tag) => {
   if (!tag) return;
   const cleanTag = tag.trim();
   if (!cleanTag || registeredTagsCache.has(cleanTag)) return;
+  try {
+    if (typeof window !== "undefined" && localStorage.getItem(`tgf_tag_reg_${cleanTag}`)) {
+      registeredTagsCache.add(cleanTag);
+      return;
+    }
+  } catch (e) {}
+
   registeredTagsCache.add(cleanTag);
   try {
     await setDoc(doc(db, "activeTags", cleanTag), {
       name: cleanTag,
       createdAt: serverTimestamp()
     }, { merge: true });
+    try { localStorage.setItem(`tgf_tag_reg_${cleanTag}`, "1"); } catch (e) {}
+    inMemoryActiveTags = null;
     console.log("%c⚡ [FIRESTORE WRITE - Active Tag]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Registered tag in "activeTags": ${cleanTag}`);
   } catch (e) {
     registeredTagsCache.delete(cleanTag);
@@ -126,6 +153,7 @@ export const registerActiveTag = async (tag) => {
 export const removeActiveTag = async (tag) => {
   if (!tag) return;
   try {
+    inMemoryActiveTags = null;
     await deleteDoc(doc(db, "activeTags", tag.trim()));
   } catch (e) {
     console.error("Failed to remove active tag:", e);
@@ -340,6 +368,9 @@ export const ensureIncomingProgram = async () => {
   if (incomingProgramEnsured) return;
   incomingProgramEnsured = true;
   await registerActiveTag("Incoming Calls");
+  try {
+    if (typeof window !== "undefined" && localStorage.getItem("tgf_prog_ensured_incoming")) return;
+  } catch (e) {}
   const ref = doc(db, "programs", INCOMING_PROGRAM_ID);
   await setDoc(ref, {
     name: INCOMING_PROGRAM_NAME,
@@ -347,6 +378,7 @@ export const ensureIncomingProgram = async () => {
     contactCount: 0,
     createdAt: serverTimestamp(),
   }, { merge: true });   // merge:true so we never overwrite existing data
+  try { localStorage.setItem("tgf_prog_ensured_incoming", "1"); } catch (e) {}
 };
 
 // Upsert the Outgoing Calls program document — safe to call multiple times
@@ -354,6 +386,9 @@ export const ensureOutgoingProgram = async () => {
   if (outgoingProgramEnsured) return;
   outgoingProgramEnsured = true;
   await registerActiveTag("Outgoing Calls");
+  try {
+    if (typeof window !== "undefined" && localStorage.getItem("tgf_prog_ensured_outgoing")) return;
+  } catch (e) {}
   const ref = doc(db, "programs", OUTGOING_PROGRAM_ID);
   await setDoc(ref, {
     name: OUTGOING_PROGRAM_NAME,
@@ -361,6 +396,7 @@ export const ensureOutgoingProgram = async () => {
     contactCount: 0,
     createdAt: serverTimestamp(),
   }, { merge: true });   // merge:true so we never overwrite existing data
+  try { localStorage.setItem("tgf_prog_ensured_outgoing", "1"); } catch (e) {}
 };
 
 export const getPrograms = async () => {
@@ -768,16 +804,7 @@ const cleanImportRow = (row) => {
 // ─────────────────────────────────────────────
 // CONTACTS (MASTER POOL - FLAT DOCUMENT MODEL)
 // ─────────────────────────────────────────────
-export const importContacts = async (param1, param2, param3, param4 = null) => {
-  let tag = param1;
-  let rows = param2;
-  if (param3 !== undefined) {
-    // Old signature: (programId, programName, rows, subPrograms)
-    // Here, programName (param2) acts as the tag, and rows (param3) contains the contacts
-    tag = param2;
-    rows = param3;
-  }
-
+export const importContacts = async (tag, rows) => {
   const MAX_BATCH_OPS = 499;
   let imported = 0;
   
@@ -1133,7 +1160,32 @@ export const generateRandomPassword = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-export const getAttenders = async () => {
+let inMemoryAttenders = null;
+
+export const invalidateAttendersCache = () => {
+  inMemoryAttenders = null;
+  try {
+    if (typeof window !== "undefined" && window.indexedDB) {
+      setIDBCache("tgf_cached_attenders", null).catch(() => {});
+    }
+  } catch (e) {}
+};
+
+export const getAttenders = async (forceRefresh = false) => {
+  if (!forceRefresh && Array.isArray(inMemoryAttenders) && inMemoryAttenders.length > 0) {
+    return inMemoryAttenders;
+  }
+
+  if (!forceRefresh) {
+    try {
+      const cached = await getIDBCache("tgf_cached_attenders");
+      if (Array.isArray(cached) && cached.length > 0) {
+        inMemoryAttenders = cached;
+        return cached;
+      }
+    } catch (e) {}
+  }
+
   const snap = await getDocs(collection(db, "attenders"));
   const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   
@@ -1146,10 +1198,14 @@ export const getAttenders = async () => {
     }
   });
 
-  return docs.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+  const sorted = docs.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+  inMemoryAttenders = sorted;
+  setIDBCache("tgf_cached_attenders", sorted).catch(() => {});
+  return sorted;
 };
 
 export const createAttender = async (name, customPassword = null) => {
+  invalidateAttendersCache();
   const password = customPassword || generateRandomPassword();
   const ref = await addDoc(collection(db, "attenders"), {
     name,
@@ -1161,11 +1217,13 @@ export const createAttender = async (name, customPassword = null) => {
 };
 
 export const updateAttender = async (id, data) => {
+  invalidateAttendersCache();
   const payload = typeof data === "string" ? { name: data } : data;
   await updateDoc(doc(db, "attenders", id), payload);
 };
 
 export const deleteAttender = async (id) => {
+  invalidateAttendersCache();
   await deleteDoc(doc(db, "attenders", id));
 };
 
@@ -1825,19 +1883,7 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
       || Object.keys(updates).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase()));
     const contactName = nameKey ? (updates[nameKey] || logData[nameKey]) : "Unknown";
 
-    await logInteraction({
-      contactId: logId,
-      contactName,
-      programId: logData.programId || updates.programId || "",
-      programName: logData.programName || updates.programName || "",
-      attenderId: attenderId || logData.attenderId || "unknown",
-      attenderName: attenderName || logData.attenderName || "Unknown",
-      status: updates.status !== undefined ? updates.status : (attenderId ? (logData.attenderStates?.[attenderId]?.status || "") : (logData.status || "")),
-      remark: updates.remark !== undefined ? updates.remark : (attenderId ? (logData.attenderStates?.[attenderId]?.remark || "") : (logData.remark || "")),
-      callType: updates.callType !== undefined ? updates.callType : (attenderId ? (logData.attenderStates?.[attenderId]?.callType || "outgoing") : (logData.callType || "outgoing")),
-      callbackDate: updates.callbackDate !== undefined ? updates.callbackDate : (attenderId ? (logData.attenderStates?.[attenderId]?.callbackDate || null) : (logData.callbackDate || null))
-    });
-  }
+
 
   const mergedAttenderStates = { ...(logData.attenderStates || {}) };
   if (attenderId) {
@@ -2275,19 +2321,7 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
     console.log("%c⚡ [FIRESTORE WRITE - New Contact]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Created new lead in "contacts": ${docRef.id}`);
   }
 
-  // Log interaction
-  await logInteraction({
-    contactId: docRef.id,
-    contactName: rest.Name || existingData.Name || "Unknown",
-    programId: finalProgramId,
-    programName: finalProgramName,
-    attenderId,
-    attenderName,
-    status: data.status || "Call Log Added",
-    remark: data.remark || "",
-    callType: data.callType || "incoming",
-    callbackDate: data.callbackDate || null
-  });
+
 
   // Handle "Reg.Done" registrations collection sync
   if (data.status === "Reg.Done") {
@@ -5066,39 +5100,7 @@ export const subscribeToCallCenterOptions = (onUpdate) => {
   };
 };
 
-export const logInteraction = async ({
-  contactId,
-  contactName,
-  programId,
-  programName,
-  attenderId,
-  attenderName,
-  status,
-  remark,
-  callType,
-  callbackDate = null,
-  timestamp = null
-}) => {
-  // Interaction logging to separate collection is disabled to optimize Firestore writes;
-  // full call history is stored directly inside the contact's attenderStates history array.
-  return;
-};
 
-export const subscribeToInteractions = (programId, callback) => {
-  let q = collection(db, "interactions");
-  if (programId && programId !== "ALL") {
-    q = query(q, where("programId", "==", programId));
-  }
-  return onSnapshot(q, snap => {
-    let list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    list.sort((a, b) => {
-      const ta = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp ? new Date(a.timestamp).getTime() : 0);
-      const tb = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp ? new Date(b.timestamp).getTime() : 0);
-      return tb - ta;
-    });
-    callback(list);
-  }, err => console.error("subscribeToInteractions error:", err));
-};
 
 export const subscribeToRecentRegistrations = (callback) => {
   // Derive recent registrations directly from the shared callCenterCache snapshot (0 Extra Firestore Reads!)
