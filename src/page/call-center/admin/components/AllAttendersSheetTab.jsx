@@ -24,7 +24,11 @@ import {
   Layers,
   ArrowUpDown,
   UserCheck,
-  Hash
+  Hash,
+  UserPlus,
+  Plus,
+  PhoneCall,
+  MessageSquare
 } from "lucide-react";
 import { EditModal } from "../../attender/components/EditModal";
 import {
@@ -39,7 +43,7 @@ import {
   isUnansweredCallback
 } from "../../attender/utils.js";
 import { parseTimestamp, cleanExportRow, getAllCallEntries, getCallsDoneCount, getContactPhone } from "../utils.jsx";
-import { normalizePhone, verifyCallCenterCache } from "../../../../lib/db";
+import { normalizePhone, verifyCallCenterCache, addIncomingCallLog } from "../../../../lib/db";
 
 // ── MultiSelect Dropdown Subcomponent ───────────────────────────────────────
 function MultiSelectDropdown({ options, selected = [], onChange, placeholder, icon: Icon, allLabel = "All" }) {
@@ -792,16 +796,20 @@ export default function AllAttendersSheetTab({
     toast.success("Excel report downloaded!");
   };
 
-  const handleRefresh = async () => {
+  const handleRefresh = async (silent = false) => {
     setIsRefreshing(true);
     try {
       if (selectedMonth && selectedMonth !== "ALL") {
         await verifyCallCenterCache(selectedMonth);
       }
-      toast.success("Cache verified & refreshed!");
+      if (!silent) {
+        toast.success("Cache verified & refreshed!");
+      }
     } catch (err) {
       console.error(err);
-      toast.error("Cache refresh complete.");
+      if (!silent) {
+        toast.error("Cache refresh complete.");
+      }
     } finally {
       setIsRefreshing(false);
     }
@@ -895,6 +903,30 @@ export default function AllAttendersSheetTab({
             >
               <Eye size={12} />
               Cols {hiddenColumns.length > 0 && `(${allPossibleCols.length - hiddenColumns.length}/${allPossibleCols.length})`}
+            </button>
+
+            <button
+              onClick={() => {
+                setEditingRow({
+                  _isNew: true,
+                  Name: "",
+                  Phone: "",
+                  Mobile: "",
+                  Email: "",
+                  City: "",
+                  State: "",
+                  Khoji: "No",
+                  status: "",
+                  callType: "incoming",
+                  "Called For": "",
+                  Source: "",
+                  remark: ""
+                });
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-extrabold text-xs shadow-sm shadow-indigo-600/20 transition active:scale-[0.98] cursor-pointer"
+            >
+              <Plus size={13} />
+              Add Call Entry
             </button>
 
             <button
@@ -1746,17 +1778,18 @@ export default function AllAttendersSheetTab({
         </div>
       )}
 
-      {/* Edit Contact Modal */}
+      {/* Edit Contact / Add Call Entry Modal */}
       {editingRow && (
         <EditModal
           row={editingRow}
-          attenderId={editingRow.attenderId || "admin"}
-          attenderName={editingRow.attenderName || "Admin"}
+          attenderId={editingRow._isNew ? "" : (editingRow.attenderId || "admin")}
+          attenderName={editingRow._isNew ? "" : (editingRow.attenderName || "Admin")}
+          attenders={attenderOptions.map(opt => ({ id: opt.value, name: opt.label }))}
+          allowAttenderSelection={true}
           programs={programs}
           onClose={() => setEditingRow(null)}
           onSave={() => {
             setEditingRow(null);
-            toast.success("Contact saved successfully!");
           }}
         />
       )}

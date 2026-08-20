@@ -2078,9 +2078,11 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
   const prevStates = isExisting ? (existingData.attenderStates || {}) : {};
   const currentAttState = prevStates[attenderId] || {};
   
+  const callTimeISO = data.callTimestamp ? new Date(data.callTimestamp).toISOString() : new Date().toISOString();
+
   // Create history entry
   const historyEntry = {
-    timestamp: new Date().toISOString(),
+    timestamp: callTimeISO,
     attenderId,
     attenderName,
     status: data.status || "Call Log Added",
@@ -2111,8 +2113,8 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
       objectionReason: data.objectionReason !== undefined ? data.objectionReason : (currentAttState.objectionReason || ""),
       Source: data.Source !== undefined ? data.Source : (currentAttState.Source || ""),
       "Called For": data["Called For"] !== undefined ? data["Called For"] : (currentAttState["Called For"] || ""),
-      lastCalledAt: new Date().toISOString(),
-      firstCalledAt: currentAttState.firstCalledAt || new Date().toISOString(),
+      lastCalledAt: callTimeISO,
+      firstCalledAt: currentAttState.firstCalledAt || callTimeISO,
       attenderName: attenderName,
       updatedAt: new Date().toISOString()
     }

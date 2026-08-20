@@ -43,7 +43,30 @@ import CallButton from "./CallButton";
 import WhatsAppButton from "./WhatsAppButton";
 import EditHistoryModal from "./edit-modal/EditHistoryModal";
 
-export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs = [], onSave, onDelete, onClose }) => {
+export const EditModal = ({
+  row,
+  attenderId,
+  attenderName = "Unknown",
+  attenders = [],
+  allowAttenderSelection = false,
+  programs = [],
+  onSave,
+  onDelete,
+  onClose
+}) => {
+  const [selectedAttenderId, setSelectedAttenderId] = useState(() => (row?._isNew ? "" : (attenderId || "")));
+  const [selectedAttenderName, setSelectedAttenderName] = useState(() => (row?._isNew ? "" : (attenderName || "")));
+
+  useEffect(() => {
+    if (!row?._isNew) {
+      if (attenderId) setSelectedAttenderId(attenderId);
+      if (attenderName) setSelectedAttenderName(attenderName);
+    }
+  }, [attenderId, attenderName, row?._isNew]);
+
+  const activeAttenderId = selectedAttenderId || (row?._isNew ? "" : attenderId);
+  const activeAttenderName = selectedAttenderName || (row?._isNew ? "" : attenderName);
+
   const getNormalizedRow = () => {
     const normalized = { ...row };
     if (normalized.callType) {
@@ -99,12 +122,15 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
     if (row._isNew && !normalized.Khoji) {
       normalized.Khoji = "No";
     }
+    if (row._isNew && !normalized.callType) {
+      normalized.callType = "incoming";
+    }
     // Normalize Tags: if only a `tags` array exists (no `Tags` string), convert to comma string for display
     if (!normalized.Tags && Array.isArray(row.tags) && row.tags.length > 0) {
       normalized.Tags = row.tags.join(", ");
     }
-    const attState = findMatchingAttenderState(normalized.attenderStates, attenderId, attenderName);
-    normalized.history = combineContactHistories(normalized, attState, attenderName);
+    const attState = findMatchingAttenderState(normalized.attenderStates, activeAttenderId || attenderId, activeAttenderName || attenderName);
+    normalized.history = combineContactHistories(normalized, attState, activeAttenderName || attenderName);
     return {
       ...normalized,
       // Always start with empty remark for a new note — previous remarks are shown in the history timeline
@@ -1229,6 +1255,11 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
         return;
       }
 
+      if (allowAttenderSelection && !activeAttenderId) {
+        toast.error("Please select an attender on whose behalf this call is being logged.", { duration: 4000, position: 'top-center' });
+        return;
+      }
+
       const isUnconnected = isNotConnectedStatus(targetEdited.status);
 
       if (isUnconnected) {
@@ -1400,7 +1431,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           (targetEdited.programId || savedRow.programId) !== "incoming-calls";
 
         if (isIncomingConvertOnOutgoingProgram) {
-          const safeName = attenderName || "Unknown";
+          const safeName = activeAttenderName || attenderName || "Unknown";
           const nowStr = new Date().toISOString();
 
           // 1. The Incoming Call Log (Query)
@@ -1428,7 +1459,7 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
           updates.history = [...baseHistory, queryHist, regHist];
           updates.callType = "outgoing"; // Force outgoing conversion at root level
         } else if (isCallAttemptUpdated) {
-          const safeName = attenderName || "Unknown";
+          const safeName = activeAttenderName || attenderName || "Unknown";
           const nowStr = new Date().toISOString();
           const newHist = {
             status: updates.status || "",
@@ -1493,12 +1524,12 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
       if (isNewWithoutDoc) {
         delete updates._isNew;
         const resId = await addIncomingCallLog(
-          row.attenderId || attenderId, row.attenderName || attenderName, updates, targetEdited.programId, targetEdited.programName
+          activeAttenderId, activeAttenderName, updates, targetEdited.programId, targetEdited.programName
         );
         console.log("[EDIT MODAL SAVE] addIncomingCallLog result docId:", resId);
         savedDocId = resId;
       } else {
-        const res = await updateCallLog(targetDocId, updates, attenderId, attenderName, row);
+        const res = await updateCallLog(targetDocId, updates, activeAttenderId, activeAttenderName, row);
         console.log("[EDIT MODAL SAVE] updateCallLog result:", res);
       }
 
@@ -1647,6 +1678,40 @@ export const EditModal = ({ row, attenderId, attenderName = "Unknown", programs 
             </button>
           </div>
         </div>
+
+        {/* Compulsory Attender Selector for Admin */}
+        {(allowAttenderSelection || attenders.length > 0) && (
+          <div className="px-6 py-2.5 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 shrink-0">
+            <div className="flex items-center gap-2">
+              <User size={15} className="text-indigo-400" />
+              <span className="text-xs font-bold text-slate-300">
+                Logged on Behalf of Attender: <span className="text-rose-400 font-extrabold">*</span>
+              </span>
+            </div>
+            <select
+              value={activeAttenderId}
+              required
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedAttenderId(val);
+                const match = attenders.find(a => String(a.id || a.value) === String(val));
+                if (match) {
+                  setSelectedAttenderName(match.name || match.label || "Attender");
+                }
+              }}
+              className={`px-3 py-1.5 bg-slate-800 border rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer min-w-[220px] transition ${
+                !activeAttenderId ? "border-amber-500 text-amber-300 shadow-sm shadow-amber-500/20" : "border-slate-700 text-white"
+              }`}
+            >
+              <option value="">-- Select Attender (Required *) --</option>
+              {attenders.map(a => (
+                <option key={a.id || a.value} value={a.id || a.value}>
+                  {a.name || a.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div ref={modalScrollRef} className="overflow-y-auto flex-1 p-8 space-y-8">
           {/* Tab Switcher */}
