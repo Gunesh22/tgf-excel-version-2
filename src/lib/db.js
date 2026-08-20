@@ -110,13 +110,15 @@ export const registerActiveTag = async (tag) => {
   if (!tag) return;
   const cleanTag = tag.trim();
   if (!cleanTag || registeredTagsCache.has(cleanTag)) return;
+  registeredTagsCache.add(cleanTag);
   try {
     await setDoc(doc(db, "activeTags", cleanTag), {
       name: cleanTag,
       createdAt: serverTimestamp()
     }, { merge: true });
-    registeredTagsCache.add(cleanTag);
+    console.log("%c⚡ [FIRESTORE WRITE - Active Tag]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Registered tag in "activeTags": ${cleanTag}`);
   } catch (e) {
+    registeredTagsCache.delete(cleanTag);
     console.error("Failed to register active tag:", e);
   }
 };
@@ -330,8 +332,13 @@ export const INCOMING_PROGRAM_NAME = "Incoming Calls";
 export const OUTGOING_PROGRAM_ID = "outgoing-calls";
 export const OUTGOING_PROGRAM_NAME = "Outgoing Calls";
 
+let incomingProgramEnsured = false;
+let outgoingProgramEnsured = false;
+
 // Upsert the Incoming Calls program document — safe to call multiple times
 export const ensureIncomingProgram = async () => {
+  if (incomingProgramEnsured) return;
+  incomingProgramEnsured = true;
   await registerActiveTag("Incoming Calls");
   const ref = doc(db, "programs", INCOMING_PROGRAM_ID);
   await setDoc(ref, {
@@ -344,6 +351,8 @@ export const ensureIncomingProgram = async () => {
 
 // Upsert the Outgoing Calls program document — safe to call multiple times
 export const ensureOutgoingProgram = async () => {
+  if (outgoingProgramEnsured) return;
+  outgoingProgramEnsured = true;
   await registerActiveTag("Outgoing Calls");
   const ref = doc(db, "programs", OUTGOING_PROGRAM_ID);
   await setDoc(ref, {
@@ -1402,7 +1411,11 @@ export const subscribeToCallLogs = (...args) => {
     const targetQueryStr = `collection("callCenterCache").where(documentId() >= "${prev2MonthStr}")`;
 
     const unsubFirestore = onSnapshot(cacheQuery, snap => {
-      console.log(`[FIRESTORE REALTIME SYNC] snapshot received | docsCount: ${snap.docs.length}`);
+      console.log(
+        "%c📡 [SNAPSHOT READ - callCenterCache]",
+        "background: #1e1b4b; color: #818cf8; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
+        `Realtime update received | Docs: ${snap.docs.length} | Has pending local writes: ${snap.metadata.hasPendingWrites} | Read cost: ${snap.metadata.hasPendingWrites ? 0 : (snap.docChanges().length || snap.docs.length)} doc(s)`
+      );
       populateGlobalActivePartitionsCache(snap.docs);
       const contactsMap = {};
       snap.docs.filter(d => d.id !== "contacts").forEach(docSnap => {
@@ -1410,23 +1423,39 @@ export const subscribeToCallLogs = (...args) => {
         Object.entries(docContacts).forEach(([id, rawData]) => {
           if (!rawData) return;
           const matchedStateObj = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName);
-          const isAssignedToMe = (attenderId && (
-            rawData.attenderId === attenderId || 
-            rawData.assignedTo === attenderId || 
-            (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderId)) ||
-            Boolean(matchedStateObj)
-          )) || (attenderName && (
-            rawData.assignedName === attenderName || 
-            rawData.attenderName === attenderName || 
-            rawData.assignedTo === attenderName ||
-            (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderName)) ||
-            Boolean(matchedStateObj)
+          
+          const attNameLower = attenderName ? String(attenderName).trim().toLowerCase() : "";
+          const attIdLower = attenderId ? String(attenderId).trim().toLowerCase() : "";
+
+          const hasHistoryMatch = Array.isArray(rawData.history) && rawData.history.some(h => {
+            if (!h) return false;
+            const hId = h.attenderId ? String(h.attenderId).trim().toLowerCase() : "";
+            const hName = h.attenderName ? String(h.attenderName).trim().toLowerCase() : "";
+            return (attIdLower && (hId === attIdLower || hId === attNameLower)) || (attNameLower && (hName === attNameLower || hName.includes(attNameLower)));
+          });
+
+          const isAssignedToMe = (attIdLower && (
+            String(rawData.attenderId || "").toLowerCase().trim() === attIdLower || 
+            String(rawData.assignedTo || "").toLowerCase().trim() === attIdLower || 
+            (Array.isArray(rawData.assignedTo) && rawData.assignedTo.some(x => String(x).toLowerCase().trim() === attIdLower)) ||
+            Boolean(matchedStateObj) ||
+            hasHistoryMatch
+          )) || (attNameLower && (
+            String(rawData.assignedName || "").toLowerCase().trim() === attNameLower || 
+            String(rawData.attenderName || "").toLowerCase().trim() === attNameLower || 
+            String(rawData.assignedTo || "").toLowerCase().trim() === attNameLower ||
+            (Array.isArray(rawData.assignedTo) && rawData.assignedTo.some(x => String(x).toLowerCase().trim() === attNameLower)) ||
+            Boolean(matchedStateObj) ||
+            hasHistoryMatch
           ));
 
           if (isAssignedToMe) {
             const attState = matchedStateObj || {};
             
-            const newLastCalledAt = attState.lastCalledAt !== undefined ? attState.lastCalledAt : (rawData.lastCalledAt || null);
+            const lastHistTime = Array.isArray(rawData.history) && rawData.history.length > 0 
+              ? (rawData.history[rawData.history.length - 1]?.timestamp || rawData.history[rawData.history.length - 1]?.date)
+              : null;
+            const newLastCalledAt = attState.lastCalledAt || rawData.lastCalledAt || attState.updatedAt || rawData.updatedAt || lastHistTime || rawData.createdAt || null;
             const getTimeMs = (val) => {
               if (!val) return 0;
               if (typeof val.toDate === "function") return val.toDate().getTime();
@@ -1435,16 +1464,38 @@ export const subscribeToCallLogs = (...args) => {
               return isNaN(d.getTime()) ? 0 : d.getTime();
             };
 
+            const combinedHist = combineContactHistories(rawData, attState, attenderName);
+            const latestHist = combinedHist.length > 0 ? combinedHist[combinedHist.length - 1] : null;
+
+            const resolvedStatus = (attState && attState.status && attState.status !== "Pending")
+              ? attState.status
+              : ((rawData && rawData.status && rawData.status !== "Pending")
+                ? rawData.status
+                : (latestHist && latestHist.status ? latestHist.status : (attState.status || rawData.status || "")));
+
+            const resolvedRemark = (attState && attState.remark !== undefined && attState.remark !== "")
+              ? attState.remark
+              : ((rawData && rawData.remark !== undefined && rawData.remark !== "")
+                ? rawData.remark
+                : (latestHist && latestHist.remark !== undefined ? latestHist.remark : (attState.remark || rawData.remark || "")));
+
+            const resolvedCallType = String(
+              (attState && attState.callType)
+              || (latestHist && latestHist.callType)
+              || (rawData && rawData.callType)
+              || "outgoing"
+            ).toLowerCase();
+
             const existing = contactsMap[id];
             if (!existing || (newLastCalledAt && getTimeMs(newLastCalledAt) > getTimeMs(existing.lastCalledAt))) {
               contactsMap[id] = {
                 id: id,
                 ...rawData,
                 _rawData: rawData,
-                status: attState.status !== undefined ? attState.status : (rawData.status || ""),
-                remark: attState.remark !== undefined ? attState.remark : (rawData.remark || ""),
-                callType: String(attState.callType !== undefined ? attState.callType : (rawData.callType || "outgoing")).toLowerCase(),
-                history: combineContactHistories(rawData, attState, attenderName),
+                status: resolvedStatus,
+                remark: resolvedRemark,
+                callType: resolvedCallType,
+                history: combinedHist,
                 callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
                 callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
                 objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
@@ -2054,6 +2105,7 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
       const snap3 = await Promise.race([getDocs(q3), timeoutLookup]);
       
       const mergedDocs = snap3.docs || [];
+      console.log("%c🔥 [FIRESTORE READ - Phone Lookup]", "background: #064e3b; color: #34d399; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Queried "contacts" for duplicate phone check. Matches found: ${mergedDocs.length}`);
       const existingSnap = { empty: mergedDocs.length === 0, docs: mergedDocs };
 
       if (!existingSnap.empty) {
@@ -2217,8 +2269,10 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
     };
     await setDoc(contactRef, dotPayload, { merge: true });
     docRef = { id: existingDocId };
+    console.log("%c⚡ [FIRESTORE WRITE - Contact Update]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Updated existing lead in "contacts": ${existingDocId}`);
   } else {
     docRef = await addDoc(collection(db, "contacts"), logPayload);
+    console.log("%c⚡ [FIRESTORE WRITE - New Contact]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Created new lead in "contacts": ${docRef.id}`);
   }
 
   // Log interaction
@@ -2259,6 +2313,7 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
       const registrationId = `${docRef.id}_${cleanedCalledFor}`;
 
       await setDoc(doc(db, "registrations", registrationId), payload, { merge: true });
+      console.log("%c⚡ [FIRESTORE WRITE - Registration]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Saved registration record in "registrations": ${registrationId}`);
       await registerRegistrationMonth(yearMonth);
     } catch (e) {
       console.error("Incoming registration write failed:", e);
@@ -3854,7 +3909,7 @@ export const updateCacheContacts = async (contactIds, inMemoryDataMap = {}, know
       });
     });
 
-    console.log(`[CACHE CONTACTS UPDATE] Syncing ${contactIds.length} contact(s) to callCenterCache for months:`, Object.keys(monthlyUpdatesMap));
+    console.log("%c⚡ [FIRESTORE WRITE - Partition Cache]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Syncing ${contactIds.length} contact(s) to "callCenterCache" partition doc(s) for month(s): ${Object.keys(monthlyUpdatesMap).join(", ")}`);
 
     // 3. Apply updates to each month document
     const cutoffMonth = getCutoffMonth(3);
@@ -4234,7 +4289,11 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
   );
 
   const unsubCache = onSnapshot(cacheQuery, async (snap) => {
-    console.log(`[ADMIN FIRESTORE READ - onSnapshot] subscribeToAllCallLogs cache snapshot received | docsCount: ${snap.docs.length} (document IDs: ${snap.docs.map(d=>d.id).join(", ")})`);
+    console.log(
+      "%c📡 [SNAPSHOT READ - Admin callCenterCache]",
+      "background: #1e1b4b; color: #818cf8; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
+      `Realtime update received | Docs: ${snap.docs.length} | Read cost: ${snap.docChanges().length || snap.docs.length} doc(s)`
+    );
     if (snap.empty && lockedDocs.length === 0) {
       console.log(`No cache documents exist for range ${startMonth} to ${endMonth}, fetching directly from Firebase contacts collection...`);
       try {
@@ -4721,6 +4780,11 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
   );
 
   return onSnapshot(q, snap => {
+    console.log(
+      "%c📡 [SNAPSHOT READ - registrations]",
+      "background: #1e1b4b; color: #818cf8; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
+      `Realtime update received | Docs: ${snap.docs.length} | Read cost: ${snap.docChanges().length || snap.docs.length} doc(s)`
+    );
     const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     // Sort descending by registeredAt client-side
     docs.sort((a, b) => {
@@ -4952,6 +5016,11 @@ export const subscribeToCallCenterOptions = (onUpdate) => {
   if (!optionsUnsubscribe) {
     const docRef = doc(db, "settings", "call_center_options");
     optionsUnsubscribe = onSnapshot(docRef, (snap) => {
+      console.log(
+        "%c📡 [SNAPSHOT READ - call_center_options]",
+        "background: #1e1b4b; color: #818cf8; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
+        `Options document snapshot received | Exists: ${snap.exists()}`
+      );
       let opts = null;
       if (snap.exists()) {
         const data = snap.data();
@@ -5032,18 +5101,45 @@ export const subscribeToInteractions = (programId, callback) => {
 };
 
 export const subscribeToRecentRegistrations = (callback) => {
-  const q = query(
-    collection(db, "registrations"),
-    orderBy("registeredAt", "desc"),
-    limit(5)
-  );
-  return onSnapshot(q, (snap) => {
-    const list = snap.docs.map(d => ({
-      id: d.id,
-      ...d.data()
-    }));
-    callback(list);
-  }, err => console.error("subscribeToRecentRegistrations error:", err));
+  // Derive recent registrations directly from the shared callCenterCache snapshot (0 Extra Firestore Reads!)
+  return subscribeToCallLogs(null, null, "ALL", (logs) => {
+    if (!Array.isArray(logs)) return;
+    const registeredList = [];
+    logs.forEach(log => {
+      let foundReg = false;
+      if (log.attenderStates) {
+        Object.entries(log.attenderStates).forEach(([aId, st]) => {
+          if (st?.status === "Reg.Done") {
+            foundReg = true;
+            const calledFor = st["Called For"] || st.calledFor || log["Called For"] || log.calledFor || log.programName || "";
+            const regTime = st.updatedAt || st.lastCalledAt || log.registeredAt || log.updatedAt || 0;
+            registeredList.push({
+              id: `${log.id}_${aId}_${String(calledFor).trim()}`,
+              name: log.Name || log.name || log.caller || "Someone",
+              convertedBy: st.attenderName || log.convertedBy || log.attenderName || "Attender",
+              calledFor,
+              timestamp: typeof regTime === "string" ? new Date(regTime).getTime() : (regTime?.toMillis ? regTime.toMillis() : (regTime?.seconds ? regTime.seconds * 1000 : Date.now()))
+            });
+          }
+        });
+      }
+      // Top-level fallback if not captured in attenderStates
+      if (!foundReg && log.status === "Reg.Done") {
+        const calledFor = log["Called For"] || log.calledFor || log.programName || "";
+        const regTime = log.registeredAt || log.updatedAt || log.createdAt || 0;
+        registeredList.push({
+          id: `${log.id}_${String(calledFor).trim()}`,
+          name: log.Name || log.name || log.caller || "Someone",
+          convertedBy: log.convertedBy || log.attenderName || log.assignedName || "Attender",
+          calledFor,
+          timestamp: typeof regTime === "string" ? new Date(regTime).getTime() : (regTime?.toMillis ? regTime.toMillis() : (regTime?.seconds ? regTime.seconds * 1000 : Date.now()))
+        });
+      }
+    });
+
+    registeredList.sort((a, b) => b.timestamp - a.timestamp);
+    callback(registeredList.slice(0, 5));
+  });
 };
 
 export const getActiveCacheMonths = async () => {

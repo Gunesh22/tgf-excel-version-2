@@ -1,7 +1,7 @@
 import React from "react";
 import { Flame, Clock } from "lucide-react";
 import { normalizePhone } from "../../../../lib/db";
-import { getFieldWithFallback, isUnansweredCallback } from "../utils";
+import { getFieldWithFallback, isUnansweredCallback, getCanonicalStatus } from "../utils";
 
 function CollapsedTags({ tags }) {
   const [expanded, setExpanded] = React.useState(false);
@@ -96,22 +96,28 @@ export function ContactTable({
   callLogs
 }) {
   const getStatusBadge = (log) => {
-    const status = log.status || log.Status;
+    let rawStatus = log.status || log.Status;
+    if (!rawStatus && Array.isArray(log.history) && log.history.length > 0) {
+      const lastH = log.history[log.history.length - 1];
+      if (lastH && lastH.status) rawStatus = lastH.status;
+    }
+    const status = getCanonicalStatus(rawStatus || "");
+
     if (isUnansweredCallback(log)) {
       return { bg: "bg-amber-100 border border-amber-300/80", text: "text-amber-800 font-extrabold", label: status || "Unanswered Callback" };
     }
-    if (status) {
+    if (status && status !== "Pending" && status !== "Call Log Added") {
       if (status === "Reg.Done") return { bg: "bg-emerald-100", text: "text-emerald-700", label: status };
       if (status === "Interested") return { bg: "bg-blue-100", text: "text-blue-700", label: status };
       if (status === "Info given") return { bg: "bg-purple-100", text: "text-purple-700", label: status };
-      if (["NA", "Busy", "Call Cut", "switched off", "Not interested", "Invalid No"].includes(status)) {
+      if (["NA", "Busy", "Call Cut", "switched off", "Not interested", "Invalid No", "no answer", "Not Attended"].includes(status)) {
         return { bg: "bg-red-100", text: "text-red-600", label: status };
       }
       return { bg: "bg-indigo-100", text: "text-indigo-700", label: status };
     }
-    const hasAttempt = log.callbackDate || log.remark || log.Remark || log.remarks;
+    const hasAttempt = log.callbackDate || log.remark || log.Remark || log.remarks || (Array.isArray(log.history) && log.history.length > 0);
     if (hasAttempt) {
-      return { bg: "bg-blue-50 border border-blue-200/60", text: "text-blue-700", label: "Attempted" };
+      return { bg: "bg-amber-50 border border-amber-200", text: "text-amber-700 font-semibold", label: status || "NA" };
     }
     return { bg: "bg-gray-100", text: "text-gray-400", label: "Pending" };
   };

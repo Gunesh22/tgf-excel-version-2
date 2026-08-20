@@ -614,8 +614,23 @@ export default function AllAttendersSheetTab({
       if (filterStatus === "Pending" && (log.status && log.status !== "Pending")) return false;
 
       if (filterStatus === "Today Activity") {
-        const lastCall = parseTimestamp(log.lastCalledAt);
-        if (!lastCall || lastCall < today) return false;
+        const dateCandidates = [
+          log.lastCalledAt,
+          log.updatedAt,
+          log.lastActivityAt,
+          ...(log.attenderStates ? Object.values(log.attenderStates).flatMap(st => [st?.lastCalledAt, st?.updatedAt]) : []),
+          ...(Array.isArray(log.history) ? log.history.map(h => h.date || h.timestamp) : [])
+        ];
+
+        const startOfToday = new Date(today); startOfToday.setHours(0, 0, 0, 0);
+        const endOfToday = new Date(today); endOfToday.setHours(23, 59, 59, 999);
+
+        const hasTodayActivity = dateCandidates.some(cand => {
+          const d = parseTimestamp(cand);
+          return d && !isNaN(d.getTime()) && d >= startOfToday && d <= endOfToday;
+        });
+
+        if (!hasTodayActivity) return false;
       }
       if (filterStatus === "Callback") {
         if (!log.callbackDate) return false;

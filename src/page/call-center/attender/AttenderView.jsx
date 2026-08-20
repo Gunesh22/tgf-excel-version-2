@@ -895,11 +895,25 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       if (filterStatus === "Follow up" && !(log.callbackDate || log.status === "reminder" || log.status === "Next time")) return false;
       if (filterStatus === "Unanswered Callback" && !isUnansweredCallback(log)) return false;
       if (filterStatus === "Today Activity") {
-        if (!log.lastCalledAt) return false;
-        const logDate = new Date(log.lastCalledAt);
+        const dateCandidates = [
+          log.lastCalledAt,
+          log.updatedAt,
+          log.lastActivityAt,
+          log.attenderStates?.[attenderId]?.lastCalledAt,
+          log.attenderStates?.[attenderId]?.updatedAt,
+          ...(log.attenderStates ? Object.values(log.attenderStates).flatMap(st => [st?.lastCalledAt, st?.updatedAt]) : []),
+          ...(Array.isArray(log.history) ? log.history.map(h => h.date || h.timestamp) : [])
+        ];
+
         const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
         const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
-        if (logDate < startOfToday || logDate > endOfToday) return false;
+
+        const hasTodayActivity = dateCandidates.some(cand => {
+          const d = parseTimestamp(cand);
+          return d && !isNaN(d.getTime()) && d >= startOfToday && d <= endOfToday;
+        });
+
+        if (!hasTodayActivity) return false;
       }
       if (
         filterStatus !== "All" && 
@@ -1154,12 +1168,12 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
         const bName = String(b[bNameKey] || "").toLowerCase();
         return aName.localeCompare(bName);
       } else if (sortBy === "createdDesc") {
-        const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : a.createdAt ? new Date(a.createdAt) : new Date(0);
-        const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : b.createdAt ? new Date(b.createdAt) : new Date(0);
+        const aDate = parseTimestamp(a.createdAt) || new Date(0);
+        const bDate = parseTimestamp(b.createdAt) || new Date(0);
         return bDate - aDate;
       } else {
-        const aDate = a.lastCalledAt ? new Date(a.lastCalledAt) : a.createdAt?.toDate ? a.createdAt.toDate() : a.createdAt ? new Date(a.createdAt) : new Date(0);
-        const bDate = b.lastCalledAt ? new Date(b.lastCalledAt) : b.createdAt?.toDate ? b.createdAt.toDate() : b.createdAt ? new Date(b.createdAt) : new Date(0);
+        const aDate = parseTimestamp(a.lastCalledAt) || parseTimestamp(a.updatedAt) || parseTimestamp(a.createdAt) || new Date(0);
+        const bDate = parseTimestamp(b.lastCalledAt) || parseTimestamp(b.updatedAt) || parseTimestamp(b.createdAt) || new Date(0);
         return bDate - aDate;
       }
     });
