@@ -7,7 +7,7 @@ The CRM Call Center application utilizes a **Zero-Read Partitioned Persistence A
 ### **Key Performance Indicators:**
 * **Firestore Reads on Lead Edit/Save:** **0 Reads** (when memory snapshot is hydrated).
 * **Firestore Writes on Lead Edit/Save:** **2 Writes** (1 to `contacts/{contactId}`, 1 to `callCenterCache/{partitionId}`).
-* **Partition Size Limit:** Strictly **850 KB** (leaving a safe 174 KB headroom under Firestore's 1MB hard limit).
+* **Partition Size Limit:** Dynamically targeted up to **~600–650 KB / 380 contacts** per partition document (maximizing density while staying safely under Firestore's 40,000 index entry ceiling).
 * **Local UI Update Latency:** **0ms** (Stale-While-Revalidate via IndexedDB & in-memory cache).
 
 ---
@@ -154,3 +154,25 @@ To prevent duplicate subscriptions when switching tabs inside the application, `
   * `rebuildCacheCollection()` — Background partition builder.
 * **Firebase Config File:** `src/lib/firebase.js`
   * `persistentLocalCache` configuration for multi-tab disk caching.
+
+---
+
+## 🗓️ 9. Multi-Timestamp Month Mapping & Rules
+
+Partition assignment uses multi-timestamp inspection across all contact temporal attributes (`createdAt`, `updatedAt`, `lastCalledAt`, `state.lastCalledAt`, `state.updatedAt`, `state.firstCalledAt`, `state.history[].timestamp`, `data.history[].timestamp`).
+
+### **Rules Matrix:**
+
+| Situation | Stored in June? | Stored in August? |
+| :--- | :--- | :--- |
+| **Lead created in June, NEVER called in August** | ✅ **Yes** | ❌ **No** |
+| **Lead created in June, CALLED AGAIN in August** | ✅ **Yes** (June logs) | ✅ **Yes** (August logs) |
+| **New lead created in August** | ❌ **No** | ✅ **Yes** |
+
+---
+
+## 🛡️ 10. Deduplication & Health Verification
+
+1. **Partition Contact Uniqueness:** Contacts are stored inside partition documents as a Map keyed by unique Firestore Document ID (`contacts: { [cId]: data }`). Duplicate contact entries are structurally impossible.
+2. **Log Entry Uniqueness:** Individual call logs in the dashboard UI and reports receive a composite key (`${contactId}_${attenderId}_h_${index}`).
+3. **Health Verification Engine (`verifyCallCenterCache`):** Compares live Firestore master contacts against cache partition documents. Guarantees 0 health mismatches.

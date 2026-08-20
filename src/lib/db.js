@@ -3098,8 +3098,7 @@ export const rebuildCallCenterCache = async (isDryRun = false, forceFetchMaster 
         const addIfValidMonth = (ts) => {
           if (!ts) return;
           try {
-            const dt = ts.toDate ? ts.toDate() : (ts.toMillis ? new Date(ts.toMillis()) : new Date(ts));
-            const m = getMonthStr(dt);
+            const m = getMonthStr(ts);
             if (m) contactMonths.add(m);
           } catch (e) {}
         };
@@ -3137,9 +3136,9 @@ export const rebuildCallCenterCache = async (isDryRun = false, forceFetchMaster 
     let totalNewPartsCount = 0;
     let totalContactsConsolidated = 0;
 
-    // Pack partition documents safely under Firestore's 40k index limit (220 contacts / 350 KB per partition)
-    const MAX_PARTITION_CONTACTS = 220;
-    const MAX_PARTITION_BYTES = 350 * 1024;
+    // Pack partition documents up to ~600 KB / 380 contacts ceiling per document
+    const MAX_PARTITION_CONTACTS = 380;
+    const MAX_PARTITION_BYTES = 600 * 1024;
 
     Object.entries(monthlyData).forEach(([month, contactsMap]) => {
       if (month < cutoffMonth) return;
