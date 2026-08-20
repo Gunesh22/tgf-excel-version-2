@@ -1871,20 +1871,6 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
   await batch.commit();
   console.log(`[FIRESTORE BATCH WRITE SUCCESS] Contact ID: ${logId}`);
 
-  // Log interaction if status/remark/callType/callbackDate changed
-  const hasInteractionUpdate = 
-    updates.status !== undefined || 
-    updates.remark !== undefined || 
-    updates.callType !== undefined ||
-    updates.callbackDate !== undefined;
-
-  if (hasInteractionUpdate) {
-    const nameKey = Object.keys(logData).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase())) 
-      || Object.keys(updates).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase()));
-    const contactName = nameKey ? (updates[nameKey] || logData[nameKey]) : "Unknown";
-
-
-
   const mergedAttenderStates = { ...(logData.attenderStates || {}) };
   if (attenderId) {
     mergedAttenderStates[attenderId] = {
