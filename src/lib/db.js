@@ -92,72 +92,23 @@ const isIgnoredField = (key) => {
 // PROGRAMS (Folders)
 // ─────────────────────────────────────────────
 
-let inMemoryActiveTags = null;
+// HARDCODED STATIC ACTIVE TAGS (0 Firestore Reads & 0 Writes)
+const STATIC_ACTIVE_TAGS = ["Incoming Calls", "Outgoing Calls"];
 
-// ACTIVE TAGS METADATA
 export const getActiveTags = async (forceRefresh = false) => {
-  if (!forceRefresh && Array.isArray(inMemoryActiveTags) && inMemoryActiveTags.length > 0) {
-    return inMemoryActiveTags;
-  }
-
-  if (!forceRefresh) {
-    try {
-      const cached = await getIDBCache("tgf_cached_active_tags");
-      if (Array.isArray(cached) && cached.length > 0) {
-        inMemoryActiveTags = cached;
-        return cached;
-      }
-    } catch (e) {}
-  }
-
-  try {
-    const snap = await getDocs(collection(db, "activeTags"));
-    const tags = snap.docs.map(d => d.id).sort();
-    inMemoryActiveTags = tags;
-    setIDBCache("tgf_cached_active_tags", tags).catch(() => {});
-    return tags;
-  } catch (e) {
-    console.error("Failed to get active tags:", e);
-    return [];
-  }
+  return STATIC_ACTIVE_TAGS;
 };
 
 const registeredTagsCache = new Set();
 
 export const registerActiveTag = async (tag) => {
-  if (!tag) return;
-  const cleanTag = tag.trim();
-  if (!cleanTag || registeredTagsCache.has(cleanTag)) return;
-  try {
-    if (typeof window !== "undefined" && localStorage.getItem(`tgf_tag_reg_${cleanTag}`)) {
-      registeredTagsCache.add(cleanTag);
-      return;
-    }
-  } catch (e) {}
-
-  registeredTagsCache.add(cleanTag);
-  try {
-    await setDoc(doc(db, "activeTags", cleanTag), {
-      name: cleanTag,
-      createdAt: serverTimestamp()
-    }, { merge: true });
-    try { localStorage.setItem(`tgf_tag_reg_${cleanTag}`, "1"); } catch (e) {}
-    inMemoryActiveTags = null;
-    console.log("%c⚡ [FIRESTORE WRITE - Active Tag]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Registered tag in "activeTags": ${cleanTag}`);
-  } catch (e) {
-    registeredTagsCache.delete(cleanTag);
-    console.error("Failed to register active tag:", e);
-  }
+  // Static tags in use — 0 Firestore writes
+  return;
 };
 
 export const removeActiveTag = async (tag) => {
-  if (!tag) return;
-  try {
-    inMemoryActiveTags = null;
-    await deleteDoc(doc(db, "activeTags", tag.trim()));
-  } catch (e) {
-    console.error("Failed to remove active tag:", e);
-  }
+  // Static tags in use — 0 Firestore writes
+  return;
 };
 
 export function findMatchingAttenderState(attenderStates, attenderId, attenderName) {
@@ -363,40 +314,14 @@ export const OUTGOING_PROGRAM_NAME = "Outgoing Calls";
 let incomingProgramEnsured = false;
 let outgoingProgramEnsured = false;
 
-// Upsert the Incoming Calls program document — safe to call multiple times
+// Upsert the Incoming Calls program document — no-op (0 Firestore writes)
 export const ensureIncomingProgram = async () => {
-  if (incomingProgramEnsured) return;
-  incomingProgramEnsured = true;
-  await registerActiveTag("Incoming Calls");
-  try {
-    if (typeof window !== "undefined" && localStorage.getItem("tgf_prog_ensured_incoming")) return;
-  } catch (e) {}
-  const ref = doc(db, "programs", INCOMING_PROGRAM_ID);
-  await setDoc(ref, {
-    name: INCOMING_PROGRAM_NAME,
-    isSystem: true,       // marks it as a system/reserved program
-    contactCount: 0,
-    createdAt: serverTimestamp(),
-  }, { merge: true });   // merge:true so we never overwrite existing data
-  try { localStorage.setItem("tgf_prog_ensured_incoming", "1"); } catch (e) {}
+  return;
 };
 
-// Upsert the Outgoing Calls program document — safe to call multiple times
+// Upsert the Outgoing Calls program document — no-op (0 Firestore writes)
 export const ensureOutgoingProgram = async () => {
-  if (outgoingProgramEnsured) return;
-  outgoingProgramEnsured = true;
-  await registerActiveTag("Outgoing Calls");
-  try {
-    if (typeof window !== "undefined" && localStorage.getItem("tgf_prog_ensured_outgoing")) return;
-  } catch (e) {}
-  const ref = doc(db, "programs", OUTGOING_PROGRAM_ID);
-  await setDoc(ref, {
-    name: OUTGOING_PROGRAM_NAME,
-    isSystem: true,       // marks it as a system/reserved program
-    contactCount: 0,
-    createdAt: serverTimestamp(),
-  }, { merge: true });   // merge:true so we never overwrite existing data
-  try { localStorage.setItem("tgf_prog_ensured_outgoing", "1"); } catch (e) {}
+  return;
 };
 
 export const getPrograms = async () => {
@@ -407,30 +332,7 @@ export const getPrograms = async () => {
     contactCount: 0,
     createdAt: Timestamp.now()
   }));
-  
-  // Also fetch any existing programs from Firestore to merge counts and creation dates
-  try {
-    const snap = await getDocs(collection(db, "programs"));
-    snap.docs.forEach(d => {
-      const data = d.data();
-      const existing = list.find(item => item.id === d.id);
-      if (existing) {
-        existing.contactCount = data.contactCount || 0;
-        if (data.createdAt) existing.createdAt = data.createdAt;
-      } else {
-        list.push({
-          id: d.id,
-          name: data.name || d.id,
-          contactCount: data.contactCount || 0,
-          createdAt: data.createdAt || Timestamp.now()
-        });
-      }
-    });
-  } catch (e) {
-    console.warn("Failed to merge programs list:", e);
-  }
 
-  // Ensure Incoming Calls is always in the list
   if (!list.some(p => p.id === INCOMING_PROGRAM_ID || p.name === INCOMING_PROGRAM_NAME)) {
     list.unshift({
       id: INCOMING_PROGRAM_ID,
@@ -441,7 +343,6 @@ export const getPrograms = async () => {
     });
   }
 
-  // Ensure Outgoing Calls is always in the list
   if (!list.some(p => p.id === OUTGOING_PROGRAM_ID || p.name === OUTGOING_PROGRAM_NAME)) {
     list.unshift({
       id: OUTGOING_PROGRAM_ID,
@@ -452,7 +353,7 @@ export const getPrograms = async () => {
     });
   }
 
-  return list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+  return list;
 };
 
 export const createProgram = async (name) => {
@@ -1106,18 +1007,45 @@ export const getProgramContactStats = async (tag) => {
   return stats;
 };
 
-// Global Duplicate Detection (checks only assigned contacts)
+// Global Duplicate Detection (checks only assigned contacts with 200ms cancelable debounce & 10-digit min length)
+const dupCheckCacheMap = new Map();
+let currentDebounceController = null;
+
 export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
   if (!phone) return null;
+  const digitsOnly = String(phone).replace(/\D/g, "");
+  // Minimum 10-digit requirement before firing Firestore query
+  if (digitsOnly.length < 10) return null;
+
   const numbersToCheck = extractIndividualPhones(phone);
   if (numbersToCheck.length === 0) return null;
   
+  const cacheKey = `${numbersToCheck.sort().join("_")}_${excludeContactId || ""}`;
+  if (dupCheckCacheMap.has(cacheKey)) {
+    const cachedEntry = dupCheckCacheMap.get(cacheKey);
+    if (Date.now() - cachedEntry.timestamp < 300000) { // 5-min TTL
+      console.log(`[LOCAL DUP CHECK CACHE] Served duplicate check for ${cacheKey} from memory (0 reads)`);
+      return cachedEntry.result;
+    }
+  }
+
+  // Cancel any preceding pending debounce timer if a new key was typed
+  if (currentDebounceController) {
+    currentDebounceController.cancelled = true;
+  }
+  const myController = { cancelled: false };
+  currentDebounceController = myController;
+
+  // 200ms debounce timer
+  await new Promise(resolve => setTimeout(resolve, 200));
+  if (myController.cancelled) return null; // Superseded by newer keystroke
+
   const promises = [];
   console.log(`[FIRESTORE READ - checkGlobalDuplicate] Querying 'contacts' collection | variations: ${numbersToCheck.join(", ")} | queriesCount: ${numbersToCheck.length}`);
   numbersToCheck.forEach(norm => {
-    promises.push(
-      getDocs(query(collection(db, "contacts"), where("normalizedPhones", "array-contains", norm)))
-    );
+    promises.push(getDocs(query(collection(db, "contacts"), where("normalizedPhones", "array-contains", norm))));
+    promises.push(getDocs(query(collection(db, "contacts"), where("normalizedPhone", "==", norm))));
+    promises.push(getDocs(query(collection(db, "contacts"), where("normalizedMobile", "==", norm))));
   });
   
   const snaps = await Promise.all(promises);
@@ -1135,7 +1063,11 @@ export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
   const matches = Array.from(matchesMap.values())
     .filter(d => d._deleted !== true && d.id !== excludeContactId);
     
-  if (matches.length === 0) return null;
+  if (matches.length === 0) {
+    const emptyRes = null;
+    dupCheckCacheMap.set(cacheKey, { result: emptyRes, timestamp: Date.now() });
+    return emptyRes;
+  }
 
   // Collect all unique tags across every duplicate record
   const allTagsSet = new Set();
@@ -1145,13 +1077,16 @@ export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
     if (m.Tags) String(m.Tags).split(",").map(x => x.trim()).filter(Boolean).forEach(x => allTagsSet.add(x));
   });
 
-  return {
+  const res = {
     count: matches.length,
     allTags: Array.from(allTagsSet).sort(),
     matches: matches,
     first: matches[0],                   // backward-compat
     programName: matches[0]?.programName // backward-compat
   };
+
+  dupCheckCacheMap.set(cacheKey, { result: res, timestamp: Date.now() });
+  return res;
 };
 // ─────────────────────────────────────────────
 // ATTENDERS & AUTH PASSWORDS
@@ -1407,6 +1342,119 @@ export const populateGlobalActivePartitionsCache = (snapDocs) => {
   });
 };
 
+// Cold Boot Partition Cache Fetcher: Reads callCenterCache partition docs (~2-3 reads/month) when local IndexedDB is empty
+export const fetchPartitionCacheForColdBoot = async (attenderId, attenderName, monthsBack = 6) => {
+  console.log(`[COLD BOOT PARTITION CACHE] Initializing cold boot fetch from callCenterCache for ${attenderName || attenderId} (${monthsBack} months back)`);
+  
+  const monthKeys = [];
+  const now = new Date();
+  for (let i = 0; i < monthsBack; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    monthKeys.push(`${year}-${month}`);
+  }
+
+  const allAttenderContacts = new Map();
+  let totalPartitionDocsRead = 0;
+
+  for (const monthStr of monthKeys) {
+    try {
+      const q = query(
+        collection(db, "callCenterCache"),
+        where(documentId(), ">=", monthStr),
+        where(documentId(), "<=", monthStr + "\uf8ff")
+      );
+      const snap = await getDocs(q);
+      totalPartitionDocsRead += snap.docs.length;
+
+      snap.docs.forEach(docSnap => {
+        const docContacts = docSnap.data().contacts || {};
+        Object.entries(docContacts).forEach(([id, rawData]) => {
+          if (!rawData || rawData._deleted) return;
+
+          const isAssigned = (attenderId && (
+            (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderId)) ||
+            rawData.assignedTo === attenderId ||
+            rawData.attenderId === attenderId ||
+            (rawData.attenderStates && rawData.attenderStates[attenderId])
+          )) || (attenderName && (
+            rawData.assignedName === attenderName ||
+            rawData.attenderName === attenderName ||
+            (Array.isArray(rawData.assignedTo) && rawData.assignedTo.includes(attenderName))
+          ));
+
+          if (isAssigned) {
+            const matchedStateObj = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName) || {};
+            const combinedHist = combineContactHistories(rawData, matchedStateObj, attenderName);
+            const latestHist = combinedHist.length > 0 ? combinedHist[combinedHist.length - 1] : null;
+
+            const resolvedStatus = (matchedStateObj && matchedStateObj.status && matchedStateObj.status !== "Pending")
+              ? matchedStateObj.status
+              : (rawData.status || (latestHist && latestHist.status) || "");
+
+            const resolvedRemark = (matchedStateObj && matchedStateObj.remark !== undefined && matchedStateObj.remark !== "")
+              ? matchedStateObj.remark
+              : (rawData.remark || (latestHist && latestHist.remark) || "");
+
+            allAttenderContacts.set(id, {
+              ...rawData,
+              id: id,
+              contactId: id,
+              status: resolvedStatus,
+              remark: resolvedRemark,
+              history: combinedHist,
+              attenderStates: rawData.attenderStates || {}
+            });
+          }
+        });
+      });
+    } catch (err) {
+      console.warn(`[COLD BOOT CACHE WARN] Error fetching partition docs for ${monthStr}:`, err);
+    }
+  }
+
+  let logsList = Array.from(allAttenderContacts.values());
+
+  // Sort callback overdue leads to the top, matching onSnapshot behavior
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const overdue = [];
+  const rest = [];
+  logsList.forEach(log => {
+    if (log.callbackDate) {
+      let cbDate = null;
+      if (typeof log.callbackDate.toDate === "function") {
+        cbDate = log.callbackDate.toDate();
+      } else if (log.callbackDate.seconds !== undefined) {
+        cbDate = new Date(log.callbackDate.seconds * 1000);
+      } else {
+        cbDate = new Date(log.callbackDate);
+      }
+
+      if (cbDate && !isNaN(cbDate.getTime())) {
+        cbDate.setHours(0, 0, 0, 0);
+        if (cbDate <= today) {
+          overdue.push({ ...log, _callbackDue: true });
+          return;
+        }
+      }
+    }
+    rest.push(log);
+  });
+
+  const finalLogs = [...overdue, ...rest];
+
+  console.log(`[COLD BOOT PARTITION CACHE SUCCESS] Fetched ${finalLogs.length} assigned contacts from callCenterCache across ${totalPartitionDocsRead} partition doc reads (0 individual contact doc reads!)`);
+
+  if (attenderId && finalLogs.length > 0) {
+    const cacheKey = `tgf_attender_logs_${attenderId}`;
+    await setIDBCache(cacheKey, finalLogs).catch(() => {});
+  }
+
+  return finalLogs;
+};
+
 // Global Active Snapshot Listeners Registry (Singleton Pattern per attender)
 const activeSnapshotRegistry = {};
 
@@ -1432,9 +1480,9 @@ export const subscribeToCallLogs = (...args) => {
   const cacheKey = `tgf_attender_logs_${attenderId}`;
   const registryKey = `${attenderId || 'global'}_${attenderName || 'global'}`;
 
-  // 1. Immediately emit cached logs from IndexedDB (0ms UI load, zero delay)
+  // 1. Immediately emit cached logs from IndexedDB (0ms UI load). If empty (cold boot), load from callCenterCache partition docs (~15-20 reads total!)
   if (attenderId) {
-    getIDBCache(cacheKey).then(cachedLogs => {
+    getIDBCache(cacheKey).then(async cachedLogs => {
       if (Array.isArray(cachedLogs) && cachedLogs.length > 0) {
         console.log(`[LOCAL CACHE INSTANT LOAD] Served ${cachedLogs.length} leads from IndexedDB for ${attenderId}`);
         let filtered = cachedLogs;
@@ -1442,10 +1490,25 @@ export const subscribeToCallLogs = (...args) => {
           filtered = cachedLogs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
         }
         if (callback) callback(filtered);
+      } else {
+        console.log(`[COLD BOOT INITIAL LOAD] IndexedDB empty for ${attenderId}. Fetching partition docs from callCenterCache (~15-20 reads total)...`);
+        const partitionLogs = await fetchPartitionCacheForColdBoot(attenderId, attenderName, 6);
+        if (partitionLogs.length > 0) {
+          let filtered = partitionLogs;
+          if (tag && tag !== "ALL") {
+            filtered = partitionLogs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
+          }
+          if (callback) callback(filtered);
+        }
       }
     }).catch(err => {
       console.warn("Failed to load attender logs from IndexedDB:", err);
     });
+  }
+
+  if (!attenderId && !attenderName) {
+    console.warn("[SCOPED LISTENER] Listener deferred: attenderId is missing.");
+    return () => {};
   }
 
   // 2. Reuse active global snapshot listener if already attached for this attender
@@ -1456,129 +1519,84 @@ export const subscribeToCallLogs = (...args) => {
       lastEmittedLogs: null
     };
 
-    const now = new Date();
-    const prev2Date = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-    const prev2MonthStr = `${prev2Date.getFullYear()}-${String(prev2Date.getMonth() + 1).padStart(2, "0")}`;
+    // Option A: Scoped Realtime Listener — queries 'contacts' strictly for this attender's assigned leads
+    const scopedQuery = query(collection(db, "contacts"), where("assignedTo", "array-contains", attenderId));
 
-    const cacheQuery = query(
-      collection(db, "callCenterCache"),
-      where(documentId(), ">=", prev2MonthStr)
-    );
-
-    const listenerId = `callCenterCache_monthly_partitions_${registryKey}`;
-    const targetQueryStr = `collection("callCenterCache").where(documentId() >= "${prev2MonthStr}")`;
-
-    const unsubFirestore = onSnapshot(cacheQuery, snap => {
+    const unsubFirestore = onSnapshot(scopedQuery, snap => {
       console.log(
-        "%c📡 [SNAPSHOT READ - callCenterCache]",
-        "background: #1e1b4b; color: #818cf8; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
-        `Realtime update received | Docs: ${snap.docs.length} | Has pending local writes: ${snap.metadata.hasPendingWrites} | Read cost: ${snap.metadata.hasPendingWrites ? 0 : (snap.docChanges().length || snap.docs.length)} doc(s)`
+        "%c📡 [OPTION A SCOPED SNAPSHOT - contacts]",
+        "background: #065f46; color: #34d399; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
+        `Scoped update for ${attenderName || attenderId} | Docs: ${snap.docs.length} | Has pending local writes: ${snap.metadata.hasPendingWrites} | Doc changes: ${snap.docChanges().length}`
       );
-      populateGlobalActivePartitionsCache(snap.docs);
+      
       const contactsMap = {};
-      snap.docs.filter(d => d.id !== "contacts").forEach(docSnap => {
-        const docContacts = docSnap.data().contacts || {};
-        Object.entries(docContacts).forEach(([id, rawData]) => {
-          if (!rawData) return;
-          const matchedStateObj = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName);
-          
-          const attNameLower = attenderName ? String(attenderName).trim().toLowerCase() : "";
-          const attIdLower = attenderId ? String(attenderId).trim().toLowerCase() : "";
+      snap.docs.forEach(docSnap => {
+        const rawData = docSnap.data();
+        if (!rawData || rawData._deleted) return;
+        const id = docSnap.id;
 
-          const hasHistoryMatch = Array.isArray(rawData.history) && rawData.history.some(h => {
-            if (!h) return false;
-            const hId = h.attenderId ? String(h.attenderId).trim().toLowerCase() : "";
-            const hName = h.attenderName ? String(h.attenderName).trim().toLowerCase() : "";
-            return (attIdLower && (hId === attIdLower || hId === attNameLower)) || (attNameLower && (hName === attNameLower || hName.includes(attNameLower)));
-          });
+        const matchedStateObj = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName);
+        const attState = matchedStateObj || {};
+        
+        const lastHistTime = Array.isArray(rawData.history) && rawData.history.length > 0 
+          ? (rawData.history[rawData.history.length - 1]?.timestamp || rawData.history[rawData.history.length - 1]?.date)
+          : null;
+        const newLastCalledAt = attState.lastCalledAt || rawData.lastCalledAt || attState.updatedAt || rawData.updatedAt || lastHistTime || rawData.createdAt || null;
+        const getTimeMs = (val) => {
+          if (!val) return 0;
+          if (typeof val.toDate === "function") return val.toDate().getTime();
+          if (val.seconds !== undefined) return val.seconds * 1000;
+          const d = new Date(val);
+          return isNaN(d.getTime()) ? 0 : d.getTime();
+        };
 
-          const isAssignedToMe = (attIdLower && (
-            String(rawData.attenderId || "").toLowerCase().trim() === attIdLower || 
-            String(rawData.assignedTo || "").toLowerCase().trim() === attIdLower || 
-            (Array.isArray(rawData.assignedTo) && rawData.assignedTo.some(x => String(x).toLowerCase().trim() === attIdLower)) ||
-            Boolean(matchedStateObj) ||
-            hasHistoryMatch
-          )) || (attNameLower && (
-            String(rawData.assignedName || "").toLowerCase().trim() === attNameLower || 
-            String(rawData.attenderName || "").toLowerCase().trim() === attNameLower || 
-            String(rawData.assignedTo || "").toLowerCase().trim() === attNameLower ||
-            (Array.isArray(rawData.assignedTo) && rawData.assignedTo.some(x => String(x).toLowerCase().trim() === attNameLower)) ||
-            Boolean(matchedStateObj) ||
-            hasHistoryMatch
-          ));
+        const combinedHist = combineContactHistories(rawData, attState, attenderName);
+        const latestHist = combinedHist.length > 0 ? combinedHist[combinedHist.length - 1] : null;
 
-          if (isAssignedToMe) {
-            const attState = matchedStateObj || {};
-            
-            const lastHistTime = Array.isArray(rawData.history) && rawData.history.length > 0 
-              ? (rawData.history[rawData.history.length - 1]?.timestamp || rawData.history[rawData.history.length - 1]?.date)
-              : null;
-            const newLastCalledAt = attState.lastCalledAt || rawData.lastCalledAt || attState.updatedAt || rawData.updatedAt || lastHistTime || rawData.createdAt || null;
-            const getTimeMs = (val) => {
-              if (!val) return 0;
-              if (typeof val.toDate === "function") return val.toDate().getTime();
-              if (val.seconds !== undefined) return val.seconds * 1000;
-              const d = new Date(val);
-              return isNaN(d.getTime()) ? 0 : d.getTime();
-            };
+        const resolvedStatus = (attState && attState.status && attState.status !== "Pending")
+          ? attState.status
+          : ((rawData && rawData.status && rawData.status !== "Pending")
+            ? rawData.status
+            : (latestHist && latestHist.status ? latestHist.status : (attState.status || rawData.status || "")));
 
-            const combinedHist = combineContactHistories(rawData, attState, attenderName);
-            const latestHist = combinedHist.length > 0 ? combinedHist[combinedHist.length - 1] : null;
+        const resolvedRemark = (attState && attState.remark !== undefined && attState.remark !== "")
+          ? attState.remark
+          : ((rawData && rawData.remark !== undefined && rawData.remark !== "")
+            ? rawData.remark
+            : (latestHist && latestHist.remark !== undefined ? latestHist.remark : (attState.remark || rawData.remark || "")));
 
-            const resolvedStatus = (attState && attState.status && attState.status !== "Pending")
-              ? attState.status
-              : ((rawData && rawData.status && rawData.status !== "Pending")
-                ? rawData.status
-                : (latestHist && latestHist.status ? latestHist.status : (attState.status || rawData.status || "")));
+        const resolvedCallType = String(
+          (attState && attState.callType)
+          || (latestHist && latestHist.callType)
+          || (rawData && rawData.callType)
+          || "outgoing"
+        ).toLowerCase();
 
-            const resolvedRemark = (attState && attState.remark !== undefined && attState.remark !== "")
-              ? attState.remark
-              : ((rawData && rawData.remark !== undefined && rawData.remark !== "")
-                ? rawData.remark
-                : (latestHist && latestHist.remark !== undefined ? latestHist.remark : (attState.remark || rawData.remark || "")));
-
-            const resolvedCallType = String(
-              (attState && attState.callType)
-              || (latestHist && latestHist.callType)
-              || (rawData && rawData.callType)
-              || "outgoing"
-            ).toLowerCase();
-
-            const existing = contactsMap[id];
-            if (!existing || (newLastCalledAt && getTimeMs(newLastCalledAt) > getTimeMs(existing.lastCalledAt))) {
-              contactsMap[id] = {
-                id: id,
-                ...rawData,
-                _rawData: rawData,
-                status: resolvedStatus,
-                remark: resolvedRemark,
-                callType: resolvedCallType,
-                history: combinedHist,
-                callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
-                callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
-                objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
-                lastCalledAt: newLastCalledAt,
-                firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
-                registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : (rawData.registeredYearMonth || null),
-                Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
-                "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
-                _hidden: attState._hidden === true,
-                _partId: docSnap.id,
-                attenderId: attenderId,
-                attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
-              };
-            }
-          }
-        });
+        contactsMap[id] = {
+          id: id,
+          ...rawData,
+          _rawData: rawData,
+          status: resolvedStatus,
+          remark: resolvedRemark,
+          callType: resolvedCallType,
+          history: combinedHist,
+          callbackDate: attState.callbackDate !== undefined ? attState.callbackDate : (rawData.callbackDate || null),
+          callbackStatus: attState.callbackStatus !== undefined ? attState.callbackStatus : (rawData.callbackStatus || ""),
+          objectionReason: attState.objectionReason !== undefined ? attState.objectionReason : (rawData.objectionReason || ""),
+          lastCalledAt: newLastCalledAt,
+          firstCalledAt: attState.firstCalledAt !== undefined ? attState.firstCalledAt : (rawData.firstCalledAt || null),
+          registeredYearMonth: attState.registeredYearMonth !== undefined ? attState.registeredYearMonth : (rawData.registeredYearMonth || null),
+          Source: attState.Source !== undefined ? attState.Source : (rawData.Source || rawData.Sourse || ""),
+          "Called For": attState["Called For"] !== undefined ? attState["Called For"] : (rawData["Called For"] || ""),
+          _hidden: attState._hidden === true,
+          attenderId: attenderId,
+          attenderName: attState.attenderName || rawData.assignedName || rawData.attenderName || ""
+        };
       });
 
       let logs = Object.values(contactsMap).filter(log => !log._deleted && !log._hidden);
 
-      console.log(`[ATTENDER_LOGS_SYNC] Logged in attender: "${attenderName}" (${attenderId}) | Total contacts fetched: ${logs.length}`);
-      const sanjay = logs.find(l => String(l.Name || l.name || "").toLowerCase().includes("sanjay pathak"));
-      if (sanjay) {
-        console.log(`[DIAGNOSTIC] Sanjay Pathak historyCount: ${(sanjay.history || []).length} | status: "${sanjay.status}" | remark: "${sanjay.remark}"`, sanjay.history);
-      }
+      console.log(`[OPTION_A_ATTENDER_SYNC] Logged in attender: "${attenderName}" (${attenderId}) | Total assigned contacts: ${logs.length}`);
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -1885,21 +1903,28 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     updatedAt: new Date()
   };
 
-  // Handle "Reg.Done" registrations collection sync (highly robust, history-driven)
-  try {
+  // Handle "Reg.Done" registrations collection sync (only when status/program changed, saving 1 read per save)
+  const registrationSyncRequired = 
+    updates.status === "Reg.Done" || 
+    previousStatus === "Reg.Done" || 
+    updates["Called For"] !== undefined ||
+    updates.calledFor !== undefined ||
+    updates.called_for !== undefined;
 
-    if (!freshData || freshData._deleted) {
-      // If contact is deleted, clean up all its registration snapshots
-      const q = query(
-        collection(db, "registrations"),
-        where(documentId(), ">=", logId),
-        where(documentId(), "<=", logId + "\uf8ff")
-      );
-      const existingRegsSnap = await getDocs(q);
-      for (const regDoc of existingRegsSnap.docs) {
-        await deleteDoc(regDoc.ref);
-      }
-    } else {
+  if (registrationSyncRequired || freshData._deleted) {
+    try {
+      if (!freshData || freshData._deleted) {
+        // If contact is deleted, clean up all its registration snapshots
+        const q = query(
+          collection(db, "registrations"),
+          where(documentId(), ">=", logId),
+          where(documentId(), "<=", logId + "\uf8ff")
+        );
+        const existingRegsSnap = await getDocs(q);
+        for (const regDoc of existingRegsSnap.docs) {
+          await deleteDoc(regDoc.ref);
+        }
+      } else {
       // Gather all historical entries to find all valid Reg.Done programs
       const allHistory = [];
       if (Array.isArray(freshData.history)) {
@@ -2020,9 +2045,8 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
   } catch (e) {
     console.error("Error during registration sync:", e);
   }
-  // Sync to callCenterCache using in-memory freshData and knownPartId (0 extra reads)
-  const knownPartId = existingContact?._partId || logData?._partId || null;
-  await updateCacheContacts([logId], { [logId]: freshData }, { [logId]: knownPartId });
+}
+// Option A Scoped Sync: Contacts collection is the direct source of truth (0 extra callCenterCache reads/writes)
 };
 
 export const updateCallLog = async (logId, updates, attenderId = null, attenderName = null, existingContact = null) => {
@@ -2343,8 +2367,6 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
   // Register tag in active tags collection
   await registerActiveTag(finalProgramName);
 
-  const knownPartId = isExisting ? existingData._partId : null;
-  await updateCacheContacts([docRef.id], { [docRef.id]: logPayload }, { [docRef.id]: knownPartId });
   return docRef.id;
 };
 
@@ -4683,6 +4705,25 @@ export const getPendingWrites = async () => {
 export const queuePendingWrite = async (actionType, payload) => {
   try {
     const queue = await getPendingWrites();
+
+    // Coalesce consecutive updates for the same contact
+    if (actionType === "updateCallLog" && payload?.logId) {
+      const existingIdx = queue.findIndex(
+        item => item.actionType === "updateCallLog" && item.payload?.logId === payload.logId
+      );
+      if (existingIdx >= 0) {
+        const existing = queue[existingIdx];
+        existing.payload.updates = {
+          ...(existing.payload.updates || {}),
+          ...(payload.updates || {})
+        };
+        existing.timestamp = new Date().toISOString();
+        await setIDBCache(PENDING_WRITES_KEY, queue);
+        console.log(`[WRITE QUEUE COALESCED] Merged rapid edits for contact ${payload.logId} into single queued write`);
+        return existing;
+      }
+    }
+
     const newItem = {
       id: `pw_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       actionType,

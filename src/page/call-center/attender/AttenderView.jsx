@@ -1087,7 +1087,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     "ghl_id", "_contactrefid", "objectionreason",
     "normalizedphone", "normalizedmobile", "contactrefid", "conversionSource", "conversionsource",
     "convertedat", "convertedby", "isassigned",
-    "assignedname", "assignedto", "assignedat", "registeredyearmonth"
+    "assignedname", "assignedto", "assignedat", "registeredyearmonth",
+    "calledfor", "called_for"
   ]), []);
 
   const dynamicCols = useMemo(() => {

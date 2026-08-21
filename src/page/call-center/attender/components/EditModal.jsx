@@ -508,15 +508,13 @@ export const EditModal = ({
 
         if (combinedMatches.length > 0) {
           const dup = combinedMatches[0];
-          const hasAssignedMatch = combinedMatches.some(m => m.isAssigned === true || (Array.isArray(m.assignedTo) && m.assignedTo.length > 0));
-
           setGlobalDup({
             count:       combinedMatches.length,
             allTags:     Array.from(allTagsSet).sort(),
             matches:     combinedMatches,
             first:       dup,
             programName: dup?.programName,
-            showWarning: hasAssignedMatch
+            showWarning: true
           });
 
           if (activeToastRef.current) {
