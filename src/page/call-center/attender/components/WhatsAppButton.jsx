@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { ChevronDown, Send } from "lucide-react";
-import { subscribeToCallCenterOptions, DEFAULT_WHATSAPP_TEMPLATES } from "../../../../lib/db";
+import { getSettingsOptions, DEFAULT_WHATSAPP_TEMPLATES } from "../../../../lib/db";
 
 /**
  * Formats a phone number for WhatsApp wa.me links
@@ -61,14 +61,13 @@ export const WhatsAppButton = ({ phone, name = "", variant = "default" }) => {
   const dropdownRef = useRef(null);
 
   useEffect(() => {
-    const unsubscribe = subscribeToCallCenterOptions((options) => {
-      if (options?.whatsappTemplates && options.whatsappTemplates.length > 0) {
-        setDbTemplates(options.whatsappTemplates);
-      }
-    });
-    return () => {
-      if (typeof unsubscribe === "function") unsubscribe();
-    };
+    getSettingsOptions()
+      .then(options => {
+        if (options?.whatsappTemplates && options.whatsappTemplates.length > 0) {
+          setDbTemplates(options.whatsappTemplates);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {

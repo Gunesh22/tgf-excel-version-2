@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-hot-toast";
 import { Settings, ArrowLeft, ChevronRight, Loader } from "lucide-react";
-import { getPrograms, getAttenders, subscribeToCallCenterOptions, subscribeToAllCallLogs, subscribeToRegistrations, getRegistrationMonths, runAutoLockAndPurgeCheck } from "../../../lib/db";
+import { getPrograms, getAttenders, getSettingsOptions, subscribeToAllCallLogs, subscribeToRegistrations, getRegistrationMonths, runAutoLockAndPurgeCheck } from "../../../lib/db";
 import { updateDynamicOptions } from "../attender/utils";
 import ImportContacts from "../ImportContacts";
 import { TAB_ITEMS } from "./utils.jsx";
@@ -33,13 +33,14 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
 
   useEffect(() => {
     loadAll();
-    const unsub = subscribeToCallCenterOptions((data) => {
-      setSettingsOptions(data);
-      updateDynamicOptions(data);
-    });
-    return () => {
-      if (unsub) unsub();
-    };
+    getSettingsOptions()
+      .then((data) => {
+        if (data) {
+          setSettingsOptions(data);
+          updateDynamicOptions(data);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Hoisted subscription to all call logs

@@ -539,12 +539,121 @@ export function getCanonicalStatus(status) {
   if (sLower === "called by mistake") return "Called by mistake";
   if (sLower === "not possible") return "Not possible";
   if (sLower === "shivir done") return "Shivir done";
-  if (sLower === "no answer") return "no answer";
-  if (sLower === "not attended") return "Not Attended";
-  if (sLower === "call log added") return "Call Log Added";
   if (sLower === "no network") return "No Network";
   if (sLower === "wrong no" || sLower === "wrong no.") return "wrong no.";
   return status;
+}
+
+export function getSharedAttenders(log) {
+  if (!log) return [];
+
+  const idToNameMap = new Map();
+
+  const registerPair = (id, name) => {
+    if (!id || typeof id !== "string") return;
+    const cleanId = id.trim();
+    if (!cleanId) return;
+
+    if (name && typeof name === "string") {
+      const cleanName = name.trim();
+      if (cleanName && cleanName !== cleanId && !cleanName.match(/^[a-zA-Z0-9_-]{15,35}$/)) {
+        idToNameMap.set(cleanId, cleanName);
+      }
+    }
+  };
+
+  // 1. Gather mappings from attenderStates
+  if (log.attenderStates && typeof log.attenderStates === "object") {
+    Object.entries(log.attenderStates).forEach(([key, state]) => {
+      if (state && typeof state === "object" && !state._deleted && !state.isDeleted) {
+        const attId = state.attenderId || key;
+        const attName = state.attenderName || state.assignedName || state.name;
+        registerPair(attId, attName);
+      }
+    });
+  }
+
+  // 2. Gather mapping from top-level log fields
+  registerPair(log.attenderId, log.attenderName || log.assignedName);
+
+  // 3. Gather mapping by pairing assignedTo array with assignedName string
+  const assignedToArr = Array.isArray(log.assignedTo)
+    ? log.assignedTo
+    : (typeof log.assignedTo === "string" && log.assignedTo.trim() ? log.assignedTo.split(",") : []);
+
+  const assignedNameArr = typeof log.assignedName === "string" && log.assignedName.trim()
+    ? log.assignedName.split(",")
+    : [];
+
+  assignedToArr.forEach((rawId, idx) => {
+    const rawName = assignedNameArr[idx] || (assignedNameArr.length === 1 ? assignedNameArr[0] : "");
+    registerPair(rawId, rawName);
+  });
+
+  const attendersSet = new Set();
+
+  // A. Process attenderStates
+  if (log.attenderStates && typeof log.attenderStates === "object") {
+    Object.entries(log.attenderStates).forEach(([key, state]) => {
+      if (state && typeof state === "object" && !state._deleted && !state.isDeleted) {
+        const attId = (state.attenderId || key || "").trim();
+        const attName = (state.attenderName || state.assignedName || state.name || "").trim();
+        const canonical = (attName && !attName.match(/^[a-zA-Z0-9_-]{15,35}$/))
+          ? attName
+          : (idToNameMap.get(attId) || attId);
+        if (canonical) attendersSet.add(canonical);
+      }
+    });
+  }
+
+  // B. Process assignedTo array
+  assignedToArr.forEach(item => {
+    if (!item || typeof item !== "string") return;
+    const trimmed = item.trim();
+    if (!trimmed) return;
+    const resolved = idToNameMap.get(trimmed) || trimmed;
+    attendersSet.add(resolved);
+  });
+
+  // C. Process assignedName array
+  assignedNameArr.forEach(item => {
+    if (!item || typeof item !== "string") return;
+    const trimmed = item.trim();
+    if (trimmed && !trimmed.match(/^[a-zA-Z0-9_-]{15,35}$/)) {
+      attendersSet.add(trimmed);
+    }
+  });
+
+  // D. Process history array
+  if (Array.isArray(log.history)) {
+    log.history.forEach(item => {
+      if (item && typeof item === "object") {
+        const attId = item.attenderId;
+        const attName = item.attenderName || item.assignedName || item.by || item.editedBy || item.name;
+        registerPair(attId, attName);
+        if (attName && typeof attName === "string") {
+          const trimmed = attName.trim();
+          if (trimmed && !trimmed.match(/^[a-zA-Z0-9_-]{15,35}$/)) {
+            attendersSet.add(trimmed);
+          }
+        }
+      }
+    });
+  }
+
+  const rawList = Array.from(attendersSet);
+  const humanNames = rawList.filter(x => !x.match(/^[a-zA-Z0-9_-]{15,35}$/));
+  const rawIds = rawList.filter(x => x.match(/^[a-zA-Z0-9_-]{15,35}$/));
+
+  if (humanNames.length > 0) {
+    const unmappedIds = rawIds.filter(id => !idToNameMap.has(id));
+    if (humanNames.length >= assignedToArr.length && humanNames.length >= 1) {
+      return humanNames;
+    }
+    return Array.from(new Set([...humanNames, ...unmappedIds]));
+  }
+
+  return rawList;
 }
 
 

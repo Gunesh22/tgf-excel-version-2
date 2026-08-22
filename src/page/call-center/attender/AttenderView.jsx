@@ -14,7 +14,7 @@ import {
   INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME, ensureIncomingProgram,
   OUTGOING_PROGRAM_ID, OUTGOING_PROGRAM_NAME, ensureOutgoingProgram,
   globalSearchContacts, searchAttenderContacts, claimContact, removeAttenderFromContact, claimCRMContact,
-  fetchHistoricalCachePartition, purgeStaleHistoricalCache
+  fetchHistoricalCachePartition, purgeStaleHistoricalCache, fetchFreshSharedLead
 } from "../../../lib/db";
 import { searchCRM } from "../../../lib/ghl";
 import {
@@ -43,6 +43,25 @@ function parseTimestamp(t) {
     return new Date(t.seconds * 1000 + Math.round((t.nanoseconds || 0) / 1000000));
   }
   return new Date(t);
+}
+
+function enrichLogsWithCallbackFlags(logs) {
+  if (!Array.isArray(logs)) return [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return logs.map(log => {
+    let shouldBeDue = false;
+    if (log.callbackDate) {
+      const cbDate = parseTimestamp(log.callbackDate);
+      if (cbDate && !isNaN(cbDate.getTime())) {
+        cbDate.setHours(0, 0, 0, 0);
+        shouldBeDue = cbDate <= today && log.callbackStatus !== "done" && log.callbackStatus !== "cancelled";
+      }
+    }
+    if (log._callbackDue === shouldBeDue) return log;
+    return { ...log, _callbackDue: shouldBeDue };
+  });
 }
 import { Pagination } from "./components/Pagination";
 import { AttenderFilters } from "./components/AttenderFilters";
@@ -242,14 +261,78 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   useEffect(() => {
     // Subscribe by attenderId & attenderName — all this attender's logs across all programs
     setIsLoadingProgram(true);
+    console.log(`[ATTENDER VIEW SUB] Subscribing for attenderId: "${attenderId}", attenderName: "${attenderName}"`);
     unsubRef.current = subscribeToCallLogs(attenderId, attenderName, (logs) => {
-      setCallLogs(logs);
+      console.log(`[ATTENDER VIEW RECEIVED LOGS] Received ${logs.length} leads in AttenderView callback`);
+      setCallLogs(enrichLogsWithCallbackFlags(logs));
       setIsLoadingProgram(false);
     });
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [attenderId, attenderName]);
 
-  // Triggered when user clicks "Search" button or presses Enter in Search bar
+  // Modal Close Handler with Logging
+  const handleCloseModal = useCallback(() => {
+    if (editingRow) {
+      const leadName = editingRow.Name || editingRow.name || "Lead";
+      console.log(
+        `%c✖️ [MODAL CLOSED] Closed edit modal for "${leadName}" (${editingRow.id || 'new'})`,
+        "background: #475569; color: #cbd5e1; font-weight: bold; padding: 3px 8px; border-radius: 4px;"
+      );
+    }
+    setEditingRow(null);
+  }, [editingRow]);
+
+  // Trigger 1: Handle Row Selection to open EditModal (On-demand fetch for shared leads)
+  const handleSelectRow = useCallback(async (row) => {
+    if (!row) return;
+    const isShared = Array.isArray(row.assignedTo) && row.assignedTo.length > 1;
+    const leadName = row.Name || row.name || "Lead";
+
+    console.log(
+      `%c📖 [MODAL OPENED] Opening edit modal for "${leadName}" (${row.id || 'new'}) | Loading 0ms local cache & background sync...`,
+      "background: #7c3aed; color: #ffffff; font-weight: bold; padding: 3px 8px; border-radius: 4px;"
+    );
+
+    console.log(
+      `[ROW SELECTED DIAGNOSTIC] Lead "${leadName}" (${row.id || 'new'}) | _isNew: ${!!row._isNew} | currentAttender: "${attenderName}" (${attenderId}) | assignedTo:`,
+      row.assignedTo,
+      "| attenderStates keys:",
+      Object.keys(row.attenderStates || {}),
+      "| history length:",
+      Array.isArray(row.history) ? row.history.length : 0
+    );
+
+    setEditingRow(row); // 0ms Instant Modal Render from local cache
+
+    // Fetch fresh copy from Firestore contacts collection (1 Read) on modal open
+    if (row.id && !row._isNew) {
+      const fresh = await fetchFreshSharedLead(row, attenderId, attenderName, true);
+      if (fresh) {
+        setEditingRow(fresh);
+        setCallLogs(prev => prev.map(l => l.id === fresh.id ? { ...l, ...fresh } : l));
+      }
+    }
+  }, [attenderId, attenderName]);
+
+  // Trigger 3: Handle Manual Single-Lead Refresh
+  const handleRefreshSingleLead = useCallback(async (row) => {
+    if (!row || !row.id) return;
+    const leadName = row.Name || row.name || "Lead";
+    console.log(
+      `%c🔄 [MANUAL SYNC TRIGGERED] Manual refresh requested for shared lead "${leadName}" (${row.id})`,
+      "background: #0284c7; color: #e0f2fe; font-weight: bold; padding: 3px 8px; border-radius: 4px;"
+    );
+    toast.loading(`Syncing latest details for ${leadName}...`, { id: `sync-${row.id}` });
+    const fresh = await fetchFreshSharedLead(row, attenderId, attenderName, true);
+    if (fresh) {
+      setCallLogs(prev => prev.map(l => l.id === fresh.id ? { ...l, ...fresh } : l));
+      toast.success(`Updated details for ${leadName}!`, { id: `sync-${row.id}` });
+    } else {
+      toast.dismiss(`sync-${row.id}`);
+    }
+  }, [attenderId, attenderName]);
+
+  // Trigger 2: Triggered when user clicks "Search" button or presses Enter in Search bar
   const handleTriggerSearch = useCallback(async (overrideQuery) => {
     const q = (typeof overrideQuery === "string" ? overrideQuery : searchQuery).trim();
     if (!q || q.length < 2) return;
@@ -257,7 +340,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     // Check if matching leads exist in currently loaded memory
     const qLower = q.toLowerCase();
     const norm = normalizePhone(q);
-    const hasLocalMatch = callLogs.some(log => {
+    const localMatch = callLogs.find(log => {
       const name = String(log.Name || log.name || "").toLowerCase();
       const phone = String(log.Phone || log.phone || log.Mobile || log.mobile || "");
       const normPhone = normalizePhone(phone);
@@ -265,8 +348,15 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       return name.includes(qLower) || (norm.length >= 4 && normPhone.includes(norm)) || email.includes(qLower);
     });
 
-    if (hasLocalMatch) {
-      console.log("[SEARCH] Local match found in memory/IndexedDB — skipping Firebase read");
+    if (localMatch) {
+      console.log("[TRIGGER 2 SEARCH] Local match found in memory/IndexedDB");
+      if (Array.isArray(localMatch.assignedTo) && localMatch.assignedTo.length > 1) {
+        console.log(`[TRIGGER 2 SEARCH REFRESH] Fetching fresh copy of shared lead ${localMatch.id}...`);
+        const fresh = await fetchFreshSharedLead(localMatch, attenderId, attenderName);
+        if (fresh) {
+          setCallLogs(prev => prev.map(l => l.id === fresh.id ? { ...l, ...fresh } : l));
+        }
+      }
       return;
     }
 
@@ -358,23 +448,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   // Refresh callback-due flags every 60 seconds for long-running sessions
   useEffect(() => {
     const interval = setInterval(() => {
-      setCallLogs(prev => {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        let changed = false;
-        const updated = prev.map(log => {
-          if (log.callbackDate) {
-            const cbDate = parseTimestamp(log.callbackDate);
-            if (cbDate && !isNaN(cbDate.getTime())) {
-              cbDate.setHours(0, 0, 0, 0);
-              const shouldBeDue = cbDate <= today;
-              if (log._callbackDue !== shouldBeDue) { changed = true; return { ...log, _callbackDue: shouldBeDue }; }
-            }
-          }
-          return log;
-        });
-        return changed ? updated : prev; // Only trigger re-render if something actually changed
-      });
+      setCallLogs(prev => enrichLogsWithCallbackFlags(prev));
     }, 60000);
     return () => clearInterval(interval);
   }, []);
@@ -678,7 +752,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       let isTagged = false;
 
       const checkTag = (x) => {
-        if (programNames.has(x)) {
+        if (x) {
           tagsSet.add(x);
           isTagged = true;
         }
@@ -1915,7 +1989,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
             rowsPerPage={rowsPerPage}
             duplicatePhoneMap={duplicatePhoneMap}
             didDrag={didDrag}
-            setEditingRow={setEditingRow}
+            setEditingRow={handleSelectRow}
+            onRefreshLead={handleRefreshSingleLead}
             callLogs={callLogs}
           />
 
@@ -1941,19 +2016,24 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           attenderName={attenderName}
           programs={programs.filter(p => p.id !== INCOMING_PROGRAM_ID && p.id !== OUTGOING_PROGRAM_ID)}
           onSave={(updated, isOptimistic) => {
+            const cleanUpdated = { ...updated };
+            if (cleanUpdated.id) delete cleanUpdated._isNew;
             setCallLogs(prev => {
-              const index = prev.findIndex(l => l.id === updated.id);
+              const index = prev.findIndex(l => (cleanUpdated.id && l.id === cleanUpdated.id) || (cleanUpdated._timestamp && l._timestamp === cleanUpdated._timestamp));
               if (index >= 0) {
                 const next = [...prev];
-                next[index] = { ...next[index], ...updated };
+                const merged = { ...next[index], ...cleanUpdated };
+                if (merged.id) delete merged._isNew;
+                next[index] = merged;
                 return next;
               }
-              return [updated, ...prev];
+              return [cleanUpdated, ...prev];
             });
             if (!isOptimistic) setEditingRow(null);
           }}
           onDelete={handleDeleteRow}
-          onClose={() => setEditingRow(null)}
+          onClose={handleCloseModal}
+          onRefreshLead={handleRefreshSingleLead}
         />
       ) : (
         <EditModal
@@ -1964,19 +2044,24 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           attenderName={attenderName}
           programs={programs.filter(p => p.id !== INCOMING_PROGRAM_ID && p.id !== OUTGOING_PROGRAM_ID)}
           onSave={(updated, isOptimistic) => {
+            const cleanUpdated = { ...updated };
+            if (cleanUpdated.id) delete cleanUpdated._isNew;
             setCallLogs(prev => {
-              const index = prev.findIndex(l => l.id === updated.id);
+              const index = prev.findIndex(l => (cleanUpdated.id && l.id === cleanUpdated.id) || (cleanUpdated._timestamp && l._timestamp === cleanUpdated._timestamp));
               if (index >= 0) {
                 const next = [...prev];
-                next[index] = { ...next[index], ...updated };
+                const merged = { ...next[index], ...cleanUpdated };
+                if (merged.id) delete merged._isNew;
+                next[index] = merged;
                 return next;
               }
-              return [updated, ...prev];
+              return [cleanUpdated, ...prev];
             });
-            if (!isOptimistic) setEditingRow(null);
+            if (!isOptimistic) handleCloseModal();
           }}
           onDelete={handleDeleteRow}
-          onClose={() => setEditingRow(null)}
+          onClose={handleCloseModal}
+          onRefreshLead={handleRefreshSingleLead}
         />
       )
     )}

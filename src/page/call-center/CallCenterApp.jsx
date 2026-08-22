@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Toaster, toast } from "react-hot-toast";
 import { Heart, Settings, BarChart3, Users, FileSpreadsheet, ClipboardCheck, ChevronRight, UserCheck, Phone, Lock, Eye, EyeOff, ShieldCheck, User } from "lucide-react";
-import { getAttenders, getAdminPassword, subscribeToCallCenterOptions } from "../../lib/db";
+import { getAttenders, getAdminPassword, getSettingsOptions } from "../../lib/db";
 import { updateDynamicOptions } from "./attender/utils";
 import AttenderView from "./attender/AttenderView";
 import AdminPanel from "./admin/AdminPanel";
@@ -65,13 +65,14 @@ export default function CallCenterApp() {
 
   useEffect(() => {
     load();
-    const unsub = subscribeToCallCenterOptions((data) => {
-      updateDynamicOptions(data);
-      setOptionsVersion(v => v + 1);
-    });
-    return () => {
-      if (unsub) unsub();
-    };
+    getSettingsOptions()
+      .then(data => {
+        if (data) {
+          updateDynamicOptions(data);
+          setOptionsVersion(v => v + 1);
+        }
+      })
+      .catch(err => console.warn("Failed to load call center options:", err));
   }, []);
 
   const load = async () => {

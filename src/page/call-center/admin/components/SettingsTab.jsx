@@ -21,6 +21,9 @@ import {
   mergeAllCompatiblePartitionsOneByOne,
   getActiveCacheMonths,
   getLockedMonthlyReports,
+  rebuildRegistrationsCache,
+  verifyRegistrationsCache,
+  getRegistrationsCachePartitionsDetail,
   DEFAULT_CONNECTED_STATUSES,
   DEFAULT_NOT_CONNECTED_STATUSES,
   DEFAULT_WHATSAPP_TEMPLATES
@@ -33,6 +36,81 @@ export default function SettingsTab() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [verificationResult, setVerificationResult] = useState(null);
+
+  // Registration Cache States
+  const [isVerifyingRegCache, setIsVerifyingRegCache] = useState(false);
+  const [isRebuildingRegCache, setIsRebuildingRegCache] = useState(false);
+  const [regCacheVerificationResult, setRegCacheVerificationResult] = useState(null);
+  const [regPartitionsList, setRegPartitionsList] = useState([]);
+  const [isLoadingRegPartitions, setIsLoadingRegPartitions] = useState(false);
+
+  const fetchRegPartitionsList = async () => {
+    setIsLoadingRegPartitions(true);
+    try {
+      const details = await getRegistrationsCachePartitionsDetail();
+      setRegPartitionsList(details);
+    } catch (err) {
+      console.error("Error fetching registration partition list:", err);
+    } finally {
+      setIsLoadingRegPartitions(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRegPartitionsList();
+  }, []);
+
+  const handleVerifyRegCache = async () => {
+    setIsVerifyingRegCache(true);
+    setRegCacheVerificationResult(null);
+    try {
+      const res = await verifyRegistrationsCache();
+      setRegCacheVerificationResult(res);
+      if (res.status === "healthy") {
+        toast.success("Registrations Cache is fully verified and matching perfectly!");
+      } else {
+        toast.error("Registrations Cache discrepancies found!");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Registrations Cache verification failed: " + err.message);
+    } finally {
+      setIsVerifyingRegCache(false);
+    }
+  };
+
+  const handleDryRunRegCache = async () => {
+    setIsRebuildingRegCache(true);
+    try {
+      const res = await rebuildRegistrationsCache(true);
+      const partsSummary = res.partsToSet.map(p => `• ${p.docId}: ${p.count} registrations (${p.sizeKb} KB)`).join("\n");
+      alert(`[REGISTRATIONS DRY RUN SUCCESS]\n0 WRITES PERFORMED!\n\nTotal Registrations: ${res.totalRegistrations}\nPartitions Prepared (${res.newPartsCount}):\n${partsSummary}`);
+      toast.success("Registration Cache Dry Run complete!");
+    } catch (err) {
+      console.error(err);
+      toast.error("Registration Cache Dry Run failed: " + err.message);
+    } finally {
+      setIsRebuildingRegCache(false);
+    }
+  };
+
+  const handleRebuildRegCache = async () => {
+    if (!window.confirm("Rebuild Registration Cache documents? This will group all registrations by month into partition documents in registrationsCache.")) {
+      return;
+    }
+    setIsRebuildingRegCache(true);
+    try {
+      await rebuildRegistrationsCache(false);
+      toast.success("Registrations Cache rebuilt successfully!");
+      setRegCacheVerificationResult(null);
+      await fetchRegPartitionsList();
+    } catch (err) {
+      console.error(err);
+      toast.error("Registrations Cache rebuild failed: " + err.message);
+    } finally {
+      setIsRebuildingRegCache(false);
+    }
+  };
   const [activeMonths, setActiveMonths] = useState([]);
   const [lockedMonths, setLockedMonths] = useState([]);
   const [isLoadingMonths, setIsLoadingMonths] = useState(false);
@@ -839,6 +917,114 @@ export default function SettingsTab() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Abhivyakti Registration Cache Card */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Activity size={20} className="text-cyan-600 animate-pulse" />
+              <h3 className="font-bold text-gray-900 text-base">Abhivyakti Registration Cache & Performance Health</h3>
+            </div>
+            <p className="text-xs text-gray-400 font-medium">
+              Month-partitioned cloud cache for Abhivyakti registrations (`registrationsCache`). Loading Abhivyakti analytics now costs only 1 read per active month instead of 147 reads!
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleVerifyRegCache}
+              disabled={isVerifyingRegCache || isRebuildingRegCache}
+              className="px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 flex items-center gap-2 disabled:opacity-50 transition-colors cursor-pointer"
+            >
+              {isVerifyingRegCache ? <Loader size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              Verify Registration Cache
+            </button>
+            <button
+              onClick={handleDryRunRegCache}
+              disabled={isVerifyingRegCache || isRebuildingRegCache}
+              className="px-4 py-2 border border-amber-300 bg-amber-50 text-amber-800 rounded-xl text-xs font-semibold hover:bg-amber-100 flex items-center gap-2 disabled:opacity-50 transition-colors cursor-pointer"
+              title="Test registration partition building in memory without writing to Firestore"
+            >
+              {isRebuildingRegCache ? <Loader size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              Test Rebuild (Dry Run)
+            </button>
+            <button
+              onClick={handleRebuildRegCache}
+              disabled={isVerifyingRegCache || isRebuildingRegCache}
+              className="px-4 py-2 bg-cyan-600 text-white rounded-xl text-xs font-semibold hover:bg-cyan-700 flex items-center gap-2 disabled:opacity-50 transition-colors cursor-pointer"
+            >
+              {isRebuildingRegCache ? <Loader size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              Force Rebuild Registration Cache
+            </button>
+          </div>
+        </div>
+
+        {/* Live Registration Partition Inspector & Size Table */}
+        <div className="border border-gray-100 rounded-xl p-4 bg-cyan-50/20 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers size={16} className="text-cyan-600" />
+              <span className="text-xs font-bold text-gray-900">Active Registrations Cache Partition Inspector</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800 font-semibold">
+                {regPartitionsList.length} Partitions Active
+              </span>
+            </div>
+            <button
+              onClick={fetchRegPartitionsList}
+              disabled={isLoadingRegPartitions}
+              className="text-[11px] text-cyan-700 hover:text-cyan-900 font-semibold flex items-center gap-1 cursor-pointer"
+            >
+              <RefreshCw size={12} className={isLoadingRegPartitions ? "animate-spin" : ""} />
+              Refresh
+            </button>
+          </div>
+
+          {isLoadingRegPartitions ? (
+            <div className="flex items-center justify-center py-6 text-xs text-gray-400 gap-2">
+              <Loader size={16} className="animate-spin text-cyan-500" />
+              Loading active registration partition metrics...
+            </div>
+          ) : regPartitionsList.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">No registration cache partitions detected. Click "Force Rebuild Registration Cache" to initialize.</p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2 pt-1">
+              {regPartitionsList.map(p => (
+                <div key={p.docId} className="p-2.5 bg-white border border-cyan-100 rounded-lg flex flex-col justify-between space-y-1 shadow-xs">
+                  <div className="font-mono text-[11px] font-bold text-gray-800 truncate" title={p.docId}>
+                    {p.docId}
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-gray-500">
+                    <span>{p.count} regs</span>
+                    <span className="font-semibold text-cyan-800">{p.sizeKb} KB</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {regCacheVerificationResult && (
+          <div className={`p-4 rounded-xl border flex gap-3 text-xs leading-relaxed transition-all ${
+            regCacheVerificationResult.status === "healthy" 
+              ? "bg-emerald-50/50 border-emerald-100 text-emerald-800" 
+              : "bg-rose-50/50 border-rose-100 text-rose-800"
+          }`}>
+            <div className="mt-0.5">
+              {regCacheVerificationResult.status === "healthy" ? (
+                <CheckCircle2 size={18} className="text-emerald-600" />
+              ) : (
+                <AlertTriangle size={18} className="text-rose-600" />
+              )}
+            </div>
+            <div className="space-y-1 flex-1">
+              <div className="font-bold flex items-center gap-2">
+                Registration Cache Status: {regCacheVerificationResult.status.toUpperCase()}
+              </div>
+              <p className="font-medium opacity-90">{regCacheVerificationResult.message}</p>
             </div>
           </div>
         )}

@@ -1,7 +1,7 @@
 import React from "react";
-import { Flame, Clock } from "lucide-react";
+import { Flame, Clock, RotateCw, Users } from "lucide-react";
 import { normalizePhone } from "../../../../lib/db";
-import { getFieldWithFallback, isUnansweredCallback, getCanonicalStatus } from "../utils";
+import { getFieldWithFallback, isUnansweredCallback, getCanonicalStatus, getSharedAttenders } from "../utils";
 
 function CollapsedTags({ tags }) {
   const [expanded, setExpanded] = React.useState(false);
@@ -93,6 +93,7 @@ export function ContactTable({
   duplicatePhoneMap,
   didDrag,
   setEditingRow,
+  onRefreshLead,
   callLogs
 }) {
   const getStatusBadge = (log) => {
@@ -264,10 +265,25 @@ export function ContactTable({
                       );
                     }
 
+                    const sharedList = getSharedAttenders(log);
+                    const isShared = sharedList.length > 1;
+
                     return (
                       <td key={col} className={`py-2 px-4 border-r border-gray-100 text-sm ${isName ? "font-bold text-gray-900" : "text-gray-700"} min-w-[140px] whitespace-normal align-top`}>
                         {ci === 0 && log.isHotLead && <Flame size={15} className="text-orange-500 shrink-0 inline mr-1" fill="currentColor" />}
                         {val || "\u2014"}
+                        {isName && isShared && (
+                          <span 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onRefreshLead) onRefreshLead(log);
+                            }}
+                            title={`Shared Lead with: ${sharedList.join(", ")} | Click to sync latest team updates`}
+                            className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 cursor-pointer transition shadow-2xs"
+                          >
+                            <Users size={10} /> Shared ({sharedList.length}) <RotateCw size={9} className="hover:rotate-180 transition-transform" />
+                          </span>
+                        )}
                         {isDupInProg && (
                           <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200">
                             Same Person

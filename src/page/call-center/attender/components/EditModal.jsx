@@ -4,7 +4,7 @@ import {
   Phone, Plus, X, Save, Tag, User, MapPin, MessageSquare,
   Hash, Clock, CheckCircle2, AlertCircle, Trash2,
   PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame,
-  ChevronDown, Check, Search
+  ChevronDown, Check, Search, Users
 } from "lucide-react";
 import {
   addIncomingCallLog, updateCallLog, createProgram, checkGlobalDuplicate, findMatchingAttenderState, combineContactHistories
@@ -37,6 +37,7 @@ function parseTimestamp(t) {
 
 import SearchableDropdown from "./edit-modal/SearchableDropdown";
 import DuplicateBanner from "./edit-modal/DuplicateBanner";
+import SharedBanner from "./edit-modal/SharedBanner";
 import CallEntryTab from "./edit-modal/CallEntryTab";
 import ProfileDetailsTab from "./edit-modal/ProfileDetailsTab";
 import CallButton from "./CallButton";
@@ -52,7 +53,8 @@ export const EditModal = ({
   programs = [],
   onSave,
   onDelete,
-  onClose
+  onClose,
+  onRefreshLead
 }) => {
   const [selectedAttenderId, setSelectedAttenderId] = useState(() => (attenderId || row?.attenderId || ""));
   const [selectedAttenderName, setSelectedAttenderName] = useState(() => (attenderName || row?.attenderName || ""));
@@ -1157,7 +1159,7 @@ export const EditModal = ({
   const handleSaveAndClose = async (overrideFields = null, isFromHistory = false) => {
     if (saving) return; // Prevent double save
 
-    const targetEdited = (overrideFields && typeof overrideFields === "object" && !overrideFields.target && !overrideFields.nativeEvent)
+    let targetEdited = (overrideFields && typeof overrideFields === "object" && !overrideFields.target && !overrideFields.nativeEvent)
       ? { ...edited, ...overrideFields }
       : { ...edited };
 
@@ -1532,6 +1534,9 @@ export const EditModal = ({
       } else {
         const res = await updateCallLog(targetDocId, updates, activeAttenderId, activeAttenderName, row);
         console.log("[EDIT MODAL SAVE] updateCallLog result:", res);
+        if (res?.updatedLead) {
+          targetEdited = { ...targetEdited, ...res.updatedLead };
+        }
       }
 
       console.log("✅ Save successful!");
@@ -1761,6 +1766,14 @@ export const EditModal = ({
               ✏️ Edit Past Logs
             </button>
           </div>
+
+          {/* Shared Lead Banner */}
+          <SharedBanner
+            edited={edited}
+            row={row}
+            currentAttenderName={attenderName}
+            onRefreshLead={onRefreshLead}
+          />
 
           {/* Duplicate Banner */}
           <DuplicateBanner

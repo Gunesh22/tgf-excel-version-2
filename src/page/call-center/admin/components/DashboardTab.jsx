@@ -750,8 +750,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
           <h3 className="text-sm font-bold text-gray-700 mb-4">Outcome Distribution</h3>
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 h-[240px]">
-            <div className="w-full sm:w-1/2 h-full">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="w-full sm:w-1/2 h-full min-h-[200px]">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
                 <PieChart>
                   <Pie
                     data={outcomeData}
@@ -795,15 +795,17 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
         </div>
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
           <h3 className="text-sm font-bold text-gray-700 mb-4">Calls by Attender</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={attenderStats} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" />
-              <YAxis dataKey="name" type="category" width={80} tick={{ fontSize: 12 }} />
-              <Tooltip />
-              <Bar dataKey="total" fill="#6366f1" radius={[0, 6, 6, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          <div className="w-full min-h-[240px]">
+            <ResponsiveContainer width="100%" height={240} minWidth={0} minHeight={200}>
+              <BarChart data={attenderStats} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" />
+                <YAxis dataKey="name" type="category" width={80} tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Bar dataKey="total" fill="#6366f1" radius={[0, 6, 6, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       </div>
 

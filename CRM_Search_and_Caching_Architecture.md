@@ -125,3 +125,39 @@ service cloud.firestore {
 | **Submitting Call Entry** | **0 Reads** | **1 Write** |
 
 *Estimated Monthly Cost per Attender:* **<$0.05 / month** (Under 100 reads per active shift day).
+
+---
+
+## 7. Shared Lead Management & Transparency Architecture
+
+### Overview
+Leads can be assigned to multiple attenders simultaneously (e.g. joint follow-ups, transfers, or program promotions). The CRM maintains strict real-time transparency and state isolation for shared leads without incurring redundant database overhead.
+
+### Data Model Architecture
+* **`assignedTo` (Array):** Contains all assigned attender document IDs (e.g. `["JW20HztSjMfwNbVaCpxz", "ZJQsev2aLqi2ispr3j74"]`).
+* **`assignedName` (String):** Comma-separated canonical attender names (e.g. `"Test, Manisha"`).
+* **`attenderStates` (Map):** Per-attender state isolation map holding remarks, status, call history, and deleted flags (`_deleted`).
+
+```mermaid
+graph LR
+    A[Lead Document] --> B[assignedTo Array]
+    A --> C[assignedName String]
+    A --> D[attenderStates Map]
+    D --> E[Attender 1 State: Status / Remarks]
+    D --> F[Attender 2 State: Status / Remarks]
+```
+
+### Shared Attender Resolution (`getSharedAttenders`)
+To prevent false-positive shared lead badges (e.g. treating an attender's ID and Name as two separate attenders), `getSharedAttenders` resolves identity deterministically:
+
+1. **ID-to-Name Mapping:** Builds a canonical mapping between attender IDs and human names from `attenderStates`, `assignedTo`, and `assignedName`.
+2. **Deletion Exclusion:** Ignores soft-deleted states (`state._deleted === true` or `state.isDeleted === true`).
+3. **ID Sanitization:** Filters out raw 20-character Firestore document IDs (`/^[a-zA-Z0-9_-]{15,35}$/`) when human-readable names exist.
+4. **Deduplication:** Guarantees single-attender leads return a single canonical name (`length = 1`, `isShared = false`), preventing false badges.
+
+### UI Transparency Components
+* **List & Card Badges:** Desktop table and mobile card views render a compact `Shared (N)` badge when `sharedList.length > 1`.
+* **Compact Modal Banner (`SharedBanner`):** Displays a subtle banner inside `EditModal` and `MobileEditModal`:
+  - **Text:** `Shared with: <Attender Names>` (e.g. `Shared with: Manisha`)
+  - **Action:** Compact **Sync** button (`[↻] Sync`) triggering a single-lead snapshot refresh to pull live updates submitted by team members.
+

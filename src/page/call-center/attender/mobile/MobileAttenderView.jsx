@@ -1,9 +1,9 @@
 import React from "react";
 import {
   ArrowLeft, Search, Plus, MapPin, PhoneOutgoing, Flame, Clock, CheckCircle2, AlertCircle,
-  Bell, Sparkles, UserCheck, Download
+  Bell, Sparkles, UserCheck, Download, Users
 } from "lucide-react";
-import { formatContactName } from "../utils";
+import { formatContactName, getSharedAttenders } from "../utils";
 import { AttenderFilters } from "../components/AttenderFilters";
 
 export default function MobileAttenderView({
@@ -353,6 +353,15 @@ export default function MobileAttenderView({
                     <h3 className={`font-extrabold text-base text-slate-900 truncate ${!name ? "italic text-slate-500" : ""}`}>
                       {name || "Unknown Name"}
                     </h3>
+                    {(() => {
+                      const sharedList = getSharedAttenders(row);
+                      if (sharedList.length <= 1) return null;
+                      return (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-0.5 shrink-0" title={`Shared with: ${sharedList.join(", ")}`}>
+                          <Users size={10} /> Shared
+                        </span>
+                      );
+                    })()}
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">

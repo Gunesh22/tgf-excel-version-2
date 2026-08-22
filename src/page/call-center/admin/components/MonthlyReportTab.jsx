@@ -1828,7 +1828,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                     
                     return (
                       <div 
-                        key={row["Attender Name"]} 
+                        key={`${row["Attender Name"]}-${index}`} 
                         className={`grid grid-cols-1 md:grid-cols-12 items-center gap-4 px-6 py-4 rounded-3xl border transition-all ${
                           rank === 1 
                             ? "bg-amber-50/40 border-amber-100 shadow-sm" 
