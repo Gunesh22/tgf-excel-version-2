@@ -405,11 +405,11 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
 
       // Multi-attender filter
       if (selectedAttenderIds.length > 0) {
-        const matchesId = selectedAttenderIds.includes(log.attenderId);
+        const matchesId = log.attenderId && selectedAttenderIds.includes(log.attenderId);
         const selectedAttenderNames = selectedAttenderIds.map(id => {
           const a = attenders.find(x => x.id === id);
           return a ? a.name.toLowerCase().trim() : "";
-        });
+        }).filter(Boolean);
         const matchesName = selectedAttenderNames.includes((log.attenderName || "").toLowerCase().trim());
         if (!matchesId && !matchesName) return false;
       }
@@ -466,10 +466,13 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
   const attenderStats = useMemo(() => {
     const map = {};
     filteredLogs.forEach(log => {
-      if (!map[log.attenderName]) {
-        map[log.attenderName] = { name: log.attenderName, total: 0, outgoing: 0, incoming: 0, interested: 0, regDone: 0, pending: 0 };
+      const attId = log.attenderId || "unknown";
+      const attName = log.attenderName || "Unknown Attender";
+      const key = `${attId}___${attName}`;
+      if (!map[key]) {
+        map[key] = { id: attId, name: attName, total: 0, outgoing: 0, incoming: 0, interested: 0, regDone: 0, pending: 0 };
       }
-      const s = map[log.attenderName];
+      const s = map[key];
       s.total++;
       if (log.callType === "incoming") s.incoming++; else s.outgoing++;
       if (log.status === "Interested") s.interested++;
@@ -481,10 +484,16 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
 
   const attenderModalLeads = useMemo(() => {
     if (!selectedAttenderDetails) return [];
-    const target = selectedAttenderDetails.toLowerCase().trim();
+    const targetObj = typeof selectedAttenderDetails === "object" ? selectedAttenderDetails : { id: null, name: selectedAttenderDetails };
+    const targetId = targetObj.id;
+    const targetName = (targetObj.name || "").toLowerCase().trim();
+
     const leads = filteredLogs.filter(log => {
+      if (targetId && targetId !== "unknown" && log.attenderId) {
+        return log.attenderId === targetId;
+      }
       const logAttender = (log.attenderName || "").toLowerCase().trim();
-      return logAttender === target || logAttender.includes(target) || target.includes(logAttender);
+      return logAttender === targetName;
     });
     if (!attenderModalSearch.trim()) return leads;
     const q = attenderModalSearch.toLowerCase();
@@ -831,8 +840,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
             <tbody className="divide-y divide-gray-50">
               {attenderStats.map(a => (
                 <tr 
-                  key={a.name} 
-                  onClick={() => { setSelectedAttenderDetails(a.name); setAttenderModalSearch(""); }}
+                  key={a.id || a.name} 
+                  onClick={() => { setSelectedAttenderDetails(a); setAttenderModalSearch(""); }}
                   className="hover:bg-indigo-50/60 transition-colors cursor-pointer group"
                   title="Click to view full leads list"
                 >
@@ -900,22 +909,20 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {paginatedConversions.map(c => {
-                const dateStr = c.updatedAt instanceof Date && !isNaN(c.updatedAt)
-                  ? c.updatedAt.toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })
-                  : "N/A";
+              {paginatedConversions.map((c, idx) => {
+                const dateVal = parseTimestamp(c.timestamp);
+                const dateStr = dateVal ? dateVal.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "N/A";
                 return (
-                  <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                  <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
                     {/* Name & Contact */}
                     <td className="px-6 py-4">
-                      <div className="font-bold text-gray-800">{c.Name || "Unnamed"}</div>
-                      <div className="text-xs text-gray-400 font-medium">{c.Phone || "No Phone"}</div>
+                      <div className="font-bold text-gray-900 text-sm">{c.contactName}</div>
+                      <div className="text-xs text-indigo-600 font-mono font-medium">{c.contactPhone}</div>
+                      {c.contactCity && <div className="text-[10px] text-gray-400">{c.contactCity}</div>}
                     </td>
                     {/* Attender */}
-                    <td className="px-6 py-4">
-                      <span className="inline-flex items-center px-2.5 py-1 bg-slate-100 text-slate-700 text-xs font-bold rounded-xl">
-                        👤 {c.attenderName}
-                      </span>
+                    <td className="px-6 py-4 font-semibold text-gray-700 text-xs">
+                      {c.attenderName}
                     </td>
                     {/* Tag / Program */}
                     <td className="px-6 py-4">
@@ -1005,7 +1012,7 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
             <div className="p-6 border-b border-gray-100 bg-gradient-to-r from-indigo-50/50 via-white to-purple-50/30 flex items-center justify-between">
               <div>
                 <h3 className="font-extrabold text-xl text-gray-900 flex items-center gap-2">
-                  <span>📊</span> Calls & Leads Breakdown for <span className="text-indigo-600 underline decoration-indigo-300">{selectedAttenderDetails}</span>
+                  <span>📊</span> Calls & Leads Breakdown for <span className="text-indigo-600 underline decoration-indigo-300">{typeof selectedAttenderDetails === "object" ? selectedAttenderDetails.name : selectedAttenderDetails}</span>
                 </h3>
                 <p className="text-xs text-gray-500 mt-1 font-medium">
                   Showing {attenderModalLeads.length} counted entries for date range <span className="font-bold text-gray-700">{dateFrom}</span> to <span className="font-bold text-gray-700">{dateTo}</span>
