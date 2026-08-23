@@ -1,13 +1,11 @@
-import {
-  collection, query, where, onSnapshot, doc, getDoc, setDoc, or
-} from "firebase/firestore";
+import { doc } from "firebase/firestore";
 import { db } from "../firebase.js";
 import { findMatchingAttenderState, trackFirestoreRead } from "./core.js";
 import { getIDBCache, setIDBCache, updateLocalAttenderCache, fetchPartitionCacheForColdBoot } from "./cacheService.js";
 import { diagGetDoc } from "./firebaseDiagnostics.js";
 
 // Canonical function to check if a lead is shared across multiple attenders
-export function isLeadShared(lead) {
+export const isLeadShared = (lead, attenderName = null) => {
   if (!lead || typeof lead !== "object") return false;
 
   // 1. Check attenderStates keys (attenders who have logged state/calls on this lead)
@@ -25,7 +23,14 @@ export function isLeadShared(lead) {
   // 3. Check explicit flag
   if (lead.isSharedLead === true) return true;
 
-  // 4. Check history for distinct attenders
+  // 4. Check lastEditedBy (if edited by another attender, lead is shared)
+  if (lead.lastEditedBy && attenderName) {
+    const lastEd = String(lead.lastEditedBy).trim().toLowerCase();
+    const currEd = String(attenderName).trim().toLowerCase();
+    if (lastEd && currEd && lastEd !== currEd) return true;
+  }
+
+  // 5. Check history for distinct attenders
   if (Array.isArray(lead.history) && lead.history.length > 0) {
     const distinctAttenders = new Set(
       lead.history
@@ -72,7 +77,34 @@ export const subscribeToCallLogs = (...args) => {
         console.log(`[COLD BOOT INITIAL LOAD] IndexedDB empty for ${attenderId}. Fetching partition docs...`);
         logsToProcess = await fetchPartitionCacheForColdBoot(attenderId, attenderName, 6);
       } else {
-        console.log(`[ZERO-READ LOAD] Served ${logsToProcess.length} leads from IndexedDB for ${attenderId} (0 Reads on Reload)`);
+        const idLower = String(attenderId).toLowerCase().trim();
+        const nameLower = String(attenderName || "").toLowerCase().trim();
+
+        const cleanLogs = logsToProcess.filter(doc => {
+          if (!doc) return false;
+          const matchedStateObj = findMatchingAttenderState(doc.attenderStates, attenderId, attenderName);
+          if (matchedStateObj && !matchedStateObj._deleted) return true;
+
+          if (Array.isArray(doc.assignedTo)) {
+            return doc.assignedTo.some(a => {
+              const aLower = String(a).toLowerCase().trim();
+              return (idLower && aLower === idLower) || (nameLower && aLower === nameLower);
+            });
+          }
+          if (doc.assignedTo) {
+            const aLower = String(doc.assignedTo).toLowerCase().trim();
+            return (idLower && aLower === idLower) || (nameLower && aLower === nameLower);
+          }
+          return false;
+        });
+
+        if (cleanLogs.length !== logsToProcess.length) {
+          console.log(`[CACHE SANITIZE] Filtered out ${logsToProcess.length - cleanLogs.length} contaminated leads for ${attenderName} (${attenderId})`);
+          logsToProcess = cleanLogs;
+          setIDBCache(cacheKey, cleanLogs).catch(() => {});
+        } else {
+          console.log(`[ZERO-READ LOAD] Served ${logsToProcess.length} leads from IndexedDB for ${attenderId} (0 Reads on Reload)`);
+        }
       }
 
       if (Array.isArray(logsToProcess)) {
@@ -94,63 +126,107 @@ export const subscribeToCallLogs = (...args) => {
   return () => {};
 };
 
+const sharedFetches = new Map();
+
 // On-Demand Fetcher for Shared Leads (Triggers 1, 2, and 3)
 export const fetchFreshSharedLead = async (lead, attenderId, attenderName, forceRefresh = false) => {
   if (!lead || !lead.id || lead._isNew) return lead;
 
-  const shared = isLeadShared(lead);
+  const isShared = isLeadShared(lead, attenderName);
+  const alreadyFetched = !!lead._lastFetchedAt;
 
-  // Non-shared solo leads: 0 Firestore Reads (Served 100% from local cache)
-  if (!shared && !forceRefresh) {
+  console.log("[SHARED LEAD FETCH DECISION]", {
+    leadId: lead.id,
+    shared: isShared,
+    localCacheHit: alreadyFetched,
+    alreadyFetched: alreadyFetched,
+    firestoreFetchRequired: forceRefresh || !alreadyFetched
+  });
+
+  // If already fetched locally in this session and not force-refreshed: 0 Reads
+  if (alreadyFetched && !forceRefresh) {
+    console.log("[SHARED LEAD IDB HIT]", {
+      leadId: lead.id,
+      reason: "Lead already fetched locally in this session"
+    });
     return lead;
   }
 
-  // Shared leads (or manual sync): Fetch fresh document from Firestore
-  try {
-    const docRef = doc(db, "contacts", lead.id);
-    const docSnap = await diagGetDoc(docRef, {
-      function: "fetchFreshSharedLead",
-      trigger: forceRefresh ? "Manual Sync" : "Open Shared Modal"
-    });
+  // Check if a request for this exact lead is already in-flight
+  const existingFetch = sharedFetches.get(lead.id);
+  if (existingFetch && !forceRefresh) {
+    console.log("[SHARED LEAD INFLIGHT HIT]", { leadId: lead.id });
+    return await existingFetch;
+  }
 
-    trackFirestoreRead({
-      collection: "contacts",
-      operation: "getDoc",
-      document: lead.id,
-      documentsReturned: docSnap.exists() ? 1 : 0,
-      reason: "fetchFreshSharedLead",
-      source: "modal/fetchFreshSharedLead"
-    });
+  // SHARED LEAD NOT LOCALLY FETCHED / NEEDS FRESH DATA: 1 getDoc Read ONLY
+  console.log("[SHARED LEAD FIRESTORE FETCH]", {
+    leadId: lead.id,
+    reason: forceRefresh ? "Manual Sync Button" : "Shared Lead Initial Fetch"
+  });
 
-    if (!docSnap.exists()) return lead;
+  const fetchPromise = (async () => {
+    try {
+      const docRef = doc(db, "contacts", lead.id);
+      const docSnap = await diagGetDoc(docRef, {
+        function: "fetchFreshSharedLead",
+        trigger: forceRefresh ? "Manual Sync Button" : "Shared Lead Initial Fetch"
+      });
 
-    const rawData = docSnap.data();
-    const attState = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName) || {};
+      trackFirestoreRead({
+        collection: "contacts",
+        operation: "getDoc",
+        document: lead.id,
+        documentsReturned: docSnap.exists() ? 1 : 0,
+        reason: "fetchFreshSharedLead",
+        source: "modal/fetchFreshSharedLead"
+      });
 
-    const freshLead = {
-      ...rawData,
-      id: lead.id,
-      status: attState.status || rawData.status || "Pending",
-      remark: attState.remark || rawData.remark || "",
-      "Called For": attState["Called For"] || attState.calledFor || rawData["Called For"] || rawData.calledFor || "",
-      calledFor: attState["Called For"] || attState.calledFor || rawData["Called For"] || rawData.calledFor || "",
-      Source: attState.Source || attState.source || rawData.Source || rawData.source || "",
-      source: attState.Source || attState.source || rawData.Source || rawData.source || "",
-      history: Array.isArray(rawData.history) && rawData.history.length > 0 ? rawData.history : (attState.history || []),
-      attenderState: attState,
-      _lastFetchedAt: Date.now()
-    };
-    delete freshLead._isNew;
+      if (!docSnap.exists()) return lead;
 
-    if (attenderId) {
-      updateLocalAttenderCache(attenderId, freshLead).catch(() => {});
+      const rawData = docSnap.data();
+      const attState = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName) || {};
+
+      const freshLead = {
+        ...rawData,
+        id: lead.id,
+        status: attState.status || rawData.status || "Pending",
+        remark: attState.remark || rawData.remark || "",
+        "Called For": attState["Called For"] || attState.calledFor || rawData["Called For"] || rawData.calledFor || "",
+        calledFor: attState["Called For"] || attState.calledFor || rawData["Called For"] || rawData.calledFor || "",
+        Source: attState.Source || attState.source || rawData.Source || rawData.source || "",
+        source: attState.Source || attState.source || rawData.Source || rawData.source || "",
+        history: Array.isArray(rawData.history) && rawData.history.length > 0 ? rawData.history : (attState.history || []),
+        attenderState: attState,
+        _lastFetchedAt: Date.now() // Local freshness marker
+      };
+
+      delete freshLead._isNew;
+
+      try {
+        await idbSet(`tgf_contact_${lead.id}`, freshLead);
+      } catch (cacheErr) {
+        console.warn("Failed to cache fresh lead in IndexedDB:", cacheErr);
+      }
+
+      if (attenderId) {
+        updateLocalAttenderCache(attenderId, freshLead).catch(() => {});
+      }
+
+      return freshLead;
+    } catch (err) {
+      console.warn(`[FETCH FAILED] ${lead.id}:`, err);
+      return lead;
+    } finally {
+      sharedFetches.delete(lead.id);
     }
+  })();
 
-    return freshLead;
-  } catch (err) {
-    console.warn(`[FETCH FAILED] ${lead.id}:`, err);
-    return lead;
+  if (!forceRefresh) {
+    sharedFetches.set(lead.id, fetchPromise);
   }
+
+  return await fetchPromise;
 };
 
 // Pending Write Queue for Offline Persistence / Coalesced Updates

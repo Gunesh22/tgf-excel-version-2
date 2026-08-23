@@ -323,17 +323,16 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     // Fetch fresh copy for shared leads (0 Reads for solo leads or fresh cache)
     if (row.id && !row._isNew) {
       setIsFetchingShared(true);
-      const startTime = Date.now();
+      console.log(`[MODAL OPEN] Triggering fetchFreshSharedLead for leadId: ${row.id}`);
       try {
         const fresh = await fetchFreshSharedLead(row, attenderId, attenderName, false);
-        const elapsed = Date.now() - startTime;
-        if (elapsed < 800) {
-          await new Promise(res => setTimeout(res, 800 - elapsed));
-        }
         if (fresh) {
+          console.log(`[MODAL OPEN SUCCESS] Loaded lead data for leadId: ${fresh.id}`);
           setEditingRow(fresh);
           setCallLogs(prev => prev.map(l => l.id === fresh.id ? { ...l, ...fresh } : l));
         }
+      } catch (err) {
+        console.error(`[MODAL OPEN ERROR] Failed to fetch shared lead ${row.id}:`, err);
       } finally {
         setIsFetchingShared(false);
       }

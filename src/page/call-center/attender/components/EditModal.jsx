@@ -1679,10 +1679,10 @@ export const EditModal = ({
                   </span>
                 )}
 
-                {(isCheckingDuplicate || isSearchingCRM) && (
-                  <span className="text-[10px] font-black bg-white/20 px-2 py-0.5 rounded text-white animate-pulse flex items-center gap-1.5 shrink-0">
-                    <Loader size={10} className="animate-spin text-white" />
-                    {isCheckingDuplicate ? "CHECKING DUPLICATES..." : "SEARCHING CRM..."}
+                {(isCheckingDuplicate || isSearchingCRM || isFetchingShared) && (
+                  <span className="text-[10px] font-black bg-amber-500/90 px-2.5 py-1 rounded-md text-white animate-pulse flex items-center gap-1.5 shrink-0 shadow-xs">
+                    <Loader size={12} className="animate-spin text-white" />
+                    {isFetchingShared ? "SYNCING LIVE UPDATES..." : isCheckingDuplicate ? "CHECKING DUPLICATES..." : "SEARCHING CRM..."}
                   </span>
                 )}
               </div>

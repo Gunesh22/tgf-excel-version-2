@@ -1138,6 +1138,10 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     }
     finalUpdatePayload.assignedTo = prevAssigned;
     finalUpdatePayload.isAssigned = true;
+    if (prevAssigned.length > 1) {
+      finalUpdatePayload.isSharedLead = true;
+      sharedUpdates.isSharedLead = true;
+    }
     sharedUpdates.assignedTo = prevAssigned;
     sharedUpdates.isAssigned = true;
   } else {
@@ -1754,6 +1758,7 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
     }, {}),
     isAssigned: true,
     assignedTo: newAssignedTo,
+    isSharedLead: newAssignedTo.length > 1,
     assignedName: attenderName,
     attenderId: attenderId, // compatibility
     attenderName: attenderName, // compatibility

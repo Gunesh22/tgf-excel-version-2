@@ -103,14 +103,8 @@ export function findMatchingAttenderState(attenderStates, attenderId, attenderNa
     let isMatch = false;
     if (idLower && (keyLower === idLower || stId === idLower)) {
       isMatch = true;
-    } else if (nameLower) {
-      if (keyLower === nameLower || stName === nameLower) {
-        isMatch = true;
-      } else if (stName && (stName.includes(nameLower) || nameLower.includes(stName))) {
-        isMatch = true;
-      } else if (keyLower && (keyLower.includes(nameLower) || nameLower.includes(keyLower))) {
-        isMatch = true;
-      }
+    } else if (nameLower && (keyLower === nameLower || stName === nameLower)) {
+      isMatch = true;
     }
 
     if (isMatch) {
