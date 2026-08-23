@@ -13,7 +13,7 @@ function MultiSelectDropdown({
   selectedValues = [],
   onChange,
   placeholder = "Search...",
-  colorClass = "text-indigo-500",
+//   colorClass = "text-indigo-500",
 }) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -219,8 +219,6 @@ export function AttenderFilters({
   setFilterCallCount,
   filterGeneralStatus,
   setFilterGeneralStatus,
-  filterQueryStatus,
-  setFilterQueryStatus,
   filterAbhivyakti,
   setFilterAbhivyakti,
   filterKhoji,
@@ -783,6 +781,7 @@ export function AttenderFilters({
                 )}
 
                 {/* Query Status — standalone, always accessible */}
+                {/* eslint-disable-next-line no-constant-binary-expression */}
                 {filterVisible.queryStatus && false && (
                   <div className="space-y-1.5">
                   </div>

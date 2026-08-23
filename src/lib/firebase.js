@@ -1,6 +1,8 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
+import { getAuth, connectAuthEmulator } from "firebase/auth";
 import { getAnalytics } from "firebase/analytics";
+import { connectFirestoreEmulator } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -27,4 +29,11 @@ try {
 }
 
 export const db = firestoreDb;
+export const auth = getAuth(app);
+
+if (import.meta.env.MODE === 'test' || import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true') {
+  connectFirestoreEmulator(firestoreDb, 'localhost', 8080);
+  connectAuthEmulator(auth, 'http://localhost:9099');
+}
+
 export const analytics = typeof window !== "undefined" ? getAnalytics(app) : null;

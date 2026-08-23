@@ -1,7 +1,5 @@
 import React, { useState } from "react";
 import { X, Trash2, Save } from "lucide-react";
-import { doc } from "firebase/firestore";
-import { db } from "../../../../../lib/firebase";
 import { toast } from "react-hot-toast";
 import { updateCallLog } from "../../../../../lib/db";
 import SearchableDropdown from "./SearchableDropdown";
@@ -38,24 +36,22 @@ export default function EditHistoryModal({
   onParentClose,
   onSaveAll,
 }) {
-  if (!isOpen) return null;
-
-  
-
   const [historyList, setHistoryList] = useState(() => {
-    return (edited.history || []).map((h, index) => ({
+    return (edited?.history || []).map((h, index) => ({
       id: index,
       timestamp: h.timestamp || new Date().toISOString(),
       status: h.status || "",
       remark: h.remark || "",
-      attenderName: h.attenderName || edited.attenderName || "Unknown",
-      calledFor: h.calledFor || edited["Called For"] || edited.calledFor || "",
-      source: h.source || edited.Source || edited.source || "",
-      callType: h.callType || edited.callType || "outgoing"
+      attenderName: h.attenderName || edited?.attenderName || "Unknown",
+      calledFor: h.calledFor || edited?.["Called For"] || edited?.calledFor || "",
+      source: h.source || edited?.Source || edited?.source || "",
+      callType: h.callType || edited?.callType || "outgoing"
     }));
   });
 
   const [saving, setSaving] = useState(false);
+
+  if (!isOpen) return null;
 
   const handleRemoveField = (id) => {
     setHistoryList(prev => {

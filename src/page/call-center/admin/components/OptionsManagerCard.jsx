@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Search, X, Trash2, Plus, Edit2, Check, AlertTriangle } from "lucide-react";
 
+// eslint-disable-next-line no-unused-vars
 export function OptionsManagerCard({ title, icon: Icon, options, onAdd, onDelete, onRename }) {
   const [search, setSearch] = useState("");
   const [editingOpt, setEditingOpt] = useState(null);

@@ -7,7 +7,7 @@ import {
   ChevronDown, Check, Search
 } from "lucide-react";
 import {
-  addIncomingCallLog, updateCallLog, createProgram, checkGlobalDuplicate, findMatchingAttenderState, combineContactHistories
+  addIncomingCallLog, updateCallLog, checkGlobalDuplicate, findMatchingAttenderState, combineContactHistories
 } from "../../../../lib/db";
 import { searchCRMByPhone } from "../../../../lib/ghl";
 import {
@@ -18,8 +18,6 @@ import {
   CALL_TYPE_OPTIONS,
   isIgnoredField,
   getFieldWithFallback,
-  isKhojiAffirmative,
-  isKhojiNegative,
   isKhojiField,
   formatContactName,
   isNotConnectedStatus
@@ -144,12 +142,10 @@ export const EditModal = ({
   const [globalDup, setGlobalDup] = useState(null);
   const [isSearchingCRM, setIsSearchingCRM] = useState(false);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
-  const [dupPopoverOpen, setDupPopoverOpen] = useState(false);
-  const handleDismissRef = useRef(null);
+    const handleDismissRef = useRef(null);
   const isSubmittingRef = useRef(false);
   const [addedFields, setAddedFields] = useState([]);
-  const [localPrograms, setLocalPrograms] = useState(programs);
-  const [showCalledForPrompt, setShowCalledForPrompt] = useState(false);
+    const [showCalledForPrompt, setShowCalledForPrompt] = useState(false);
   const [promptSelection, setPromptSelection] = useState("");
   const [pendingSave, setPendingSave] = useState(false);
   const [showUndoStatusPrompt, setShowUndoStatusPrompt] = useState(false);
@@ -157,7 +153,7 @@ export const EditModal = ({
   const [showEditHistory, setShowEditHistory] = useState(false);
 
   useEffect(() => {
-    setLocalPrograms(programs);
+//     setLocalPrograms(programs);
   }, [programs]);
 
   const getOtherValuesForField = (fieldKey) => {
@@ -307,48 +303,7 @@ export const EditModal = ({
     return latestAttender;
   };
 
-  const handleCreateProgramTag = async (newTagName) => {
-    const cleaned = newTagName.trim();
-    if (!cleaned) return;
 
-    // Prevent duplicate creation
-    if (localPrograms.some(p => p.name.toLowerCase() === cleaned.toLowerCase())) {
-      toast.error("Program/tag already exists!");
-      return;
-    }
-
-    const toastId = toast.loading(`Creating program/tag "${cleaned}"...`);
-    try {
-      await createProgram(cleaned);
-
-      const newProg = {
-        id: cleaned,
-        name: cleaned,
-        contactCount: 0,
-        createdAt: new Date()
-      };
-
-      setLocalPrograms(prev => [newProg, ...prev]);
-
-      // Select it
-      handleChange("programId", cleaned);
-      handleChange("programName", cleaned);
-      handleChange("Sub Program", cleaned);
-      handleChange("subProgram", cleaned);
-
-      // Sync to Tags field
-      const existingTagsStr = edited.Tags || "";
-      const existingTags = existingTagsStr.split(",").map(x => x.trim()).filter(Boolean);
-      if (!existingTags.includes(cleaned)) {
-        existingTags.push(cleaned);
-      }
-      handleChange("Tags", existingTags.join(", "));
-
-      toast.success(`Program/tag "${cleaned}" created!`, { id: toastId });
-    } catch (err) {
-      toast.error(`Failed to create: ${err.message}`, { id: toastId });
-    }
-  };
 
   const handleAddField = () => {
     const name = window.prompt("Enter new field name:");
@@ -435,11 +390,11 @@ export const EditModal = ({
 
   const initialPhone = useMemo(() => {
     return getFieldWithFallback(row, "Phone");
-  }, [row]);
+  }, [row, attenderName, savedRow]);
 
   const initialMobile = useMemo(() => {
     return getFieldWithFallback(row, "Mobile");
-  }, [row]);
+  }, [row, attenderName, savedRow]);
 
   const dupTimerRef = useRef(null);
   const activeToastRef = useRef(null);
@@ -717,31 +672,7 @@ export const EditModal = ({
     }
   }, [globalDup, attenderId, attenderName]);
 
-  const isPhoneDuplicate = useMemo(() => {
-    if (!globalDup || !globalDup.showWarning || !globalDup.first || !phoneVal) return false;
-    const rawNorm = phoneVal.replace(/\D/g, "");
-    if (!rawNorm) return false;
-    const norm = rawNorm.length >= 10 ? rawNorm.slice(-10) : rawNorm;
-    const first = globalDup.first;
-    return (
-      first.normalizedPhone === norm ||
-      first.normalizedMobile === norm ||
-      (Array.isArray(first.normalizedPhones) && first.normalizedPhones.includes(norm))
-    );
-  }, [globalDup, phoneVal]);
 
-  const isMobileDuplicate = useMemo(() => {
-    if (!globalDup || !globalDup.showWarning || !globalDup.first || !mobileVal) return false;
-    const rawNorm = mobileVal.replace(/\D/g, "");
-    if (!rawNorm) return false;
-    const norm = rawNorm.length >= 10 ? rawNorm.slice(-10) : rawNorm;
-    const first = globalDup.first;
-    return (
-      first.normalizedPhone === norm ||
-      first.normalizedMobile === norm ||
-      (Array.isArray(first.normalizedPhones) && first.normalizedPhones.includes(norm))
-    );
-  }, [globalDup, mobileVal]);
 
   const handleAutofillFromDuplicate = () => {
     if (!globalDup || !globalDup.first) return;
@@ -995,7 +926,7 @@ export const EditModal = ({
       try {
         const d = new Date(val);
         return isNaN(d.getTime()) ? 0 : d.getTime();
-      } catch (e) {
+      } catch {
         return 0;
       }
     };
@@ -1141,9 +1072,7 @@ export const EditModal = ({
 
   const isQuestion = (f) => f.length > 40 || /^(what|how|why|describe|tell)[\s_]/i.test(f);
   const isCampaign = (f) => { const k = f.toLowerCase().replace(/[_\s]/g, ""); return k.includes("adid") || k.includes("adname") || k.includes("adsetid") || k.includes("adsetname") || k.includes("campaignid") || k.includes("campaignname") || k.includes("formid") || k.includes("formname") || k.includes("isorganic") || k.includes("createdtime"); };
-  const iconFor = (f) => { const k = f.toLowerCase(); return k.includes("name") || k.includes("lead") || k.includes("khoji") || k.includes("caller") ? <User size={11} className="text-emerald-500" /> : k.includes("phone") || k.includes("mobile") ? <Phone size={11} className="text-blue-500" /> : k.includes("city") || k.includes("location") ? <MapPin size={11} className="text-red-500" /> : k.includes("email") ? <Hash size={11} className="text-purple-500" /> : k.includes("when") || k.includes("suitable") ? <Clock size={11} className="text-amber-500" /> : k.includes("asmani") || k.includes("aasmani") || k.includes("आसमानी") ? <CheckCircle2 size={11} className="text-pink-500" /> : <Tag size={11} className="text-indigo-500" />; };
-  const labelFor = (f) => f.replace(/_/g, " ").replace(/\?/g, "").trim();
-
+    
   const basicFields = useMemo(() => {
     return dynamicFields.filter(f => !isQuestion(f) && !isCampaign(f));
   }, [dynamicFields]);
@@ -1178,7 +1107,7 @@ export const EditModal = ({
       if (typeof val === "object" && val.seconds !== undefined) return val.seconds * 1000;
       try {
         return new Date(val).getTime();
-      } catch (e) {
+      } catch {
         return null;
       }
     };

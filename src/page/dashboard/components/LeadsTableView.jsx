@@ -39,7 +39,7 @@ export const LeadsTableView = ({ data, colsMap, columns }) => {
     const [searchQuery, setSearchQuery] = useState("");
     const [searchColumn, setSearchColumn] = useState("All");
     const [fontSize, setFontSize] = useState("sm");
-    const [activeRowIdx, setActiveRowIdx] = useState(null);
+// //     const [activeRowIdx, setActiveRowIdx] = useState(null);
 
     const [page, setPage] = useState(1);
     const rowsPerPage = 50;

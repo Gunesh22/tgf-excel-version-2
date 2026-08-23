@@ -17,7 +17,6 @@ import {
   verifyCallCenterCache,
   exportCallCenterCacheToJson,
   getCachePartitionsDetail,
-  mergePartitionPair,
   mergeAllCompatiblePartitionsOneByOne,
   getActiveCacheMonths,
   getLockedMonthlyReports,

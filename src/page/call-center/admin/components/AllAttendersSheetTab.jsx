@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "react-hot-toast";
 import * as XLSX from "xlsx";
 import {
@@ -43,7 +43,7 @@ import {
   isUnansweredCallback
 } from "../../attender/utils.js";
 import { parseTimestamp, cleanExportRow, getAllCallEntries, getCallsDoneCount, getContactPhone } from "../utils.jsx";
-import { normalizePhone, verifyCallCenterCache, addIncomingCallLog } from "../../../../lib/db";
+import { } from "../../../../lib/db";
 
 // ── MultiSelect Dropdown Subcomponent ───────────────────────────────────────
 function MultiSelectDropdown({ options, selected = [], onChange, placeholder, icon: Icon, allLabel = "All" }) {
@@ -230,8 +230,6 @@ export default function AllAttendersSheetTab({
   attenders = [],
   programs = [],
   selectedMonth,
-  setSelectedMonth,
-  monthOptions = [],
   settingsOptions = {},
   callLogsLoading = false
 }) {
@@ -268,15 +266,22 @@ export default function AllAttendersSheetTab({
 
   // State management
   const [searchQuery, setSearchQuery] = useState("");
+// //   const [selectedSubPrograms, setSelectedSubPrograms] = useState([]);
+// //   const [selectedObjections, setSelectedObjections] = useState([]);
+// //   const [selectedCallbackStatuses, setSelectedCallbackStatuses] = useState([]);
+  const [filterDateType, setFilterDateType] = useState("registration");
+  const [filterDateRange, setFilterDateRange] = useState("currentMonth");
+  const [customDateFrom, setCustomDateFrom] = useState("");
+  const [customDateTo, setCustomDateTo] = useState("");
+  const [selectedCities, setSelectedCities] = useState([]);
+// //   const [isRefreshing, setIsRefreshing] = useState(false);
+
   const [selectedTags, setSelectedTags] = useState([]);
   const [selectedAttenderIds, setSelectedAttenderIds] = useState([]);
   const [selectedSources, setSelectedSources] = useState([]);
   const [selectedCalledFors, setSelectedCalledFors] = useState([]);
   const [selectedCallTypes, setSelectedCallTypes] = useState([]);
-  const [selectedSubPrograms, setSelectedSubPrograms] = useState([]);
-  const [selectedObjections, setSelectedObjections] = useState([]);
-  const [selectedCallbackStatuses, setSelectedCallbackStatuses] = useState([]);
-  const [selectedCallCounts, setSelectedCallCounts] = useState([]);
+        const [selectedCallCounts, setSelectedCallCounts] = useState([]);
   const [selectedGeneralStatuses, setSelectedGeneralStatuses] = useState([]);
   const [selectedKhojiStatuses, setSelectedKhojiStatuses] = useState([]);
   const [filterStatus, setFilterStatus] = useState("All"); // All, Hot Leads, Follow up, Today Activity, Reg.Done, Interested, Pending
@@ -303,8 +308,7 @@ export default function AllAttendersSheetTab({
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [editingRow, setEditingRow] = useState(null);
+    const [editingRow, setEditingRow] = useState(null);
 
   // Hidden columns state
   const allPossibleCols = [
@@ -506,7 +510,7 @@ export default function AllAttendersSheetTab({
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    return flattenedLogs.filter(log => {
+    const res = flattenedLogs.filter(log => {
       // Global Search
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
@@ -751,10 +755,7 @@ export default function AllAttendersSheetTab({
     setSelectedSources([]);
     setSelectedCalledFors([]);
     setSelectedCallTypes([]);
-    setSelectedSubPrograms([]);
-    setSelectedObjections([]);
-    setSelectedCallbackStatuses([]);
-    setSelectedCallCounts([]);
+                setSelectedCallCounts([]);
     setSelectedGeneralStatuses([]);
     setSelectedKhojiStatuses([]);
     setFilterStatus("All");
@@ -827,26 +828,6 @@ export default function AllAttendersSheetTab({
     XLSX.writeFile(wb, `All_Attenders_Sheet_${monthStr}.xlsx`);
     toast.success("Excel report downloaded!");
   };
-
-  const handleRefresh = async (silent = false) => {
-    setIsRefreshing(true);
-    try {
-      if (selectedMonth && selectedMonth !== "ALL") {
-        await verifyCallCenterCache(selectedMonth);
-      }
-      if (!silent) {
-        toast.success("Cache verified & refreshed!");
-      }
-    } catch (err) {
-      console.error(err);
-      if (!silent) {
-        toast.error("Cache refresh complete.");
-      }
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
   const getStatusBadge = (log) => {
     const status = log.status;
     if (isUnansweredCallback(log)) {
@@ -1689,7 +1670,7 @@ export default function AllAttendersSheetTab({
                 <div>
                   <label className="block text-xs font-extrabold text-slate-700 mb-1.5">City</label>
                   <MultiSelectDropdown
-                    options={cityOptions}
+//                     options={cityOptions}
                     selected={selectedCities}
                     onChange={setSelectedCities}
                     placeholder="City"

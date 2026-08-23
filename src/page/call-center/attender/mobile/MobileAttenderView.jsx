@@ -1,3 +1,4 @@
+import { exportTelemetryJSON } from "../../../../lib/telemetry.js";
 import React from "react";
 import {
   ArrowLeft, Search, Plus, MapPin, PhoneOutgoing, Flame, Clock, CheckCircle2, AlertCircle,
@@ -8,10 +9,10 @@ import { AttenderFilters } from "../components/AttenderFilters";
 
 export default function MobileAttenderView({
   optionsVersion,
-  attenderId,
   attenderName,
   filteredLogs = [],
   allLogsCount = 0,
+  syncState = { status: 'READY', lastSyncTime: null, error: null },
   filterStatus,
   setFilterStatus,
   onExit,
@@ -112,7 +113,16 @@ export default function MobileAttenderView({
             <ArrowLeft size={18} />
           </button>
           <div>
-            <h1 className="font-extrabold text-base leading-none">My Call Sheet</h1>
+            <h1 className="font-extrabold text-base leading-none flex items-center gap-2">
+              My Call Sheet
+              <div className="flex items-center gap-1.5 text-[10px] font-bold bg-black/20 px-2 py-0.5 rounded-full">
+                {syncState.status === 'LOADING_LOCAL' && <span className="text-gray-300 flex items-center gap-1">Loading...</span>}
+                {syncState.status === 'SYNCING' && <span className="text-emerald-300 flex items-center gap-1">Syncing...</span>}
+                {syncState.status === 'SYNCED' && <span className="text-emerald-400 flex items-center gap-1"><CheckCircle2 size={10} /></span>}
+                {syncState.status === 'OFFLINE' && <span className="text-amber-400 flex items-center gap-1"><AlertCircle size={10} /></span>}
+                {syncState.status === 'SYNC_ERROR' && <span className="text-red-400 flex items-center gap-1"><AlertCircle size={10} /></span>}
+              </div>
+            </h1>
             <p className="text-[10px] text-emerald-100 font-medium mt-0.5">
               Showing {filteredLogs.length} of {allLogsCount} leads
             </p>
@@ -384,10 +394,10 @@ export default function MobileAttenderView({
                         setEditingRow(row);
                       }
                     }}
-                    className="w-10 h-10 bg-[#00684a] active:bg-[#00523a] text-white rounded-full flex items-center justify-center shadow-md active:scale-90 transition"
+                    className="w-12 h-12 bg-[#00684a] active:bg-[#00523a] text-white rounded-full flex items-center justify-center shadow-md active:scale-90 transition"
                     title="Call Contact"
                   >
-                    <PhoneOutgoing size={17} className="stroke-[2.5]" />
+                    <PhoneOutgoing size={20} className="stroke-[2.5]" />
                   </button>
                 </div>
               </div>
@@ -400,7 +410,7 @@ export default function MobileAttenderView({
             <button
               type="button"
               onClick={() => setDisplayCount(prev => prev + 30)}
-              className="px-6 py-2.5 bg-white border border-slate-300 hover:bg-slate-50 active:scale-95 rounded-full font-bold text-xs text-slate-700 shadow-sm transition"
+              className="px-8 py-3.5 bg-white border border-slate-300 hover:bg-slate-50 active:scale-95 rounded-full font-bold text-sm text-slate-700 shadow-sm transition"
             >
               Load More Contacts ({displayCount} of {filteredLogs.length})
             </button>

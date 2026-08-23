@@ -6,9 +6,9 @@ import {
   CalendarDays, Loader, Flame, Edit3, ArrowLeft
 } from "lucide-react";
 import {
-  addIncomingCallLog, updateCallLog, checkGlobalDuplicate, findMatchingAttenderState
+  addIncomingCallLog, updateCallLog, findMatchingAttenderState
 } from "../../../../lib/db";
-import { searchCRMByPhone } from "../../../../lib/ghl";
+import { } from "../../../../lib/ghl";
 import {
   STATUS_OPTIONS,
   OBJECTION_REASONS,
@@ -40,8 +40,6 @@ export default function MobileEditModal({
   row,
   attenderId,
   attenderName = "Unknown",
-  programs = [],
-  onSave,
   onDelete,
   onClose
 }) {
@@ -90,7 +88,7 @@ export default function MobileEditModal({
     const norm = getNormalizedRow();
     setSavedRow(norm);
     setEdited(norm);
-  }, [row]);
+  }, [row, attenderName, savedRow]);
 
   const calledForField = useMemo(() => {
     if (edited["Called For"] !== undefined) return "Called For";
@@ -106,17 +104,9 @@ export default function MobileEditModal({
   const [activeTab, setActiveTab] = useState(() => (row && row._isNew ? "profile" : "call"));
   const [saving, setSaving] = useState(false);
   const [showEditHistory, setShowEditHistory] = useState(false);
-  const [showCalledForPrompt, setShowCalledForPrompt] = useState(false);
-  const [promptSelection, setPromptSelection] = useState("");
-  const [pendingSave, setPendingSave] = useState(false);
-  const [showUndoStatusPrompt, setShowUndoStatusPrompt] = useState(false);
-
-  const [globalDup, setGlobalDup] = useState(null);
-  const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
-  const [isSearchingCRM, setIsSearchingCRM] = useState(false);
-
-  const newNoteRef = useRef(null);
-  const isSavingRef = useRef(false);
+        
+      
+    const isSavingRef = useRef(false);
 
   const handleChange = (field, val) => {
     setEdited(prev => ({ ...prev, [field]: val }));
@@ -286,7 +276,7 @@ export default function MobileEditModal({
       try {
         const d = new Date(val);
         return isNaN(d.getTime()) ? 0 : d.getTime();
-      } catch (e) {
+      } catch {
         return 0;
       }
     };

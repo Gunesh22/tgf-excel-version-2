@@ -9,12 +9,11 @@ import {
   Bell, Sparkles, UserCheck
 } from "lucide-react";
 import {
-  subscribeToCallLogs, updateCallLog, addIncomingCallLog,
-  assignContactsToAttender, normalizePhone, getActiveTags,
+  subscribeToCallLogs, assignContactsToAttender, normalizePhone, getActiveTags,
   INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME, ensureIncomingProgram,
   OUTGOING_PROGRAM_ID, OUTGOING_PROGRAM_NAME, ensureOutgoingProgram,
   globalSearchContacts, searchAttenderContacts, claimContact, removeAttenderFromContact, claimCRMContact,
-  fetchHistoricalCachePartition, purgeStaleHistoricalCache
+  fetchHistoricalCachePartition, purgeStaleHistoricalCache, forceDeltaSync
 } from "../../../lib/db";
 import { searchCRM } from "../../../lib/ghl";
 import {
@@ -23,7 +22,6 @@ import {
   CALLED_FOR_OPTIONS,
   CONNECTED_STATUSES,
   NOT_CONNECTED_STATUSES,
-  getFieldWithFallback,
   getKhojiValue,
   isKhojiAffirmative,
   isKhojiNegative,
@@ -49,6 +47,7 @@ import { AttenderFilters } from "./components/AttenderFilters";
 import { ContactTable } from "./components/ContactTable";
 import MobileAttenderView from "./mobile/MobileAttenderView";
 import MobileEditModal from "./mobile/MobileEditModal";
+import { useSyncState } from "../../../hooks/useSyncState";
 
 // ─── Main Attender View ───────────────────────
 export default function AttenderView({ attenderId, attenderName, optionsVersion, onExit }) {
@@ -63,14 +62,40 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   }, []);
   const [programs, setPrograms] = useState([]);
   const [selectedProgramId, setSelectedProgramId] = useState("");
-  const [selectedProgramName, setSelectedProgramName] = useState("");
-  const [selectedSubProgram, setSelectedSubProgram] = useState("");
   const [callLogs, setCallLogs] = useState([]);
+  const syncState = useSyncState(attenderId, attenderName);
   const [editingRow, setEditingRow] = useState(null);
   const [isLoadingProgram, setIsLoadingProgram] = useState(false); // skeleton state
   const [requestCount, setRequestCount] = useState(10);
   const [isRequesting, setIsRequesting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Adaptive Event-Driven Sync
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        console.log("[Adaptive Sync] Tab became visible, triggering Delta Sync");
+        forceDeltaSync(attenderId).then(hasChanges => {
+          if (hasChanges) toast.success("Leads synced automatically");
+        }).catch(console.error);
+      }
+    };
+    const handleFocus = () => {
+      console.log("[Adaptive Sync] Window focused, triggering Delta Sync");
+      forceDeltaSync(attenderId).catch(console.error);
+    };
+    
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("online", handleFocus);
+    
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("online", handleFocus);
+    };
+  }, [attenderId]);
+
   const [filterStatus, setFilterStatus] = useState("All");
   const [page, setPage] = useState(1);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -224,8 +249,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   const [isSearchingGlobal, setIsSearchingGlobal] = useState(false);
 
   // ── Add Call Entry dialog state ──
-  const [pickedProgramId, setPickedProgramId] = useState("");
-
+  
   const rowsPerPage = 50;
   const unsubRef = useRef(null);
   const didDrag = useRef(false);
@@ -449,7 +473,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       await removeAttenderFromContact(id, attenderId);
       setCallLogs(prev => prev.filter(l => l.id !== id));
       toast.success("Entry removed from your sheet.");
-    } catch (err) {
+    } catch {
       toast.error("Failed to remove.");
     }
   };
@@ -532,118 +556,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       console.error(err);
       toast.error(err.message || "Failed to claim contact.");
     }
-  };
-
-  const cleanExportRow = (log) => {
-    const INTERNAL_KEYS = [
-      "id", "programId", "programName", "contactId", "attenderId", "createdAt", "updatedAt",
-      "history", "_callbackDue", "_deleted", "isCallbackDue", "isHotLead", "callCount",
-      "callbackStatus", "lastCalledAt", "firstCalledAt", "registeredAt", "conversionSource",
-      "convertedBy", "subProgram", "objectionReason"
-    ];
-
-    const row = {};
-    
-    // Find standard field mappings
-    const findValue = (obj, keysList) => {
-      const matchingKeys = Object.keys(obj).filter(k => keysList.includes(k.toLowerCase()));
-      for (const k of matchingKeys) {
-        const val = String(obj[k] || "").trim();
-        if (val) return val;
-      }
-      return "";
-    };
-
-    const nameVal = findValue(log, ["name", "caller", "caller name", "lead name", "lead", "name of caller"]);
-    const phoneVal = findValue(log, ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number"]);
-    const emailVal = findValue(log, ["email", "mail", "e-mail", "email id", "emailaddress"]);
-    const cityVal = findValue(log, ["city", "location", "khoji city", "place", "city name"]);
-    const stateVal = findValue(log, ["state", "state name", "province", "region"]);
-    const khojiVal = findValue(log, ["khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani"]);
-
-    const tagsVal = findValue(log, ["tags", "tag"]);
-    const statusVal = log.status || "Pending";
-    const remarkVal = log.remark || "";
-    const subProgramVal = log["Sub Program"] || log.subProgram || "";
-    const sourceVal = findValue(log, ["source", "sourse"]);
-    const calledForVal = findValue(log, ["called for", "called_for", "calledfor"]);
-    const callTypeVal = log.callType || "";
-    const callbackStatusVal = log.callbackStatus || "";
-    const objectionReasonVal = log.objectionReason || "";
-
-    let callbackDateStr = "";
-    if (log.callbackDate) {
-      const d = parseTimestamp(log.callbackDate);
-      if (d && !isNaN(d.getTime())) {
-        callbackDateStr = d.toLocaleDateString("en-IN");
-      }
-    }
-
-    row["Name"] = nameVal;
-    row["Phone"] = phoneVal;
-    row["Email"] = emailVal;
-    row["City"] = cityVal;
-    row["State"] = stateVal;
-    row["Khoji"] = khojiVal;
-    row["Tags"] = tagsVal;
-    row["Sub Program"] = subProgramVal;
-    row["Source"] = sourceVal;
-    row["Called For"] = calledForVal;
-    row["Call Type"] = callTypeVal;
-    row["Status"] = statusVal;
-    row["Remark"] = remarkVal;
-    row["Callback Date"] = callbackDateStr;
-    row["Callback Status"] = callbackStatusVal;
-    row["Objection Reason"] = objectionReasonVal;
-
-    // Add all other dynamic/custom keys ONLY if they are explicitly present in the _mappedFields array metadata of the contact.
-    if (log._mappedFields && Array.isArray(log._mappedFields)) {
-      log._mappedFields.forEach(key => {
-        if (INTERNAL_KEYS.includes(key) || key.startsWith("_")) return;
-        
-        const isStandard = [
-          "name", "caller", "caller name", "lead name", "lead", "name of caller",
-          "phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno", "contact", "contact number", "mobile number",
-          "email", "mail", "e-mail", "email id", "emailaddress",
-          "city", "location", "khoji city", "place", "city name",
-          "state", "state name", "province", "region",
-          "khoji", "khoji yes or no", "khoji yes or no (have you done maha asmani)", "have you done maha asmani", "maha asmani", "mahaasmani", "have you done mahaasmani",
-          "tags", "tag", "status", "remark", "callbackdate", "sub program",
-          "source", "sourse", "called for", "called_for", "calledfor", "call type", "calltype", "callback status", "callbackstatus", "objection reason", "objectionreason"
-        ].includes(key.toLowerCase());
-        
-        if (!isStandard) {
-          row[key] = log[key];
-        }
-      });
-    }
-
-    if (log.attenderName) {
-      row["Attended By"] = log.attenderName;
-    }
-
-    let historyStr = "";
-    if (log.history && Array.isArray(log.history)) {
-      historyStr = log.history.map(h => {
-        const d = parseTimestamp(h.timestamp);
-        const dateStr = d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "Invalid Date";
-        return `[${dateStr}] ${h.attenderName}: ${h.status} - ${h.remark}`;
-      }).join(" | ");
-    }
-    row["Call History Timeline"] = historyStr;
-
-    return row;
-  };
-
-  const handleExport = () => {
-    if (sortedLogs.length === 0) { toast.error("Nothing to export."); return; }
-    const rows = sortedLogs.map(cleanExportRow);
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "My Sheet");
-    XLSX.writeFile(wb, `${attenderName}_all_${new Date().toLocaleDateString("en-CA")}.xlsx`);
-    toast.success("Exported!");
-  };
+  };    
 
   // ── Drag scroll ──
   const onMouseDown = useCallback((e) => {
@@ -720,7 +633,6 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     } else {
       setSelectedTags([]);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableTags]);
 
   // ── Tag filtered logs ──
@@ -767,7 +679,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       if (k && log[k]) set.add(String(log[k]).trim());
     });
     return Array.from(set).sort();
-  }, [tagFilteredLogs, optionsVersion]);
+  }, [tagFilteredLogs]);
 
   const uniqueCities = useMemo(() => {
     const set = new Set();
@@ -787,7 +699,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       }
     });
     return Array.from(set).sort();
-  }, [tagFilteredLogs, optionsVersion]);
+  }, [tagFilteredLogs]);
 
   const uniqueSubPrograms = useMemo(() => {
     const set = new Set();
@@ -862,7 +774,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       // 1. Text Search Query
       const q = searchQuery.trim().toLowerCase();
       if (q) {
-        const qDigits = q.replace(/[\s\-\.\(\)\+]/g, "");
+        const qDigits = q.replace(/[\s().+-]/g, "");
         const isPhoneQuery = qDigits.length >= 3 && /^\d+$/.test(qDigits);
 
         let isMatch = false;
@@ -879,7 +791,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
         if (!isMatch && isPhoneQuery) {
           const logPhones = [
             log.Phone, log.phone, log.Mobile, log.mobile, log.Whatsapp, log.whatsapp, log.normalizedPhone, log.normalizedMobile
-          ].map(p => String(p || "").replace(/[\s\-\.\(\)\+]/g, "")).filter(Boolean);
+          ].map(p => String(p || "").replace(/[\s().+-]/g, "")).filter(Boolean);
 
           if (logPhones.some(p => p.includes(qDigits))) {
             isMatch = true;
@@ -1132,9 +1044,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     return [...dynamicCols, "Type", "Status", "Remark", "Callback"];
   }, [dynamicCols]);
 
-  const visibleCount = useMemo(() => {
-    return 1 + allPossibleCols.filter(col => !hiddenColumns.includes(col)).length;
-  }, [allPossibleCols, hiddenColumns]);
+
 
   const duplicatePhoneMap = useMemo(() => {
     const map = {};
@@ -1144,7 +1054,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       const keys = Object.keys(log);
       const phoneKey = keys.find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno"].includes(k.toLowerCase()))
         || keys.find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
-      const rawPhone = phoneKey ? String(log[phoneKey] || "").replace(/[\s\-\.\(\)\+]/g, "").trim() : "";
+      const rawPhone = phoneKey ? String(log[phoneKey] || "").replace(/[\s().+-]/g, "").trim() : "";
       const phone = rawPhone.length >= 10 ? rawPhone.slice(-10) : rawPhone;
       if (!phone || phone.length < 5) return;
       if (!map[progId]) map[progId] = {};
@@ -1179,7 +1089,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       }
     });
     return list;
-  }, [filteredLogs, sortBy]);
+  }, [filteredLogs, sortBy, attenderId]);
 
   // ── Stats ──
   const stats = useMemo(() => {
@@ -1198,132 +1108,9 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   const totalPages = Math.ceil(sortedLogs.length / rowsPerPage);
   const paginated = sortedLogs.slice((page - 1) * rowsPerPage, page * rowsPerPage);
 
-  const performanceStats = useMemo(() => {
-    let totalAttempts = 0;
-    let connectedContacts = 0;
-    let notConnectedContacts = 0;
-    let registrations = 0;
-    let infoGiven = 0;
-    let interested = 0;
-    
-    const statusCounts = {};
-    const objectionCounts = {};
-    const dailyActivity = {}; // date string -> attempts count
-
-    tagFilteredLogs.forEach(log => {
-      const hist = log.history || [];
-      const isCalled = log.status || log.callbackDate || log.remark || log.remarks || hist.length > 0;
-      const status = isCalled ? getCanonicalStatus(log.status || "Pending") : "";
-
-      const attemptsCount = hist.length || (status ? 1 : 0);
-      totalAttempts += attemptsCount;
-
-      hist.forEach(h => {
-        const d = parseTimestamp(h.timestamp);
-        const dStr = d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "Invalid Date";
-        dailyActivity[dStr] = (dailyActivity[dStr] || 0) + 1;
-      });
-      if (hist.length === 0 && status && log.updatedAt) {
-        const d = parseTimestamp(log.updatedAt);
-        const dStr = d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "Invalid Date";
-        dailyActivity[dStr] = (dailyActivity[dStr] || 0) + 1;
-      }
-
-      if (status) {
-        statusCounts[status] = (statusCounts[status] || 0) + 1;
-        if (CONNECTED_STATUSES.includes(status)) {
-          connectedContacts++;
-          if (status === "Reg.Done") registrations++;
-          else if (status === "Info given") infoGiven++;
-          else if (status === "Interested") interested++;
-        } else if (NOT_CONNECTED_STATUSES.includes(status)) {
-          notConnectedContacts++;
-        }
-      }
-
-      if (log.objectionReason) {
-        objectionCounts[log.objectionReason] = (objectionCounts[log.objectionReason] || 0) + 1;
-      }
-    });
-
-    const statusChartData = Object.entries(statusCounts).map(([name, value]) => ({ name, value }));
-    const objectionChartData = Object.entries(objectionCounts).map(([name, value]) => ({ name, value }));
-    const dailyChartData = Object.entries(dailyActivity)
-      .map(([date, count]) => ({ date, count }))
-      .sort((a, b) => {
-        const [da, ma, ya] = a.date.split("/").map(Number);
-        const [db, mb, yb] = b.date.split("/").map(Number);
-        return new Date(ya, ma - 1, da) - new Date(yb, mb - 1, db);
-      })
-      .slice(-15);
-
-    const assignedCount = tagFilteredLogs.length;
-    const isLogCalled = l => !!(l.status || l.callbackDate || l.remark || l.remarks);
-    const calledCount = tagFilteredLogs.filter(isLogCalled).length;
-    const pendingCount = tagFilteredLogs.filter(l => !isLogCalled(l)).length;
-
-    // Today's calls — count history entries with today's date
-    const todayStr = new Date().toLocaleDateString("en-IN");
-    let todayCallCount = 0;
-    tagFilteredLogs.forEach(log => {
-      const hist = log.history || [];
-      hist.forEach(h => {
-        if (new Date(h.timestamp).toLocaleDateString("en-IN") === todayStr) todayCallCount++;
-      });
-      // Fallback for logs with no history but updated today
-      if (hist.length === 0 && log.status && log.updatedAt) {
-        const d = parseTimestamp(log.updatedAt);
-        if (d && d.toLocaleDateString("en-IN") === todayStr) todayCallCount++;
-      }
-    });
-
     // Overdue callbacks
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    const callbacksDue = tagFilteredLogs.filter(l => {
-      if (!l.callbackDate) return false;
-      const d = parseTimestamp(l.callbackDate);
-      if (!d || isNaN(d.getTime())) return false;
-      d.setHours(0, 0, 0, 0);
-      return d <= today && l.callbackStatus !== "done";
-    }).length;
-
-    return {
-      totalAttempts,
-      assignedCount,
-      calledCount,
-      pendingCount,
-      connectedContacts,
-      notConnectedContacts,
-      registrations,
-      infoGiven,
-      interested,
-      statusChartData,
-      objectionChartData,
-      dailyChartData,
-      todayCallCount,
-      callbacksDue,
-      connectionRate: assignedCount > 0 ? Math.round((connectedContacts / assignedCount) * 100) : 0,
-      registrationRate: assignedCount > 0 ? Math.round((registrations / assignedCount) * 100) : 0,
-      callsPerAssign: assignedCount > 0 ? (totalAttempts / assignedCount).toFixed(1) : "0.0"
-    };
-  }, [tagFilteredLogs]);
-
-  const getStatusBadge = (status) => {
-    if (!status) return { bg: "bg-gray-100", text: "text-gray-400", label: "Pending" };
-    if (status === "Reg.Done") return { bg: "bg-emerald-100", text: "text-emerald-700", label: status };
-    if (status === "Interested") return { bg: "bg-blue-100", text: "text-blue-700", label: status };
-    if (status === "Info given") return { bg: "bg-purple-100", text: "text-purple-700", label: status };
-    if (["NA", "Busy", "Call Cut", "switched off", "Not interested", "Invalid No"].includes(status)) return { bg: "bg-red-100", text: "text-red-600", label: status };
-    return { bg: "bg-indigo-100", text: "text-indigo-700", label: status };
-  };
-
-  const getCallbackStr = (log) => {
-    if (!log.callbackDate) return "";
-    if (log.callbackDate?.toDate) return log.callbackDate.toDate().toLocaleDateString("en-IN");
-    return String(log.callbackDate).split("T")[0];
-  };
-
-  return (
+    return (
     <>
       {/* Mobile-Only Dedicated Layout (< 768px) */}
       <div className="block md:hidden h-screen overflow-hidden">
@@ -1399,7 +1186,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
         />
       </div>
 
-      {/* Desktop-Only Layout (>= 768px) — 100% UNTOUCHED ORIGINAL CODE */}
+      {/* Desktop-Only Layout (>= 768px) */}
       <div className="hidden md:flex flex-col h-screen bg-gray-50 font-sans">
       <style>{`
         @keyframes slideUp {
@@ -1417,7 +1204,23 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
             </button>
             <div>
               <h1 className="font-black text-gray-900 text-base sm:text-lg leading-none">My Call Sheet</h1>
-              <p className="text-xs text-gray-400 font-medium">{attenderName}</p>
+              <div className="flex items-center gap-2 mt-1">
+                <p className="text-xs text-gray-400 font-medium">{attenderName}</p>
+                <div className="w-1 h-1 rounded-full bg-gray-300"></div>
+                <div className="flex items-center gap-1.5 text-[10px] font-bold">
+                  {syncState.status === 'LOADING_LOCAL' && <span className="text-gray-400 flex items-center gap-1"><Loader size={10} className="animate-spin" /> Loading Cache...</span>}
+                  {syncState.status === 'SYNCING' && <span className="text-blue-500 flex items-center gap-1"><Loader size={10} className="animate-spin" /> Syncing...</span>}
+                  {syncState.status === 'SYNCED' && <span className="text-emerald-500 flex items-center gap-1"><CheckCircle2 size={10} /> Synced</span>}
+                  {syncState.status === 'OFFLINE' && <span className="text-amber-500 flex items-center gap-1"><AlertCircle size={10} /> Offline</span>}
+                  {syncState.status === 'SYNC_ERROR' && <span className="text-red-500 flex items-center gap-1" title={syncState.error}><AlertCircle size={10} /> Error</span>}
+                  
+                  {syncState.lastSyncTime && syncState.status !== 'SYNCING' && syncState.status !== 'LOADING_LOCAL' && (
+                    <span className="text-gray-400 font-medium ml-1">
+                      {new Date(syncState.lastSyncTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1571,7 +1374,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
                     <button
                       type="button"
                       tabIndex={0}
-                      onClick={() => { setSelectedProgramId(""); setSelectedProgramName(""); setSelectedSubProgram(""); setProgramDropOpen(false); setProgramSearch(""); }}
+                      onClick={() => { setSelectedProgramId("");  setProgramDropOpen(false); setProgramSearch(""); }}
                       className={`w-full text-left px-3 py-2 text-xs font-semibold hover:bg-blue-50 transition ${!selectedProgramId ? "text-blue-700 bg-blue-50" : "text-gray-400"}`}
                     >
                       — Select Tag...
@@ -1585,9 +1388,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
                           tabIndex={0}
                           onClick={() => {
                             setSelectedProgramId(p.id);
-                            setSelectedProgramName(p.name);
-                            setSelectedSubProgram("");
-                            setProgramDropOpen(false);
+//                             setSelectedProgramName(p.name);
+                                                        setProgramDropOpen(false);
                             setProgramSearch("");
                           }}
                           className={`w-full text-left px-3 py-2 text-xs font-semibold hover:bg-blue-50 transition truncate ${selectedProgramId === p.id ? "text-blue-700 bg-blue-50/80" : "text-gray-700"}`}
@@ -1619,9 +1421,24 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
             </button>
           </div>
 
-          <button onClick={openCallEntryDialog} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition shadow-lg shadow-emerald-500/20">
-            <PhoneIncoming size={15} /> Add Call Entry
-          </button>
+          <div className="flex flex-col sm:flex-row gap-3 mt-4 sm:mt-0 w-full sm:w-auto">
+            <button 
+              onClick={() => {
+                const toastId = toast.loading("Syncing leads...");
+                forceDeltaSync(attenderId)
+                  .then(() => toast.success("Leads synced", { id: toastId }))
+                  .catch(() => toast.error("Failed to sync", { id: toastId }));
+              }}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 border border-slate-700 hover:border-blue-500 hover:bg-slate-700 text-white rounded-lg transition-all text-sm font-medium"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+            <button onClick={openCallEntryDialog} className="flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg transition-all shadow-md shadow-blue-900/20 text-sm font-medium">
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Add Call Entry</span>
+            </button>
+          </div>
         </div>
       </header>
 

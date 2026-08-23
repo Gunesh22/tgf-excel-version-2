@@ -1,0 +1,168 @@
+﻿
+> linechart@0.0.0 lint
+> eslint .
+
+
+D:\TGF Call\src\lib\db\assignments.js
+  5:127  error  Parsing error: Identifier 'documentId' has already been declared
+
+D:\TGF Call\src\lib\db\auth.js
+   2:83  error  'query' is defined but never used. Allowed unused vars must match /^[A-Z_]/u    no-unused-vars
+   2:90  error  'orderBy' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  21:12  error  'e' is defined but never used                                                   no-unused-vars
+  21:15  error  Empty block statement                                                           no-empty
+  36:14  error  'e' is defined but never used                                                   no-unused-vars
+  36:17  error  Empty block statement                                                           no-empty
+
+D:\TGF Call\src\lib\db\cache.js
+    4:44  error  'updateDoc' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  274:12  error  'e' is defined but never used                                                     no-unused-vars
+
+D:\TGF Call\src\lib\db\contacts.js
+  5:116  error  Parsing error: Identifier 'documentId' has already been declared
+
+D:\TGF Call\src\lib\db\metadata.js
+    5:44  error  'updateDoc' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                        no-unused-vars
+    5:90  error  'orderBy' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                          no-unused-vars
+   10:37  error  'forceRefresh' is assigned a value but never used                                                       no-unused-vars
+   14:7   error  'registeredTagsCache' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u     no-unused-vars
+   16:41  error  'tag' is defined but never used                                                                         no-unused-vars
+   21:39  error  'tag' is defined but never used                                                                         no-unused-vars
+   34:5   error  'incomingProgramEnsured' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+   35:5   error  'outgoingProgramEnsured' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  258:44  error  Unnecessary escape character: \/                                                                        no-useless-escape
+  859:50  error  'attState' is defined but never used                                                                    no-unused-vars
+  859:60  error  'attenderName' is defined but never used                                                                no-unused-vars
+
+D:\TGF Call\src\lib\db\reports.js
+  3:156  error  Parsing error: Identifier 'documentId' has already been declared
+
+D:\TGF Call\src\lib\db\sync.js
+  3:31  error  'setDoc' is defined but never used. Allowed unused vars must match /^[A-Z_]/u           no-unused-vars
+  3:39  error  'doc' is defined but never used. Allowed unused vars must match /^[A-Z_]/u              no-unused-vars
+  3:44  error  'updateDoc' is defined but never used. Allowed unused vars must match /^[A-Z_]/u        no-unused-vars
+  3:55  error  'deleteDoc' is defined but never used. Allowed unused vars must match /^[A-Z_]/u        no-unused-vars
+  3:66  error  'serverTimestamp' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+D:\TGF Call\src\lib\ghl.js
+  395:16  error  'err' is defined but never used   no-unused-vars
+  460:36  error  Unnecessary escape character: \-  no-useless-escape
+
+D:\TGF Call\src\lib\telemetry.js
+  6:12  error  'e' is defined but never used  no-unused-vars
+  6:15  error  Empty block statement          no-empty
+
+D:\TGF Call\src\page\call-center\ImportContacts.jsx
+   67:6   warning  React Hook useEffect has a missing dependency: 'handleDiscoverTags'. Either include it or remove the dependency array                                                                                   react-hooks/exhaustive-deps
+  158:9   warning  The 'handleDiscoverTags' function makes the dependencies of useEffect Hook (at line 60) change on every render. To fix this, wrap the definition of 'handleDiscoverTags' in its own useCallback() Hook  react-hooks/exhaustive-deps
+  227:18  error    '_' is defined but never used                                                                                                                                                                           no-unused-vars
+
+D:\TGF Call\src\page\call-center\admin\AdminPanel.jsx
+  4:140  error  'runAutoLockAndPurgeCheck' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+D:\TGF Call\src\page\call-center\admin\components\AbhivyaktiTab.jsx
+  106:53  error  'placeholder' is defined but never used                                                                                         no-unused-vars
+  232:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+D:\TGF Call\src\page\call-center\admin\components\AllAttendersSheetTab.jsx
+    46:10   error  'verifyCallCenterCache' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+   652:5    error  Unreachable code                                                                              no-unreachable
+   652:104  error  'res' is not defined                                                                          no-undef
+   653:5    error  'res' is not defined                                                                          no-undef
+   656:5    error  Unreachable code                                                                              no-unreachable
+   656:12   error  'res' is not defined                                                                          no-undef
+   748:5    error  'setSelectedSubPrograms' is not defined                                                       no-undef
+   749:5    error  'setSelectedObjections' is not defined                                                        no-undef
+   750:5    error  'setSelectedCallbackStatuses' is not defined                                                  no-undef
+  1574:30   error  'filterDateType' is not defined                                                               no-undef
+  1575:38   error  'setFilterDateType' is not defined                                                            no-undef
+  1587:30   error  'filterDateRange' is not defined                                                              no-undef
+  1588:38   error  'setFilterDateRange' is not defined                                                           no-undef
+  1600:20   error  'filterDateRange' is not defined                                                              no-undef
+  1606:34   error  'customDateFrom' is not defined                                                               no-undef
+  1607:42   error  'setCustomDateFrom' is not defined                                                            no-undef
+  1615:34   error  'customDateTo' is not defined                                                                 no-undef
+  1616:42   error  'setCustomDateTo' is not defined                                                              no-undef
+  1666:30   error  'cityOptions' is not defined                                                                  no-undef
+  1667:31   error  'selectedCities' is not defined                                                               no-undef
+  1668:31   error  'setSelectedCities' is not defined                                                            no-undef
+
+D:\TGF Call\src\page\call-center\admin\components\MonthlyReportTab.jsx
+   807:17  error  '_' is defined but never used                                                                        no-unused-vars
+   840:17  error  '_' is defined but never used                                                                        no-unused-vars
+  1446:9   error  'denominator' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u          no-unused-vars
+  1448:9   error  'incomingDenominator' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  1449:9   error  'outgoingDenominator' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  1450:33  error  'incDen' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u               no-unused-vars
+  1451:33  error  'outDen' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u               no-unused-vars
+
+D:\TGF Call\src\page\call-center\attender\AttenderView.jsx
+   775:41  error    Unnecessary escape character: \.                                                                                  no-useless-escape
+   775:43  error    Unnecessary escape character: \(                                                                                  no-useless-escape
+   775:45  error    Unnecessary escape character: \)                                                                                  no-useless-escape
+   775:47  error    Unnecessary escape character: \+                                                                                  no-useless-escape
+   792:52  error    Unnecessary escape character: \.                                                                                  no-useless-escape
+   792:54  error    Unnecessary escape character: \(                                                                                  no-useless-escape
+   792:56  error    Unnecessary escape character: \)                                                                                  no-useless-escape
+   792:58  error    Unnecessary escape character: \+                                                                                  no-useless-escape
+   982:6   warning  React Hook useMemo has a missing dependency: 'attenderId'. Either include it or remove the dependency array       react-hooks/exhaustive-deps
+  1045:9   error    'visibleCount' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                      no-unused-vars
+  1057:77  error    Unnecessary escape character: \.                                                                                  no-useless-escape
+  1057:79  error    Unnecessary escape character: \(                                                                                  no-useless-escape
+  1057:81  error    Unnecessary escape character: \)                                                                                  no-useless-escape
+  1057:83  error    Unnecessary escape character: \+                                                                                  no-useless-escape
+  1092:6   warning  React Hook useMemo has an unnecessary dependency: 'attenderId'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+  1111:9   error    'performanceStats' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                  no-unused-vars
+  1221:9   error    'getStatusBadge' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                    no-unused-vars
+  1491:29  error    'setSelectedProgramName' is not defined                                                                           no-undef
+  1492:29  error    'setSelectedSubProgram' is not defined                                                                            no-undef
+
+D:\TGF Call\src\page\call-center\attender\components\AttenderFilters.jsx
+   16:3   error  'colorClass' is assigned a value but never used                            no-unused-vars
+  784:18  error  Unexpected constant truthiness on the left-hand side of a `&&` expression  no-constant-binary-expression
+
+D:\TGF Call\src\page\call-center\attender\components\CallButton.jsx
+  8:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+D:\TGF Call\src\page\call-center\attender\components\EditModal.jsx
+  686:27  error  Parsing error: Unexpected token )
+
+D:\TGF Call\src\page\call-center\attender\components\WhatsAppButton.jsx
+   9:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+  27:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+D:\TGF Call\src\page\call-center\attender\components\edit-modal\CallEntryTab.jsx
+  18:3  error  'row' is defined but never used  no-unused-vars
+
+D:\TGF Call\src\page\call-center\attender\mobile\MobileAttenderView.jsx
+  191:28  error  'exportTelemetryJSON' is not defined  no-undef
+
+D:\TGF Call\src\page\call-center\attender\mobile\MobileEditModal.jsx
+    9:38  error    'checkGlobalDuplicate' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                                     no-unused-vars
+   11:10  error    'searchCRMByPhone' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                                         no-unused-vars
+   20:3   error    'isNotConnectedStatus' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                                     no-unused-vars
+   91:6   warning  React Hook useEffect has a missing dependency: 'getNormalizedRow'. Either include it or remove the dependency array             react-hooks/exhaustive-deps
+  107:14  error    'pendingSave' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                     no-unused-vars
+  107:27  error    'setPendingSave' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                  no-unused-vars
+  120:24  error    'field' is defined but never used                                                                                               no-unused-vars
+  323:6   warning  React Hook useMemo has missing dependencies: 'attenderName' and 'savedRow'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+D:\TGF Call\src\page\call-center\components\CelebrationFeed.jsx
+   59:9   error    'initialMountTime' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                             no-unused-vars
+  113:37  error    'idx' is defined but never used                                                                                                                                                              no-unused-vars
+  176:9   warning  The 'processQueue' function makes the dependencies of useEffect Hook (at line 146) change on every render. To fix this, wrap the definition of 'processQueue' in its own useCallback() Hook  react-hooks/exhaustive-deps
+  176:9   warning  The 'processQueue' function makes the dependencies of useEffect Hook (at line 174) change on every render. To fix this, wrap the definition of 'processQueue' in its own useCallback() Hook  react-hooks/exhaustive-deps
+
+D:\TGF Call\src\page\dashboard\components\LeadsTableView.jsx
+   42:12  error    'activeRowIdx' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                               no-unused-vars
+   42:26  error    'setActiveRowIdx' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                            no-unused-vars
+  110:8   warning  React Hook useMemo has missing dependencies: 'isDupRow', 'shivirCol', and 'sourceCol'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+D:\TGF Call\src\page\dashboard\components\ShivirAnalysisView.jsx
+  3:10  error  'normalizeStr' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+D:\TGF Call\src\page\dashboard\components\SourceAnalysisView.jsx
+  3:10  error  'normalizeStr' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+Ô£û 109 problems (100 errors, 9 warnings)
+

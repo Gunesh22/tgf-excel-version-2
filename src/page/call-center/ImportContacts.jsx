@@ -5,7 +5,7 @@ import {
   Phone, Mail, MapPin, Tag, ArrowRight, ShieldCheck, HelpCircle, X
 } from "lucide-react";
 import { createProgram, importContacts } from "../../lib/db";
-import { testConnection, fetchContactsGroupedByTag, searchContacts, fetchLocationTags } from "../../lib/ghl";
+import { testConnection, fetchContactsGroupedByTag, fetchLocationTags } from "../../lib/ghl";
 
 export default function ImportContacts({ programs, onImportComplete }) {
   // CRM Connection status
@@ -688,8 +688,7 @@ export default function ImportContacts({ programs, onImportComplete }) {
               </div>
               <div className="flex flex-wrap gap-2">
                 {Object.keys(crmFetchedGroups).map(tag => {
-                  const originalCount = crmFetchedGroups[tag]?.length || 0;
-                  const filteredCount = filteredGroups?.[tag]?.length || 0;
+                                    const filteredCount = filteredGroups?.[tag]?.length || 0;
                   const isSelected = !!selectedCrmTags[tag];
 
                   return (

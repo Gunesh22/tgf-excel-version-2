@@ -1,13 +1,14 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import ghlHandler from './api/ghl.js'
+import authHandler from './api/auth.js'
 
 function localApiPlugin() {
   return {
     name: 'local-api-plugin',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (req.url?.startsWith('/api/ghl')) {
+        if (req.url?.startsWith('/api/ghl') || req.url?.startsWith('/api/auth')) {
           let bodyStr = '';
           req.on('data', chunk => { bodyStr += chunk; });
           req.on('end', async () => {
@@ -15,7 +16,7 @@ function localApiPlugin() {
               if (bodyStr) {
                 req.body = JSON.parse(bodyStr);
               }
-            } catch (e) {}
+            } catch { /* ignore */ }
             
             res.status = (code) => {
               res.statusCode = code;
@@ -26,7 +27,11 @@ function localApiPlugin() {
               res.end(JSON.stringify(data));
             };
 
-            await ghlHandler(req, res);
+            if (req.url?.startsWith('/api/ghl')) {
+              await ghlHandler(req, res);
+            } else if (req.url?.startsWith('/api/auth')) {
+              await authHandler(req, res);
+            }
           });
           return;
         }
@@ -39,5 +44,10 @@ function localApiPlugin() {
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), localApiPlugin()],
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './tests/setup.js',
+  }
 })
 

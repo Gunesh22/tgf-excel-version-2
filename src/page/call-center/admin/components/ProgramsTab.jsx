@@ -11,7 +11,7 @@ import {
 } from "../../../../lib/db";
 import { getDefaultExcelMapping, STANDARD_TARGETS, cleanExportRow } from "../utils.jsx";
 
-export default function ProgramsTab({ programs, attenders, onReloadPrograms }) {
+export default function ProgramsTab({ programs, onReloadPrograms }) {
   const [newProgramName, setNewProgramName] = useState("");
   const [creating, setCreating] = useState(false);
   const [selectedProgStats, setSelectedProgStats] = useState(null);
@@ -20,7 +20,7 @@ export default function ProgramsTab({ programs, attenders, onReloadPrograms }) {
 
   // Excel Upload States
   const [uploadTargetProgId, setUploadTargetProgId] = useState("");
-  const [excelFile, setExcelFile] = useState(null);
+  // removed unused excelFile state
   const [excelHeaders, setExcelHeaders] = useState([]);
   const [excelDataPreview, setExcelDataPreview] = useState([]);
   const [fieldMapping, setFieldMapping] = useState({});
@@ -50,7 +50,7 @@ export default function ProgramsTab({ programs, attenders, onReloadPrograms }) {
     try {
       const stats = await getProgramContactStats(pid);
       setSelectedProgStats(stats);
-    } catch (err) {
+    } catch {
       toast.error("Failed to load program stats.");
     } finally {
       setStatsLoading(false);
@@ -88,7 +88,6 @@ export default function ProgramsTab({ programs, attenders, onReloadPrograms }) {
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setExcelFile(file);
 
     const reader = new FileReader();
     reader.onload = (evt) => {
@@ -297,7 +296,6 @@ export default function ProgramsTab({ programs, attenders, onReloadPrograms }) {
       await importContacts(uploadTargetProgId, dataToSave);
       toast.success(`Successfully imported ${dataToSave.length} contacts!`);
       setShowMapModal(false);
-      setExcelFile(null);
       setExcelHeaders([]);
       setExcelDataPreview([]);
       
@@ -450,7 +448,7 @@ export default function ProgramsTab({ programs, attenders, onReloadPrograms }) {
                     <span className="text-xs font-bold text-gray-700">Single File</span>
                   </label>
                   <label className="flex items-center gap-2 p-3 border border-gray-100 rounded-2xl cursor-pointer hover:bg-slate-50">
-                    <input type="radio" name="import-mode" onChange={() => { setExcelFile(null); setExcelHeaders([]); }} />
+                    <input type="radio" name="import-mode" onChange={() => { setExcelHeaders([]); }} />
                     <span className="text-xs font-bold text-gray-700">Folder Upload</span>
                   </label>
                 </div>

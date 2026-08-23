@@ -1,7 +1,65 @@
+rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true; // Temporary open rules for development
+
+    // Settings — only authenticated admin session can read/write
+    match /settings/{doc} {
+      allow read, write: if false; // No client access — admin pw must be server-side verified
+    }
+
+    // Attenders — readable by anyone (needed for login dropdown), writable only by admin session
+    // Passwords will be handled in Cloud Functions so it's safe to read names
+    match /attenders/{doc} {
+      allow read: if true;   
+      allow write: if false; 
+    }
+
+    // Contacts — only assigned attenders can read their own contacts
+    match /contacts/{contactId} {
+      allow read: if request.auth != null &&
+        (resource == null ||
+         !('assignedTo' in resource.data) ||
+         resource.data.assignedTo == null ||
+         request.auth.uid in resource.data.assignedTo ||
+         request.auth.token.admin == true);
+      allow create: if request.auth != null && request.auth.token.admin == true;
+      allow delete: if request.auth != null && request.auth.token.admin == true;
+      allow update: if request.auth != null && (
+        request.auth.token.admin == true ||
+        (
+          request.auth.uid in resource.data.assignedTo &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['assignedTo', 'attenderId'])
+        )
+      );
+    }
+
+    // callCenterCache — admin read/write, attenders read own partitions
+    match /callCenterCache/{document=**} {
+      allow read, write: if request.auth != null && request.auth.token.admin == true;
+    }
+    
+    match /callCenterCache/{monthStr}/attenderPartitions/{attenderId} {
+      allow read: if request.auth != null && (request.auth.uid == attenderId || request.auth.token.admin == true);
+    }
+
+    // registrations — admin read/write
+    match /registrations/{doc} {
+      allow read, write: if request.auth != null && request.auth.token.admin == true;
+    }
+
+    // programs, activeTags — read by all, write by admin
+    match /programs/{doc} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+    match /activeTags/{doc} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+
+    // lockedMonthlyReports — admin only
+    match /lockedMonthlyReports/{doc} {
+      allow read, write: if request.auth != null && request.auth.token.admin == true;
     }
   }
 }

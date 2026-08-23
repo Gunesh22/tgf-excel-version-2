@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-hot-toast";
 import { Settings, ArrowLeft, ChevronRight, Loader } from "lucide-react";
-import { getPrograms, getAttenders, subscribeToCallCenterOptions, subscribeToAllCallLogs, subscribeToRegistrations, getRegistrationMonths, runAutoLockAndPurgeCheck } from "../../../lib/db";
+import { getPrograms, getAttenders, subscribeToCallCenterOptions, subscribeToAllCallLogs, subscribeToRegistrations, getRegistrationMonths} from "../../../lib/db";
 import { updateDynamicOptions } from "../attender/utils";
 import ImportContacts from "../ImportContacts";
 import { TAB_ITEMS } from "./utils.jsx";
@@ -40,7 +40,7 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
     return () => {
       if (unsub) unsub();
     };
-  }, []);
+  }, [selectedMonth]);
 
   // Hoisted subscription to all call logs
   useEffect(() => {
@@ -70,7 +70,7 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
       }
     };
     loadMonths();
-  }, []);
+  }, [selectedMonth]);
 
   // Hoisted subscription to registrations — ALL months scope cached in IndexedDB
   useEffect(() => {

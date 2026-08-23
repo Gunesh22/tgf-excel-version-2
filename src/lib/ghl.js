@@ -11,6 +11,7 @@
 
 import { isKhojiField } from "./khojiHelper";
 import { formatContactName } from "./db";
+import { auth } from "./firebase";
 
 const GHL_TOKEN = import.meta.env.VITE_GHL_TOKEN;
 const GHL_LOCATION_ID = import.meta.env.VITE_GHL_LOCATION_ID;
@@ -61,17 +62,31 @@ const ghlHeaders = () => {
  */
 const callGhlApiProxy = async (endpoint, method = "POST", payload = null, params = null, signal = null) => {
   try {
+    let idToken = null;
+    if (auth.currentUser) {
+      idToken = await auth.currentUser.getIdToken();
+    }
+
+    const headers = { "Content-Type": "application/json" };
+    if (idToken) {
+      headers["Authorization"] = `Bearer ${idToken}`;
+    }
+
     const proxyRes = await fetch("/api/ghl", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ endpoint, method, payload, params }),
       signal,
     });
+    
     if (proxyRes.ok) {
       return await proxyRes.json();
+    } else {
+      console.warn(`GHL Proxy returned ${proxyRes.status}`);
     }
   } catch (e) {
     // Fall back to direct fetch if serverless endpoint is unreachable in local dev
+    console.error("Failed to reach /api/ghl proxy:", e);
   }
   return null;
 };
@@ -377,7 +392,7 @@ export const fetchContactDetailsInBatches = async (contacts, onProgress, signal)
           const data = await res.json();
           return { ...c, ...data.contact };
         }
-      } catch (err) {
+      } catch {
         console.warn(`Failed to fetch details for ${c.id}`);
       }
       return c;
@@ -442,7 +457,7 @@ export const fetchContactsGroupedByTag = async (query = "", onProgress = null, s
 
   // Fallback 1: Split query on spaces, dashes, underscores, and try to search GHL with the first keyword of >=3 chars
   if (contacts.length === 0 && query) {
-    const parts = query.split(/[\s_\-]+/).filter(p => p.length >= 3);
+    const parts = query.split(/[\s_-]+/).filter(p => p.length >= 3);
     const prefix = parts[0];
     if (prefix && prefix.toLowerCase() !== query.toLowerCase()) {
       console.log(`GHL V1 Tag Query Fallback 1: Querying prefix keyword: "${prefix}"`);

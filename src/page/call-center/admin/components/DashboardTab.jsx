@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "react-hot-toast";
 import * as XLSX from "xlsx";
 import { BarChart3, Download, Search, X, ChevronDown, Check } from "lucide-react";
-import { subscribeToAllCallLogs } from "../../../../lib/db";
+// removed subscribeToAllCallLogs import
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from "recharts";
 import { COLORS, cleanExportRow, CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp, getCanonicalStatus } from "../utils.jsx";
 import { isKhojiAffirmative, isKhojiNegative } from "../../attender/utils.js";
 
 // ── Multi-select dropdown ──────────────────────────────────────────────────
-function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All" }) {
+function MultiSelect({ options, selected, onChange, allLabel = "All" }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const ref = useRef(null);
@@ -549,15 +549,7 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
     toast.success("Report downloaded!");
   };
 
-  const timeAgo = (ts) => {
-    const diff = Date.now() - new Date(ts).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
-  };
+
 
   const activeFilters = selectedProgramIds.length + selectedAttenderIds.length + selectedSources.length + selectedCalledFors.length + selectedStatuses.length + selectedCallTypes.length + selectedKhojiStatuses.length;
 
