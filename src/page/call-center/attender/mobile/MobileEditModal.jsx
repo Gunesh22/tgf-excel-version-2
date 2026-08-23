@@ -45,7 +45,8 @@ export default function MobileEditModal({
   onSave,
   onDelete,
   onClose,
-  onRefreshLead
+  onRefreshLead,
+  isFetchingShared = false
 }) {
   const getNormalizedRow = () => {
     const normalized = { ...row };
@@ -111,7 +112,14 @@ export default function MobileEditModal({
   const [showCalledForPrompt, setShowCalledForPrompt] = useState(false);
   const [promptSelection, setPromptSelection] = useState("");
   const [pendingSave, setPendingSave] = useState(false);
-  const [showUndoStatusPrompt, setShowUndoStatusPrompt] = useState(false);
+  useEffect(() => {
+    const freshNorm = getNormalizedRow();
+    setSavedRow(freshNorm);
+    setEdited(prev => ({
+      ...freshNorm,
+      remark: prev?.remark || ""
+    }));
+  }, [row]);
 
   const [globalDup, setGlobalDup] = useState(null);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
@@ -160,13 +168,19 @@ export default function MobileEditModal({
 
       updates.lastEditedBy = attenderName || "Unknown";
 
-      if (row._isNew) {
+      const targetDocId = targetEdited.contactId || targetEdited.id || row.id;
+      const isNewWithoutDoc = row._isNew && !targetEdited.contactId && !targetEdited.id;
+
+      if (isNewWithoutDoc) {
         delete updates._isNew;
         await addIncomingCallLog(
           row.attenderId, row.attenderName, updates, targetEdited.programId, targetEdited.programName
         );
       } else {
-        await updateCallLog(id, updates, attenderId, attenderName, row);
+        const existingContext = globalDup?.first
+          ? { ...globalDup.first, ...row, ...targetEdited }
+          : { ...row, ...targetEdited };
+        await updateCallLog(targetDocId, updates, attenderId, attenderName, existingContext);
       }
 
       toast.success("Saved!", { duration: 3000, position: 'top-center' });
@@ -431,8 +445,10 @@ export default function MobileEditModal({
           <SharedBanner
             edited={edited}
             row={row}
+            globalDup={globalDup}
             currentAttenderName={attenderName}
             onRefreshLead={onRefreshLead}
+            isFetchingShared={isFetchingShared}
           />
           {activeTab === "call" ? (
             <div className="space-y-4">

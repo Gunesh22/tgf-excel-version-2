@@ -54,7 +54,8 @@ export const EditModal = ({
   onSave,
   onDelete,
   onClose,
-  onRefreshLead
+  onRefreshLead,
+  isFetchingShared = false
 }) => {
   const [selectedAttenderId, setSelectedAttenderId] = useState(() => (attenderId || row?.attenderId || ""));
   const [selectedAttenderName, setSelectedAttenderName] = useState(() => (attenderName || row?.attenderName || ""));
@@ -157,6 +158,15 @@ export const EditModal = ({
   const [showUndoStatusPrompt, setShowUndoStatusPrompt] = useState(false);
   const [activeTab, setActiveTab] = useState(() => (row._isNew ? "profile" : "call"));
   const [showEditHistory, setShowEditHistory] = useState(false);
+
+  useEffect(() => {
+    const freshNorm = getNormalizedRow();
+    setSavedRow(freshNorm);
+    setEdited(prev => ({
+      ...freshNorm,
+      remark: prev?.remark || ""
+    }));
+  }, [row]);
 
   useEffect(() => {
     setLocalPrograms(programs);
@@ -1427,6 +1437,7 @@ export const EditModal = ({
 
         // Scenario 2: Incoming call & Registration on an Outgoing Campaign
         const isIncomingConvertOnOutgoingProgram = 
+          oldStatus !== "Reg.Done" &&
           updates.status === "Reg.Done" &&
           String(targetEdited.callType || "outgoing").toLowerCase().startsWith("incoming") &&
           (targetEdited.programId || savedRow.programId) !== "incoming-calls";
@@ -1462,8 +1473,21 @@ export const EditModal = ({
         } else if (isCallAttemptUpdated) {
           const safeName = activeAttenderName || attenderName || "Unknown";
           const nowStr = new Date().toISOString();
+
+          const oldCalledForVal = String(savedRow[calledForField] || savedRow["Called For"] || savedRow.calledFor || "").trim().toLowerCase();
+          const newCalledForVal = String(targetEdited[calledForField] || targetEdited["Called For"] || targetEdited.calledFor || "").trim().toLowerCase();
+          const calledForChanged = oldCalledForVal !== newCalledForVal;
+
+          const isNewConversionEvent = (oldStatus !== "Reg.Done" && targetEdited.status === "Reg.Done") ||
+            (oldStatus === "Reg.Done" && targetEdited.status === "Reg.Done" && calledForChanged && newCalledForVal !== "");
+
+          let histStatus = updates.status || targetEdited.status || "";
+          if (!histStatus) {
+            histStatus = "Call Log Added";
+          }
+
           const newHist = {
-            status: updates.status || "",
+            status: histStatus,
             remark: updates.remark || "",
             attenderName: safeName,
             timestamp: nowStr,
@@ -1530,7 +1554,10 @@ export const EditModal = ({
         console.log("[EDIT MODAL SAVE] addIncomingCallLog result docId:", resId);
         savedDocId = resId;
       } else {
-        const res = await updateCallLog(targetDocId, updates, activeAttenderId, activeAttenderName, row);
+        const existingContext = globalDup?.first
+          ? { ...globalDup.first, ...row, ...targetEdited }
+          : { ...row, ...targetEdited };
+        const res = await updateCallLog(targetDocId, updates, activeAttenderId, activeAttenderName, existingContext);
         console.log("[EDIT MODAL SAVE] updateCallLog result:", res);
         if (res?.updatedLead) {
           targetEdited = { ...targetEdited, ...res.updatedLead };
@@ -1769,8 +1796,10 @@ export const EditModal = ({
           <SharedBanner
             edited={edited}
             row={row}
-            currentAttenderName={attenderName}
+            globalDup={globalDup}
+            currentAttenderName={activeAttenderName}
             onRefreshLead={onRefreshLead}
+            isFetchingShared={isFetchingShared}
           />
 
           {/* Duplicate Banner */}

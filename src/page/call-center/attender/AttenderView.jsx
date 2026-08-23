@@ -54,7 +54,18 @@ function enrichLogsWithCallbackFlags(logs) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  return logs.map(log => {
+  const seenIds = new Set();
+  const uniqueLogs = [];
+  for (let i = 0; i < logs.length; i++) {
+    const log = logs[i];
+    if (!log) continue;
+    const logId = log.id || log.localId || `item_${i}`;
+    if (seenIds.has(logId)) continue;
+    seenIds.add(logId);
+    uniqueLogs.push(log);
+  }
+
+  return uniqueLogs.map(log => {
     let shouldBeDue = false;
     if (log.callbackDate) {
       const cbDate = parseTimestamp(log.callbackDate);
@@ -90,6 +101,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   const [selectedSubProgram, setSelectedSubProgram] = useState("");
   const [callLogs, setCallLogs] = useState([]);
   const [editingRow, setEditingRow] = useState(null);
+  const [isFetchingShared, setIsFetchingShared] = useState(false);
   const [isLoadingProgram, setIsLoadingProgram] = useState(false); // skeleton state
   const [requestCount, setRequestCount] = useState(10);
   const [isRequesting, setIsRequesting] = useState(false);
@@ -310,10 +322,20 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
 
     // Fetch fresh copy for shared leads (0 Reads for solo leads or fresh cache)
     if (row.id && !row._isNew) {
-      const fresh = await fetchFreshSharedLead(row, attenderId, attenderName, false);
-      if (fresh) {
-        setEditingRow(fresh);
-        setCallLogs(prev => prev.map(l => l.id === fresh.id ? { ...l, ...fresh } : l));
+      setIsFetchingShared(true);
+      const startTime = Date.now();
+      try {
+        const fresh = await fetchFreshSharedLead(row, attenderId, attenderName, false);
+        const elapsed = Date.now() - startTime;
+        if (elapsed < 800) {
+          await new Promise(res => setTimeout(res, 800 - elapsed));
+        }
+        if (fresh) {
+          setEditingRow(fresh);
+          setCallLogs(prev => prev.map(l => l.id === fresh.id ? { ...l, ...fresh } : l));
+        }
+      } finally {
+        setIsFetchingShared(false);
       }
     }
   }, [attenderId, attenderName]);
@@ -326,13 +348,23 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       `%c🔄 [MANUAL SYNC TRIGGERED] Manual refresh requested for shared lead "${leadName}" (${row.id})`,
       "background: #0284c7; color: #e0f2fe; font-weight: bold; padding: 3px 8px; border-radius: 4px;"
     );
-    toast.loading(`Syncing latest details for ${leadName}...`, { id: `sync-${row.id}` });
-    const fresh = await fetchFreshSharedLead(row, attenderId, attenderName, true);
-    if (fresh) {
-      setCallLogs(prev => prev.map(l => l.id === fresh.id ? { ...l, ...fresh } : l));
-      toast.success(`Updated details for ${leadName}!`, { id: `sync-${row.id}` });
-    } else {
-      toast.dismiss(`sync-${row.id}`);
+    setIsFetchingShared(true);
+    const startTime = Date.now();
+    try {
+      const fresh = await fetchFreshSharedLead(row, attenderId, attenderName, true);
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 800) {
+        await new Promise(res => setTimeout(res, 800 - elapsed));
+      }
+      if (fresh) {
+        setEditingRow(fresh);
+        setCallLogs(prev => prev.map(l => l.id === fresh.id ? { ...l, ...fresh } : l));
+        toast.success(`Updated details for ${leadName}!`, { id: `sync-${row.id}` });
+      } else {
+        toast.dismiss(`sync-${row.id}`);
+      }
+    } finally {
+      setIsFetchingShared(false);
     }
   }, [attenderId, attenderName]);
 
@@ -1414,7 +1446,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           setFilterStatus={setFilterStatus}
           onExit={onExit}
           openCallEntryDialog={openCallEntryDialog}
-          setEditingRow={setEditingRow}
+          setEditingRow={handleSelectRow}
           setGlobalSearchOpen={setGlobalSearchOpen}
           showAdvancedFilters={showAdvancedFilters}
           setShowAdvancedFilters={setShowAdvancedFilters}
@@ -1742,6 +1774,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           }}
           onDelete={handleDeleteRow}
           onClose={() => setEditingRow(null)}
+          onRefreshLead={handleRefreshSingleLead}
+          isFetchingShared={isFetchingShared}
         />
       )}
 
@@ -2037,6 +2071,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           onDelete={handleDeleteRow}
           onClose={handleCloseModal}
           onRefreshLead={handleRefreshSingleLead}
+          isFetchingShared={isFetchingShared}
         />
       ) : (
         <EditModal

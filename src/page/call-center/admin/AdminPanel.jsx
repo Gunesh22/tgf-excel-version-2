@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-hot-toast";
-import { Settings, ArrowLeft, ChevronRight, Loader } from "lucide-react";
+import { Settings, ArrowLeft, ChevronRight, Loader, RefreshCw } from "lucide-react";
 import { getPrograms, getAttenders, getSettingsOptions, subscribeToAllCallLogs, subscribeToRegistrations, getRegistrationMonths, runAutoLockAndPurgeCheck } from "../../../lib/db";
 import { updateDynamicOptions } from "../attender/utils";
 import ImportContacts from "../ImportContacts";
@@ -18,6 +18,8 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
   const [programs, setPrograms] = useState([]);
   const [attenders, setAttenders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState(new Date());
   const [settingsOptions, setSettingsOptions] = useState({ statusOptions: [], sourceOptions: [], calledForOptions: [] });
 
   const [callLogs, setCallLogs] = useState([]);
@@ -42,6 +44,26 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
       })
       .catch(() => {});
   }, []);
+
+  // Periodic 45-second background sync cycle (fetches only changed data without blocking UI)
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      console.log("[ADMIN BACKGROUND SYNC] 45s periodic sync cycle running...");
+      loadAllSilently();
+    }, 45000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  const loadAllSilently = async () => {
+    try {
+      const [progs, atts] = await Promise.all([getPrograms(), getAttenders()]);
+      setPrograms(progs);
+      setAttenders(atts);
+      setLastSyncedAt(new Date());
+    } catch (err) {
+      console.warn("[ADMIN BACKGROUND SYNC] Silent sync failed:", err);
+    }
+  };
 
   // Hoisted subscription to all call logs
   useEffect(() => {
@@ -92,11 +114,25 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
       const [progs, atts] = await Promise.all([getPrograms(), getAttenders()]);
       setPrograms(progs);
       setAttenders(atts);
+      setLastSyncedAt(new Date());
     } catch (err) {
       console.error(err);
       toast.error("Failed to load data: " + err.message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await loadAllSilently();
+      if (onAttendersChange) onAttendersChange();
+      toast.success("Admin data refreshed!");
+    } catch (err) {
+      toast.error("Refresh failed: " + err.message);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -119,9 +155,20 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
               <p className="text-slate-500 text-[9px] font-medium mt-0.5">TGF Call Center</p>
             </div>
           </div>
-          <button onClick={onExit} className="flex items-center gap-1 px-3 py-1.5 bg-slate-800 text-slate-300 hover:text-white rounded-xl text-xs font-medium transition">
-            <ArrowLeft size={14} /> Exit
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleManualRefresh}
+              disabled={isRefreshing}
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 text-slate-300 hover:text-white rounded-xl text-xs font-medium transition disabled:opacity-50"
+              title="Refresh Data"
+            >
+              <RefreshCw size={13} className={isRefreshing ? "animate-spin text-indigo-400" : ""} />
+              <span>Refresh</span>
+            </button>
+            <button onClick={onExit} className="flex items-center gap-1 px-3 py-1.5 bg-slate-800 text-slate-300 hover:text-white rounded-xl text-xs font-medium transition">
+              <ArrowLeft size={14} /> Exit
+            </button>
+          </div>
         </div>
         {/* Horizontal Scrollable Tabs */}
         <div className="flex items-center gap-1.5 p-2 overflow-x-auto no-scrollbar">
@@ -144,7 +191,7 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
 
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex w-64 bg-slate-950 flex-col h-full shrink-0">
-        <div className="p-6 border-b border-slate-800">
+        <div className="p-6 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-indigo-600 rounded-2xl flex items-center justify-center">
               <Settings size={18} className="text-white" />
@@ -154,6 +201,14 @@ export default function AdminPanel({ onExit, onAttendersChange }) {
               <p className="text-slate-500 text-[10px] font-medium mt-0.5">TGF Call Center</p>
             </div>
           </div>
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="p-2 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition border border-slate-800"
+            title="Refresh Data Now"
+          >
+            <RefreshCw size={15} className={isRefreshing ? "animate-spin text-indigo-400" : ""} />
+          </button>
         </div>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">

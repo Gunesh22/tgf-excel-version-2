@@ -3,6 +3,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase.js";
 import { findMatchingAttenderState } from "./core.js";
+import { diagGetDocs } from "./firebaseDiagnostics.js";
 
 // ─────────────────────────────────────────────
 // INDEXEDDB LOCAL CACHE SYSTEM
@@ -147,7 +148,10 @@ export const fetchPartitionCacheForColdBoot = async (attenderId, attenderName, m
         where(documentId(), ">=", monthKey),
         where(documentId(), "<=", monthKey + "\uf8ff")
       );
-      const snap = await getDocs(q);
+      const snap = await diagGetDocs(q, {
+        function: "fetchPartitionCacheForColdBoot",
+        trigger: "Attender cold boot cache load"
+      });
       return snap.docs;
     } catch (e) {
       console.warn(`Failed to fetch partition docs for ${monthKey}:`, e);

@@ -546,12 +546,24 @@ export function getCanonicalStatus(status) {
 
 export function getSharedAttenders(log) {
   if (!log) return [];
-
   const idToNameMap = new Map();
 
+  // Populate idToNameMap from cached attenders in localStorage if available
+  try {
+    const lsAtts = typeof window !== "undefined" ? localStorage.getItem("tgf_cached_attenders") : null;
+    if (lsAtts) {
+      const parsed = JSON.parse(lsAtts);
+      if (Array.isArray(parsed)) {
+        parsed.forEach(a => {
+          if (a.id && a.name) idToNameMap.set(String(a.id).trim(), String(a.name).trim());
+        });
+      }
+    }
+  } catch (e) {}
+
   const registerPair = (id, name) => {
-    if (!id || typeof id !== "string") return;
-    const cleanId = id.trim();
+    if (!id) return;
+    const cleanId = String(id).trim();
     if (!cleanId) return;
 
     if (name && typeof name === "string") {
@@ -592,7 +604,7 @@ export function getSharedAttenders(log) {
 
   const attendersSet = new Set();
 
-  // A. Process attenderStates
+  // A. Process attenderStates (Attenders with active entries on this lead)
   if (log.attenderStates && typeof log.attenderStates === "object") {
     Object.entries(log.attenderStates).forEach(([key, state]) => {
       if (state && typeof state === "object" && !state._deleted && !state.isDeleted) {
@@ -601,7 +613,7 @@ export function getSharedAttenders(log) {
         const canonical = (attName && !attName.match(/^[a-zA-Z0-9_-]{15,35}$/))
           ? attName
           : (idToNameMap.get(attId) || attId);
-        if (canonical) attendersSet.add(canonical);
+        if (canonical && !canonical.match(/^[a-zA-Z0-9_-]{15,35}$/)) attendersSet.add(canonical);
       }
     });
   }
@@ -611,20 +623,11 @@ export function getSharedAttenders(log) {
     if (!item || typeof item !== "string") return;
     const trimmed = item.trim();
     if (!trimmed) return;
-    const resolved = idToNameMap.get(trimmed) || trimmed;
-    attendersSet.add(resolved);
+    const resolved = idToNameMap.get(trimmed) || (trimmed.match(/^[a-zA-Z0-9_-]{15,35}$/) ? "" : trimmed);
+    if (resolved) attendersSet.add(resolved);
   });
 
-  // C. Process assignedName array
-  assignedNameArr.forEach(item => {
-    if (!item || typeof item !== "string") return;
-    const trimmed = item.trim();
-    if (trimmed && !trimmed.match(/^[a-zA-Z0-9_-]{15,35}$/)) {
-      attendersSet.add(trimmed);
-    }
-  });
-
-  // D. Process history array
+  // C. Process history array (Attenders who logged calls)
   if (Array.isArray(log.history)) {
     log.history.forEach(item => {
       if (item && typeof item === "object") {
@@ -642,15 +645,11 @@ export function getSharedAttenders(log) {
   }
 
   const rawList = Array.from(attendersSet);
-  const humanNames = rawList.filter(x => !x.match(/^[a-zA-Z0-9_-]{15,35}$/));
-  const rawIds = rawList.filter(x => x.match(/^[a-zA-Z0-9_-]{15,35}$/));
+  const humanNames = rawList.map(x => idToNameMap.get(x) || x).filter(x => !x.match(/^[a-zA-Z0-9_-]{15,35}$/));
+  const rawIds = rawList.filter(x => x.match(/^[a-zA-Z0-9_-]{15,35}$/) && !idToNameMap.has(x));
 
   if (humanNames.length > 0) {
-    const unmappedIds = rawIds.filter(id => !idToNameMap.has(id));
-    if (humanNames.length >= assignedToArr.length && humanNames.length >= 1) {
-      return humanNames;
-    }
-    return Array.from(new Set([...humanNames, ...unmappedIds]));
+    return Array.from(new Set([...humanNames, ...rawIds]));
   }
 
   return rawList;

@@ -211,6 +211,27 @@ export function combineContactHistories(rawData, attState = {}, attenderName = "
     rawData.history.forEach(h => addHistoryItem(h, rawData.assignedName || rawData.attenderName));
   }
 
+  if (rawData && rawData.attenderStates && typeof rawData.attenderStates === "object") {
+    Object.entries(rawData.attenderStates).forEach(([aId, aState]) => {
+      if (aState && typeof aState === "object" && !aState._deleted && !aState.isDeleted) {
+        const otherAttenderName = aState.attenderName || aState.assignedName || aState.name || "";
+        if (Array.isArray(aState.history)) {
+          aState.history.forEach(h => addHistoryItem(h, otherAttenderName));
+        } else if (aState.remark && String(aState.remark).trim()) {
+          addHistoryItem({
+            status: aState.status || "",
+            remark: aState.remark,
+            calledFor: aState["Called For"] || aState.calledFor,
+            source: aState.Source || aState.source,
+            callType: aState.callType,
+            attenderName: otherAttenderName,
+            timestamp: aState.lastCalledAt || aState.updatedAt
+          }, otherAttenderName);
+        }
+      }
+    });
+  }
+
   if (attState && Array.isArray(attState.history)) {
     attState.history.forEach(h => addHistoryItem(h, attState.attenderName));
   }

@@ -1,28 +1,47 @@
 import React from "react";
 import { Users, RotateCw } from "lucide-react";
 import { getSharedAttenders } from "../../utils";
+import { isLeadShared } from "../../../../../lib/db";
 
 export const SharedBanner = ({
   edited,
   row,
+  globalDup,
   currentAttenderName,
-  onRefreshLead
+  onRefreshLead,
+  isFetchingShared = false
 }) => {
-  const leadData = edited || row;
-  if (!leadData) return null;
+  if (isFetchingShared) {
+    return (
+      <div className="bg-amber-50/90 border border-amber-300 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs my-2 shadow-xs animate-pulse">
+        <div className="flex items-center gap-2 min-w-0">
+          <RotateCw size={13} className="text-amber-600 animate-spin shrink-0" />
+          <span className="font-extrabold text-amber-950 truncate">
+            Fetching latest live updates from team members...
+          </span>
+        </div>
+        <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-200/80 px-2 py-0.5 rounded-full shrink-0">
+          Syncing
+        </span>
+      </div>
+    );
+  }
 
-  const sharedList = getSharedAttenders(leadData);
+  const baseLead = globalDup?.first ? { ...globalDup.first, ...row, ...edited } : (edited || row);
+  if (!baseLead) return null;
+
+  const sharedList = getSharedAttenders(baseLead);
   const otherAttenders = currentAttenderName
     ? sharedList.filter(name => name && name.toLowerCase().trim() !== currentAttenderName.toLowerCase().trim())
     : sharedList;
 
+  const isDuplicateMatch = !!globalDup?.first;
+  const isShared = (sharedList.length > 1 && otherAttenders.length > 0) || isDuplicateMatch || (isLeadShared(baseLead) && otherAttenders.length > 0);
 
+  if (!isShared || otherAttenders.length === 0) return null;
 
-  if (!sharedList || sharedList.length <= 1) return null;
-
-  const sharedText = otherAttenders.length > 0
-    ? otherAttenders.join(", ")
-    : sharedList.join(", ");
+  const sharedText = otherAttenders.join(", ");
+  if (!sharedText) return null;
 
   const hasRefresh = typeof onRefreshLead === "function";
 
@@ -37,7 +56,7 @@ export const SharedBanner = ({
       {hasRefresh && (
         <button
           type="button"
-          onClick={() => onRefreshLead(leadData)}
+          onClick={() => onRefreshLead(baseLead)}
           className="text-[10px] font-bold text-amber-800 bg-amber-100/80 border border-amber-250 px-2 py-0.5 rounded-md hover:bg-amber-200/80 transition active:scale-95 flex items-center gap-1 shrink-0"
           title="Sync latest live updates from team members"
         >

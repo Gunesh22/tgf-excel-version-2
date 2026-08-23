@@ -5,7 +5,6 @@ import { getAttenders, getAdminPassword, getSettingsOptions } from "../../lib/db
 import { updateDynamicOptions } from "./attender/utils";
 import AttenderView from "./attender/AttenderView";
 import AdminPanel from "./admin/AdminPanel";
-import CelebrationFeed from "./components/CelebrationFeed";
 
 const SESSION_KEY = "tgf_user_session";
 
@@ -203,7 +202,6 @@ export default function CallCenterApp() {
     return (
       <>
         <Toaster position="top-right" />
-        <CelebrationFeed />
         <AttenderView
           attenderId={selectedAttenderId}
           attenderName={selectedAttenderName}
@@ -224,7 +222,6 @@ export default function CallCenterApp() {
     return (
       <>
         <Toaster position="top-right" />
-        <CelebrationFeed />
         <AdminPanel
           onExit={() => {
             try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
@@ -239,7 +236,6 @@ export default function CallCenterApp() {
   // Unified Portal View
   return (
     <>
-      <CelebrationFeed />
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
         {/* Ambient Glows */}
         <div className="absolute top-[-180px] left-[-180px] w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[140px] pointer-events-none" />

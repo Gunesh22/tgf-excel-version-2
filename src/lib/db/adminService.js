@@ -19,6 +19,11 @@ import {
   OUTGOING_PROGRAM_ID, OUTGOING_PROGRAM_NAME
 } from "./programService.js";
 import { subscribeToCallLogs } from "./syncService.js";
+import {
+  diagGetDoc, diagGetDocs, diagOnSnapshot, diagSetDoc, diagAddDoc,
+  diagUpdateDoc, diagDeleteDoc, diagWriteBatch, diagRunTransaction,
+  diagGetCountFromServer
+} from "./firebaseDiagnostics.js";
 
 export const populateGlobalActivePartitionsCache = (snapDocs) => {
   if (!Array.isArray(snapDocs)) return;
@@ -1219,7 +1224,9 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
     finalCallback(logs);
   };
 
-  // Fetch the locked monthly reports in range (served from IndexedDB cache first for 0 reads)
+const inFlightLockedReportsPromises = new Map();
+
+// Fetch the locked monthly reports in range (served from IndexedDB cache first for 0 reads)
   const lockedCacheKey = `tgf_locked_reports_${queryStartMonth}_${endMonth}`;
   getIDBCache(lockedCacheKey).then(cachedLocked => {
     if (Array.isArray(cachedLocked) && cachedLocked.length > 0) {
@@ -1230,13 +1237,29 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
       }));
       triggerCallback();
     } else {
-      const lockedQuery = query(
-        collection(db, "lockedMonthlyReports"),
-        where(documentId(), ">=", queryStartMonth),
-        where(documentId(), "<=", endMonth + "\uf8ff")
-      );
-      console.log(`[ADMIN FIRESTORE READ - getDocs] subscribeToAllCallLogs checking lockedMonthlyReports | range: ${queryStartMonth} to ${endMonth}`);
-      getDocs(lockedQuery).then(snap => {
+      let lockedPromise;
+      if (inFlightLockedReportsPromises.has(lockedCacheKey)) {
+        console.log(`[LOCKED REPORT INFLIGHT HIT] Sharing pending request for cacheKey: ${lockedCacheKey}`);
+        lockedPromise = inFlightLockedReportsPromises.get(lockedCacheKey);
+      } else {
+        console.log(`[LOCKED REPORT INFLIGHT START] Initiating Firestore getDocs request for cacheKey: ${lockedCacheKey}`);
+        const lockedQuery = query(
+          collection(db, "lockedMonthlyReports"),
+          where(documentId(), ">=", queryStartMonth),
+          where(documentId(), "<=", endMonth + "\uf8ff")
+        );
+        console.log(`[ADMIN FIRESTORE READ - getDocs] subscribeToAllCallLogs checking lockedMonthlyReports | range: ${queryStartMonth} to ${endMonth}`);
+        lockedPromise = diagGetDocs(lockedQuery, {
+          function: "subscribeToAllCallLogs:fetchLocked",
+          trigger: "Fetch locked monthly reports"
+        }).finally(() => {
+          console.log(`[LOCKED REPORT INFLIGHT COMPLETE] Request finished for cacheKey: ${lockedCacheKey}`);
+          inFlightLockedReportsPromises.delete(lockedCacheKey);
+        });
+        inFlightLockedReportsPromises.set(lockedCacheKey, lockedPromise);
+      }
+
+      lockedPromise.then(snap => {
         console.log(`[ADMIN FIRESTORE READ - getDocs] lockedMonthlyReports completed | docsCount: ${snap.docs.length}`);
         lockedDocs = snap.docs;
         const plainLocked = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -1264,7 +1287,7 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
     expectedMonths: [queryStartMonth, endMonth]
   });
 
-  const unsubCache = onSnapshot(cacheQuery, async (snap) => {
+  const unsubCache = diagOnSnapshot(cacheQuery, async (snap) => {
     const docIds = snap.docs.map(d => d.id);
     const addedCount = snap.docChanges().filter(c => c.type === "added").length;
     const modifiedCount = snap.docChanges().filter(c => c.type === "modified").length;
@@ -1323,6 +1346,11 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
       }
     } catch (e) {}
     finalCallback([]);
+  }, {
+    __meta: {
+      function: "subscribeToAllCallLogs",
+      trigger: "Admin real-time call logs listener"
+    }
   });
 
   return () => {
@@ -1698,7 +1726,7 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
     queryType: "registrationsCache"
   });
 
-  const unsubscribe = onSnapshot(cacheQuery, async (snap) => {
+  const unsubscribe = diagOnSnapshot(cacheQuery, async (snap) => {
     hasEmittedSnapshot = true;
     const partitionIds = snap.docs.map(d => d.id);
     const source = snap.metadata.fromCache ? "IDB/LOCAL_CACHE" : "FIRESTORE";
@@ -1742,6 +1770,11 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
     finalCallback(docs);
   }, (err) => {
     console.error("subscribeToRegistrations listener error:", err);
+  }, {
+    __meta: {
+      function: "subscribeToRegistrations",
+      trigger: "Realtime registrations listener"
+    }
   });
 
   return unsubscribe;
@@ -1761,7 +1794,10 @@ export const refreshRegistrations = async (scopeOption, callback) => {
     where(documentId(), "<=", endMonth + "\uf8ff")
   );
 
-  const snap = await getDocs(cacheQuery);
+  const snap = await diagGetDocs(cacheQuery, {
+    function: "refreshRegistrations",
+    trigger: "Refresh registrations from Firestore cache"
+  });
   let docs = [];
 
   if (snap.empty) {
@@ -1770,7 +1806,10 @@ export const refreshRegistrations = async (scopeOption, callback) => {
       where("registeredYearMonth", ">=", startMonth),
       where("registeredYearMonth", "<=", endMonth)
     );
-    const liveSnap = await getDocs(fallbackQ);
+    const liveSnap = await diagGetDocs(fallbackQ, {
+      function: "refreshRegistrations:fallback",
+      trigger: "Refresh registrations fallback live query"
+    });
     docs = liveSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   } else {
     const regsMap = {};
@@ -1836,40 +1875,107 @@ export const DEFAULT_WHATSAPP_TEMPLATES = [
 ];
 
 
+let cachedSettingsOptions = null;
+let inFlightSettingsPromise = null;
+
+export const clearSettingsOptionsCache = () => {
+  cachedSettingsOptions = null;
+  inFlightSettingsPromise = null;
+};
+
+const SETTINGS_LOCAL_KEY = "tgf_settings_options_cache";
+
 export const getSettingsOptions = async () => {
-  const docRef = doc(db, "settings", "call_center_options");
-  const snap = await getDoc(docRef);
-  if (snap.exists()) {
-    const data = snap.data();
-    return {
-      statusOptions: data.statusOptions || DEFAULT_STATUS_OPTIONS,
-      sourceOptions: data.sourceOptions || DEFAULT_SOURCE_OPTIONS,
-      calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS,
-      connectedStatuses: data.connectedStatuses || DEFAULT_CONNECTED_STATUSES,
-      notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
-      optionalCompulsoryStatuses: data.optionalCompulsoryStatuses || data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
-      whatsappTemplates: data.whatsappTemplates || DEFAULT_WHATSAPP_TEMPLATES
-    };
+  if (cachedSettingsOptions !== null) {
+    console.log("[SETTINGS CACHE HIT]", { source: "MEMORY", firestoreReads: 0 });
+    return cachedSettingsOptions;
   }
-  
-  // Create default options if not exists
-  const defaults = {
-    statusOptions: DEFAULT_STATUS_OPTIONS,
-    sourceOptions: DEFAULT_SOURCE_OPTIONS,
-    calledForOptions: DEFAULT_CALLED_FOR_OPTIONS,
-    connectedStatuses: DEFAULT_CONNECTED_STATUSES,
-    notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
-    optionalCompulsoryStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
-    whatsappTemplates: DEFAULT_WHATSAPP_TEMPLATES
-  };
-  await setDoc(docRef, defaults, { merge: true });
-  return defaults;
+
+  try {
+    if (typeof localStorage !== "undefined") {
+      const stored = localStorage.getItem(SETTINGS_LOCAL_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === "object") {
+          cachedSettingsOptions = parsed;
+          console.log("[SETTINGS CACHE HIT]", { source: "LOCAL_STORAGE", firestoreReads: 0 });
+          return parsed;
+        }
+      }
+    }
+  } catch (e) {}
+
+  if (inFlightSettingsPromise !== null) {
+    console.log("[SETTINGS INFLIGHT HIT]", { status: "WAITING_FOR_PENDING_PROMISE", firestoreReads: 0 });
+    return inFlightSettingsPromise;
+  }
+
+  console.log("[SETTINGS CACHE MISS]", { source: "FIRESTORE_QUERY", firestoreReads: 1 });
+
+  inFlightSettingsPromise = (async () => {
+    try {
+      const docRef = doc(db, "settings", "call_center_options");
+      const snap = await diagGetDoc(docRef, {
+        function: "getSettingsOptions",
+        trigger: "Fetch call center settings options"
+      });
+
+      let res = null;
+      if (snap.exists()) {
+        const data = snap.data();
+        res = {
+          statusOptions: data.statusOptions || DEFAULT_STATUS_OPTIONS,
+          sourceOptions: data.sourceOptions || DEFAULT_SOURCE_OPTIONS,
+          calledForOptions: data.calledForOptions || DEFAULT_CALLED_FOR_OPTIONS,
+          connectedStatuses: data.connectedStatuses || DEFAULT_CONNECTED_STATUSES,
+          notConnectedStatuses: data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
+          optionalCompulsoryStatuses: data.optionalCompulsoryStatuses || data.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES,
+          whatsappTemplates: data.whatsappTemplates || DEFAULT_WHATSAPP_TEMPLATES
+        };
+      } else {
+        const defaults = {
+          statusOptions: DEFAULT_STATUS_OPTIONS,
+          sourceOptions: DEFAULT_SOURCE_OPTIONS,
+          calledForOptions: DEFAULT_CALLED_FOR_OPTIONS,
+          connectedStatuses: DEFAULT_CONNECTED_STATUSES,
+          notConnectedStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
+          optionalCompulsoryStatuses: DEFAULT_NOT_CONNECTED_STATUSES,
+          whatsappTemplates: DEFAULT_WHATSAPP_TEMPLATES
+        };
+        await diagSetDoc(docRef, defaults, { merge: true }, {
+          function: "getSettingsOptions:initDefaults",
+          trigger: "Initialize call center default settings options"
+        });
+        res = defaults;
+      }
+
+      cachedSettingsOptions = res;
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem(SETTINGS_LOCAL_KEY, JSON.stringify(res));
+        }
+      } catch (e) {}
+      return res;
+    } finally {
+      inFlightSettingsPromise = null;
+    }
+  })();
+
+  return inFlightSettingsPromise;
 };
 
 
 export const updateCallCenterOptions = async (updates) => {
   const docRef = doc(db, "settings", "call_center_options");
-  await setDoc(docRef, updates, { merge: true });
+  await diagSetDoc(docRef, updates, { merge: true }, {
+    function: "updateCallCenterOptions",
+    trigger: "Admin update call center options"
+  });
+  if (cachedSettingsOptions) {
+    cachedSettingsOptions = { ...cachedSettingsOptions, ...updates };
+  } else {
+    cachedSettingsOptions = null;
+  }
 };
 
 let inMemoryOptions = null;
@@ -1889,45 +1995,9 @@ export const subscribeToCallCenterOptions = (onUpdate) => {
 
 
 export const subscribeToRecentRegistrations = (callback) => {
-  // Derive recent registrations directly from the shared callCenterCache snapshot (0 Extra Firestore Reads!)
-  return subscribeToCallLogs(null, null, "ALL", (logs) => {
-    if (!Array.isArray(logs)) return;
-    const registeredList = [];
-    logs.forEach(log => {
-      let foundReg = false;
-      if (log.attenderStates) {
-        Object.entries(log.attenderStates).forEach(([aId, st]) => {
-          if (st?.status === "Reg.Done") {
-            foundReg = true;
-            const calledFor = st["Called For"] || st.calledFor || log["Called For"] || log.calledFor || log.programName || "";
-            const regTime = st.updatedAt || st.lastCalledAt || log.registeredAt || log.updatedAt || 0;
-            registeredList.push({
-              id: `${log.id}_${aId}_${String(calledFor).trim()}`,
-              name: log.Name || log.name || log.caller || "Someone",
-              convertedBy: st.attenderName || log.convertedBy || log.attenderName || "Attender",
-              calledFor,
-              timestamp: typeof regTime === "string" ? new Date(regTime).getTime() : (regTime?.toMillis ? regTime.toMillis() : (regTime?.seconds ? regTime.seconds * 1000 : Date.now()))
-            });
-          }
-        });
-      }
-      // Top-level fallback if not captured in attenderStates
-      if (!foundReg && log.status === "Reg.Done") {
-        const calledFor = log["Called For"] || log.calledFor || log.programName || "";
-        const regTime = log.registeredAt || log.updatedAt || log.createdAt || 0;
-        registeredList.push({
-          id: `${log.id}_${String(calledFor).trim()}`,
-          name: log.Name || log.name || log.caller || "Someone",
-          convertedBy: log.convertedBy || log.attenderName || log.assignedName || "Attender",
-          calledFor,
-          timestamp: typeof regTime === "string" ? new Date(regTime).getTime() : (regTime?.toMillis ? regTime.toMillis() : (regTime?.seconds ? regTime.seconds * 1000 : Date.now()))
-        });
-      }
-    });
-
-    registeredList.sort((a, b) => b.timestamp - a.timestamp);
-    callback(registeredList.slice(0, 5));
-  });
+  // Celebration feed background listener decommissioned to enforce 0 background reads
+  if (typeof callback === "function") callback([]);
+  return () => {};
 };
 
 

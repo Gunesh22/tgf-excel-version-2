@@ -195,7 +195,7 @@ export function ContactTable({
 
               return (
                 <tr
-                  key={log.id}
+                  key={`${log.id || 'log'}_${idx}`}
                   className={`cursor-pointer transition-colors ${rowBg}`}
                   onClick={() => {
                     if (!didDrag.current) {

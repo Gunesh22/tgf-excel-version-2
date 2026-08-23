@@ -343,7 +343,7 @@ export default function MobileAttenderView({
 
             return (
               <div
-                key={row.id || index}
+                key={`${row.id || 'row'}_${index}`}
                 onClick={() => setEditingRow(row)}
                 className={`rounded-2xl border ${cardBg} p-4 shadow-xs active:scale-[0.99] transition-all cursor-pointer relative overflow-hidden`}
               >

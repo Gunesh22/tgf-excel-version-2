@@ -24,6 +24,10 @@ import {
 } from "./programService.js";
 import { registerRegistrationMonth } from "./adminService.js";
 import { queuePendingWrite, flushPendingWrites } from "./syncService.js";
+import {
+  diagGetDoc, diagGetDocs, diagOnSnapshot, diagSetDoc, diagAddDoc,
+  diagUpdateDoc, diagDeleteDoc, diagWriteBatch, diagRunTransaction
+} from "./firebaseDiagnostics.js";
 
 export const parseTags = (tagInput) => {
   if (!tagInput) return [];
@@ -633,6 +637,23 @@ export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
 
   const numbersToCheck = extractIndividualPhones(phone);
   if (numbersToCheck.length === 0) return null;
+
+  // 1. STEP 1: Check 5-minute memory cache
+  const cachedRes = getDupCheckCache(phone);
+  if (cachedRes !== null && cachedRes !== undefined) {
+    console.log("[DEDUP TRACE]", {
+      phone,
+      normalizedPhone: numbersToCheck[0],
+      memoryCacheHit: true,
+      idbHit: false,
+      firestorePrimaryQueried: false,
+      firestorePrimaryMatches: 0,
+      legacyFallbackQueried: false,
+      legacyMatches: 0
+    });
+    console.log("[DEDUP RESULT]", { phone, source: "MEMORY", firestoreQueryCount: 0 });
+    return cachedRes;
+  }
   
   // Cancel any preceding pending debounce timer if a new key was typed
   if (currentDebounceController) {
@@ -643,57 +664,137 @@ export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
 
   // 200ms debounce timer
   await new Promise(resolve => setTimeout(resolve, 200));
-  const promises = [];
+
+  if (myController.cancelled) return null;
+
+  // 2. STEP 2: Check current attender's IndexedDB contacts (tgf_attender_logs_*)
+  try {
+    const idbStoreKeys = ["tgf_attender_logs_ALL"];
+    for (const key of idbStoreKeys) {
+      const cached = await getIDBCache(key);
+      if (Array.isArray(cached) && cached.length > 0) {
+        const idbMatches = cached.filter(doc => {
+          if (!doc || doc._deleted === true || doc.id === excludeContactId) return false;
+          const docPhones = Array.isArray(doc.normalizedPhones)
+            ? doc.normalizedPhones
+            : [doc.normalizedPhone, doc.normalizedMobile, doc.Phone, doc.Mobile, doc.phone, doc.mobile].map(normalizePhone).filter(Boolean);
+          return numbersToCheck.some(nv => docPhones.includes(nv));
+        });
+
+        if (idbMatches.length > 0) {
+          const allTagsSet = new Set();
+          idbMatches.forEach(m => {
+            const arr = Array.isArray(m.tags) ? m.tags : [];
+            arr.forEach(t => String(t).split(",").map(x => x.trim()).filter(Boolean).forEach(x => allTagsSet.add(x)));
+            if (m.Tags) String(m.Tags).split(",").map(x => x.trim()).filter(Boolean).forEach(x => allTagsSet.add(x));
+          });
+
+          const res = {
+            count: idbMatches.length,
+            allTags: Array.from(allTagsSet).sort(),
+            matches: idbMatches,
+            first: idbMatches[0],
+            programName: idbMatches[0]?.programName
+          };
+
+          setDupCheckCache(phone, res);
+          console.log("[DEDUP TRACE]", {
+            phone,
+            normalizedPhone: numbersToCheck[0],
+            memoryCacheHit: false,
+            idbHit: true,
+            firestorePrimaryQueried: false,
+            firestorePrimaryMatches: 0,
+            legacyFallbackQueried: false,
+            legacyMatches: 0
+          });
+          console.log("[DEDUP RESULT]", { phone, source: "IDB", firestoreQueryCount: 0 });
+          return res;
+        }
+      }
+    }
+  } catch (e) {
+    // If IDB fails, continue gracefully to Firestore
+  }
+
+  // 3. STEP 3: Primary Firestore Query (normalizedPhones array-contains)
+  const primaryPromises = [];
   numbersToCheck.forEach(norm => {
-    promises.push(getDocs(query(collection(db, "contacts"), where("normalizedPhones", "array-contains", norm))));
-    promises.push(getDocs(query(collection(db, "contacts"), where("normalizedPhone", "==", norm))));
-    promises.push(getDocs(query(collection(db, "contacts"), where("normalizedMobile", "==", norm))));
+    primaryPromises.push(diagGetDocs(query(collection(db, "contacts"), where("normalizedPhones", "array-contains", norm)), {
+      function: "checkGlobalDuplicate:primary",
+      trigger: "Global duplicate check (normalizedPhones)"
+    }));
   });
 
-  const snaps = await Promise.all(promises);
+  const primarySnaps = await Promise.all(primaryPromises);
+  let firestoreQueryCount = primaryPromises.length;
+  const primaryMatchesMap = new Map();
   let totalDocsReturned = 0;
-  snaps.forEach(s => totalDocsReturned += s.docs.length);
-  
+  primarySnaps.forEach(snap => {
+    totalDocsReturned += snap.docs.length;
+    snap.docs.forEach(d => {
+      primaryMatchesMap.set(d.id, { id: d.id, ...d.data() });
+    });
+  });
+
   trackFirestoreRead({
     collection: "contacts",
     operation: "query",
-    query: `normalizedPhones/Phone/Mobile in [${numbersToCheck.join(", ")}]`,
+    query: `normalizedPhones array-contains in [${numbersToCheck.join(", ")}]`,
     documentsReturned: totalDocsReturned,
-    reason: "checkGlobalDuplicate",
+    reason: "checkGlobalDuplicate:primary",
     source: "edit/checkGlobalDuplicate"
   });
-  
-  const matchesMap = new Map();
-  snaps.forEach(snap => {
-    snap.docs.forEach(d => {
-      matchesMap.set(d.id, { id: d.id, ...d.data() });
-    });
-  });
-  
-  const matches = Array.from(matchesMap.values())
+
+  const primaryMatches = Array.from(primaryMatchesMap.values())
     .filter(d => d._deleted !== true && d.id !== excludeContactId);
-    
-  if (matches.length === 0) {
-    return null;
+
+  // 4. STEP 4: If primary query finds match, STOP & return result (0 legacy queries)
+  if (primaryMatches.length > 0) {
+    const allTagsSet = new Set();
+    primaryMatches.forEach(m => {
+      const arr = Array.isArray(m.tags) ? m.tags : [];
+      arr.forEach(t => String(t).split(",").map(x => x.trim()).filter(Boolean).forEach(x => allTagsSet.add(x)));
+      if (m.Tags) String(m.Tags).split(",").map(x => x.trim()).filter(Boolean).forEach(x => allTagsSet.add(x));
+    });
+
+    const res = {
+      count: primaryMatches.length,
+      allTags: Array.from(allTagsSet).sort(),
+      matches: primaryMatches,
+      first: primaryMatches[0],
+      programName: primaryMatches[0]?.programName
+    };
+
+    setDupCheckCache(phone, res);
+    console.log("[DEDUP TRACE]", {
+      phone,
+      normalizedPhone: numbersToCheck[0],
+      memoryCacheHit: false,
+      idbHit: false,
+      firestorePrimaryQueried: true,
+      firestorePrimaryMatches: primaryMatches.length,
+      legacyFallbackQueried: false,
+      legacyMatches: 0
+    });
+    console.log("[DEDUP RESULT]", { phone, source: "FIRESTORE", firestoreQueryCount });
+    return res;
   }
 
-  // Collect all unique tags across every duplicate record
-  const allTagsSet = new Set();
-  matches.forEach(m => {
-    const arr = Array.isArray(m.tags) ? m.tags : [];
-    arr.forEach(t => String(t).split(",").map(x => x.trim()).filter(Boolean).forEach(x => allTagsSet.add(x)));
-    if (m.Tags) String(m.Tags).split(",").map(x => x.trim()).filter(Boolean).forEach(x => allTagsSet.add(x));
+  // 5. STEP 5: If primary query returned 0 matches, phone is unique (1 query total, 0 legacy fallbacks)
+  setDupCheckCache(phone, null);
+  console.log("[DEDUP TRACE]", {
+    phone,
+    normalizedPhone: numbersToCheck[0],
+    memoryCacheHit: false,
+    idbHit: false,
+    firestorePrimaryQueried: true,
+    firestorePrimaryMatches: 0,
+    legacyFallbackQueried: false,
+    legacyMatches: 0
   });
-
-  const res = {
-    count: matches.length,
-    allTags: Array.from(allTagsSet).sort(),
-    matches: matches,
-    first: matches[0],                   // backward-compat
-    programName: matches[0]?.programName // backward-compat
-  };
-
-  return res;
+  console.log("[DEDUP RESULT]", { phone, source: "FIRESTORE_CLEAN", firestoreQueryCount });
+  return null;
 };
 // ─────────────────────────────────────────────
 // ATTENDERS & AUTH PASSWORDS
@@ -1022,7 +1123,17 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     const prevAssigned = Array.isArray(logData.assignedTo)
       ? [...logData.assignedTo]
       : (logData.assignedTo ? [logData.assignedTo] : []);
-    if (!prevAssigned.includes(attenderId)) {
+    
+    // Include all attenders present in attenderStates so previous attenders are never lost
+    if (logData.attenderStates && typeof logData.attenderStates === "object") {
+      Object.keys(logData.attenderStates).forEach(aId => {
+        if (aId && !prevAssigned.includes(aId)) {
+          prevAssigned.push(aId);
+        }
+      });
+    }
+
+    if (attenderId && !prevAssigned.includes(attenderId)) {
       prevAssigned.push(attenderId);
     }
     finalUpdatePayload.assignedTo = prevAssigned;
@@ -1083,10 +1194,11 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
 
   // 2. Dual Write: callCenterCache partition document
   const currentMonth = getMonthStr(new Date());
+  const currentMonthPart = `${currentMonth}_part1`;
 
   // Track document paths being written in this batch
-  const batchPaths = [`contacts/${logId}`, `callCenterCache/${currentMonth}`];
-  const cacheRef = doc(db, "callCenterCache", currentMonth);
+  const batchPaths = [`contacts/${logId}`, `callCenterCache/${currentMonthPart}`];
+  const cacheRef = doc(db, "callCenterCache", currentMonthPart);
   const prunedForCache = sanitizeForFirestore(pruneContactForCacheForMonth({ id: logId, ...freshData }, currentMonth));
   batch.set(cacheRef, { contacts: { [logId]: prunedForCache } }, { merge: true });
 
@@ -1099,15 +1211,66 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     const calledForVal = freshData["Called For"] || freshData.calledFor || freshData.called_for || freshData.programName || "Incoming Calls";
     const cleanedCalledFor = String(calledForVal).trim().replace(/[^a-zA-Z0-9]/g, "_");
     registrationId = `${logId}_${cleanedCalledFor}`;
+
+    // Check if this lead was already registered for THIS program
+    const targetProg = String(calledForVal).trim().toLowerCase();
+    const hasProgRegInHistory = Array.isArray(logData.history) && logData.history.some(h => 
+      h.status === "Reg.Done" && String(h.calledFor || h.programName || "").trim().toLowerCase() === targetProg
+    );
+    const hasStateReg = logData.attenderStates && Object.values(logData.attenderStates).some(st => 
+      st.status === "Reg.Done" && String(st["Called For"] || st.calledFor || "").trim().toLowerCase() === targetProg
+    );
+    const isAlreadyRegisteredForProgram = (previousStatus === "Reg.Done" && (hasProgRegInHistory || hasStateReg || String(logData["Called For"] || logData.calledFor || "").trim().toLowerCase() === targetProg)) || logData.registeredAt;
+
+    const isNewlyRegistered = previousStatus !== "Reg.Done" || !isAlreadyRegisteredForProgram;
+
+    console.log("[REGISTRATION TRANSITION]", {
+      previousStatus,
+      newStatus: freshData.status,
+      isNewlyRegistered,
+      calledFor: calledForVal,
+      registrationId
+    });
+
+    let targetRegYearMonth = currentMonth;
+    let targetRegisteredAt = serverTimestamp();
+
+    if (!isNewlyRegistered) {
+      // CASE 2: Already Reg.Done -> Reg.Done edit. Preserve original registration timestamp and partition month
+      const origRegisteredAt = logData.registeredAt || (Array.isArray(logData.history) && logData.history.find(h => h.status === "Reg.Done")?.timestamp) || logData.createdAt || null;
+      let origYearMonth = logData.registeredYearMonth;
+      if (!origYearMonth && origRegisteredAt) {
+        const d = origRegisteredAt.toDate ? origRegisteredAt.toDate() : new Date(origRegisteredAt);
+        if (d && !isNaN(d.getTime())) {
+          origYearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        }
+      }
+      targetRegYearMonth = origYearMonth || currentMonth;
+      targetRegisteredAt = origRegisteredAt || serverTimestamp();
+
+      console.log("[REGISTRATION PRESERVED]", {
+        registrationId,
+        originalRegisteredAt: targetRegisteredAt,
+        originalRegisteredYearMonth: targetRegYearMonth,
+        reason: "existing_reg_done_edit"
+      });
+    } else {
+      console.log("[NEW REGISTRATION]", {
+        registrationId,
+        registeredYearMonth: targetRegYearMonth
+      });
+    }
+
+    const targetRegPart = `${targetRegYearMonth}_part1`;
     const regRef = doc(db, "registrations", registrationId);
-    const regCacheRef = doc(db, "registrationsCache", currentMonth);
+    const regCacheRef = doc(db, "registrationsCache", targetRegPart);
 
     const rawRegPayload = {
       ...freshData,
       id: logId,
       registrationId,
-      registeredYearMonth: currentMonth,
-      registeredAt: serverTimestamp(),
+      registeredYearMonth: targetRegYearMonth,
+      registeredAt: targetRegisteredAt,
       conversionSource: freshData.Source || freshData.sourse || "Direct",
       convertedBy: attenderName || freshData.attenderName || "Unknown",
       programName: freshData.programName || "Incoming Calls"
@@ -1119,12 +1282,13 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     console.log("[REGISTRATION BATCH]", {
       registrationId,
       payload: regPayload,
-      hasUndefinedFields
+      hasUndefinedFields,
+      isNewlyRegistered
     });
 
     batch.set(regRef, regPayload, { merge: true });
     batch.set(regCacheRef, { registrations: { [registrationId]: regPayload } }, { merge: true });
-    batchPaths.push(`registrations/${registrationId}`, `registrationsCache/${currentMonth}`);
+    batchPaths.push(`registrations/${registrationId}`, `registrationsCache/${targetRegPart}`);
     updateLocalRegistrationsCache(regPayload).catch(() => {});
   }
 
@@ -1658,10 +1822,11 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
   }
 
   // Dual Write to Admin Read Model (callCenterCache partition)
+  const yearMonthPart = `${yearMonth}_part1`;
   const prunedCacheContact = sanitizeForFirestore(pruneContactForCacheForMonth({ id: finalId, ...logPayload }, yearMonth));
-  const cacheRef = doc(db, "callCenterCache", yearMonth);
+  const cacheRef = doc(db, "callCenterCache", yearMonthPart);
   batch.set(cacheRef, { contacts: { [finalId]: prunedCacheContact } }, { merge: true });
-  batchPaths.push(`callCenterCache/${yearMonth}`);
+  batchPaths.push(`callCenterCache/${yearMonthPart}`);
 
   let isAddRegDone = data.status === "Reg.Done";
   let addRegId = null;
@@ -1692,11 +1857,11 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
     });
 
     const regRef = doc(db, "registrations", addRegId);
-    const regCacheRef = doc(db, "registrationsCache", yearMonth);
+    const regCacheRef = doc(db, "registrationsCache", yearMonthPart);
 
     batch.set(regRef, payload, { merge: true });
     batch.set(regCacheRef, { registrations: { [addRegId]: payload } }, { merge: true });
-    batchPaths.push(`registrations/${addRegId}`, `registrationsCache/${yearMonth}`);
+    batchPaths.push(`registrations/${addRegId}`, `registrationsCache/${yearMonthPart}`);
     updateLocalRegistrationsCache({ ...payload, registrationId: addRegId }).catch(() => {});
   }
 
@@ -2613,20 +2778,26 @@ export const saveExcelToCloud = async ({ data, columns, colsMap, fileName, activ
   }
 
   const docRef = doc(db, "excelSheets", "current");
-  await setDoc(docRef, {
+  await diagSetDoc(docRef, {
     data: dataStr,
     columns: columnsStr,
     colsMap: colsMapStr,
     fileName: fileName || "",
     activeSheet: activeSheet || "",
     updatedAt: serverTimestamp()
+  }, {
+    function: "saveExcelToCloud",
+    trigger: "Save excel sheet to cloud"
   });
 };
 
 
 export const loadExcelFromCloud = async () => {
   const docRef = doc(db, "excelSheets", "current");
-  const snap = await getDoc(docRef);
+  const snap = await diagGetDoc(docRef, {
+    function: "loadExcelFromCloud",
+    trigger: "Load excel sheet from cloud"
+  });
   if (!snap.exists()) return null;
   const d = snap.data();
   return {
@@ -2641,7 +2812,10 @@ export const loadExcelFromCloud = async () => {
 
 export const deleteExcelFromCloud = async () => {
   const docRef = doc(db, "excelSheets", "current");
-  await deleteDoc(docRef);
+  await diagDeleteDoc(docRef, {
+    function: "deleteExcelFromCloud",
+    trigger: "Delete excel sheet from cloud"
+  });
 };
 
 // ─────────────────────────────────────────────

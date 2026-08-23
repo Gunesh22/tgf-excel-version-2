@@ -2,6 +2,7 @@ import {
   collection, getDocs, doc, setDoc, deleteDoc, query, where, limit, serverTimestamp, Timestamp
 } from "firebase/firestore";
 import { db } from "../firebase.js";
+import { diagSetDoc, diagDeleteDoc, diagGetDocs } from "./firebaseDiagnostics.js";
 
 // HARDCODED STATIC ACTIVE TAGS (0 Firestore Reads & 0 Writes)
 const STATIC_ACTIVE_TAGS = ["Incoming Calls", "Outgoing Calls"];
@@ -73,17 +74,23 @@ export const getPrograms = async () => {
 export const createProgram = async (name) => {
   await registerActiveTag(name);
   const ref = doc(db, "programs", name);
-  await setDoc(ref, {
+  await diagSetDoc(ref, {
     name,
     createdAt: serverTimestamp(),
     contactCount: 0,
-  }, { merge: true });
+  }, { merge: true }, {
+    function: "createProgram",
+    trigger: "Admin create program"
+  });
   return name;
 };
 
 export const deleteProgram = async (id) => {
   await removeActiveTag(id);
-  await deleteDoc(doc(db, "programs", id));
+  await diagDeleteDoc(doc(db, "programs", id), {
+    function: "deleteProgram",
+    trigger: "Admin delete program"
+  });
 };
 
 // Read contacts of a program (for field-scanning before remapping)
@@ -93,6 +100,9 @@ export const getProgramChunkContacts = async (programId, limitCount = 100) => {
     where("programId", "==", programId),
     limit(limitCount)
   );
-  const snap = await getDocs(q);
+  const snap = await diagGetDocs(q, {
+    function: "getProgramChunkContacts",
+    trigger: "Scan program contacts"
+  });
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 };

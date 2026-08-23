@@ -4,6 +4,39 @@ import {
 import { db } from "../firebase.js";
 import { findMatchingAttenderState, trackFirestoreRead } from "./core.js";
 import { getIDBCache, setIDBCache, updateLocalAttenderCache, fetchPartitionCacheForColdBoot } from "./cacheService.js";
+import { diagGetDoc } from "./firebaseDiagnostics.js";
+
+// Canonical function to check if a lead is shared across multiple attenders
+export function isLeadShared(lead) {
+  if (!lead || typeof lead !== "object") return false;
+
+  // 1. Check attenderStates keys (attenders who have logged state/calls on this lead)
+  const attStatesKeys = lead.attenderStates && typeof lead.attenderStates === "object"
+    ? Object.keys(lead.attenderStates).filter(k => lead.attenderStates[k] && !lead.attenderStates[k]._deleted && !lead.attenderStates[k].isDeleted)
+    : [];
+  if (attStatesKeys.length > 1) return true;
+
+  // 2. Check assignedTo array (multiple assigned attender IDs)
+  const assignedToArr = Array.isArray(lead.assignedTo)
+    ? lead.assignedTo
+    : (typeof lead.assignedTo === "string" && lead.assignedTo.trim() ? lead.assignedTo.split(",") : []);
+  if (assignedToArr.length > 1) return true;
+
+  // 3. Check explicit flag
+  if (lead.isSharedLead === true) return true;
+
+  // 4. Check history for distinct attenders
+  if (Array.isArray(lead.history) && lead.history.length > 0) {
+    const distinctAttenders = new Set(
+      lead.history
+        .map(h => (h.attenderName || h.attenderId || h.by || h.editedBy || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    if (distinctAttenders.size > 1) return true;
+  }
+
+  return false;
+}
 
 // Clean Zero-Background-Listener subscribeToCallLogs (0 Reads on Reload)
 export const subscribeToCallLogs = (...args) => {
@@ -63,76 +96,22 @@ export const subscribeToCallLogs = (...args) => {
 
 // On-Demand Fetcher for Shared Leads (Triggers 1, 2, and 3)
 export const fetchFreshSharedLead = async (lead, attenderId, attenderName, forceRefresh = false) => {
-  if (!lead || !lead.id) return lead;
-  
-  const historyAttendersCount = Array.isArray(lead.history)
-    ? new Set(lead.history.map(h => (h.attenderName || h.attenderId || h.by || h.editedBy || "").trim()).filter(Boolean)).size
-    : 0;
+  if (!lead || !lead.id || lead._isNew) return lead;
 
-  const isShared = (Array.isArray(lead.assignedTo) && lead.assignedTo.length > 1) ||
-                   (lead.attenderStates && Object.keys(lead.attenderStates).length > 1) ||
-                   lead.isSharedLead === true ||
-                   historyAttendersCount > 1;
-  const leadName = lead.Name || lead.name || "Lead";
-  const localCacheExists = !!lead;
-  const cacheAgeMs = lead?._lastFetchedAt ? Date.now() - lead._lastFetchedAt : null;
-  const willFetchFromFirestore = (isShared || forceRefresh) && !(lead._lastFetchedAt && (Date.now() - lead._lastFetchedAt) < 60000 && !forceRefresh);
+  const shared = isLeadShared(lead);
 
-  console.log(
-    `[LEAD FETCH DECISION]`,
-    {
-      contactId: lead?.id || lead?.docId,
-      name: leadName,
-      isShared,
-      forceRefresh,
-      localCacheExists,
-      cacheAgeMs,
-      ACTION: willFetchFromFirestore ? "FIRESTORE_READ" : "LOCAL_CACHE"
-    }
-  );
-
-  // If not shared AND not force-refreshed, serve 100% from IndexedDB (0 Reads)
-  if (!isShared && !forceRefresh) {
-    console.log(
-      `[LEAD FETCH → IDB]`,
-      {
-        contactId: lead?.id,
-        reason: "cache_sufficient",
-        isShared,
-        forceRefresh
-      }
-    );
+  // Non-shared solo leads: 0 Firestore Reads (Served 100% from local cache)
+  if (!shared && !forceRefresh) {
     return lead;
   }
 
-  // Prevent useless reads: If fetched less than 60 seconds ago and not forced, use cache (0 Reads)
-  const now = Date.now();
-  if (!forceRefresh && lead._lastFetchedAt && (now - lead._lastFetchedAt) < 60000) {
-    console.log(
-      `[LEAD FETCH → IDB]`,
-      {
-        contactId: lead?.id,
-        reason: "cache_sufficient",
-        isShared,
-        forceRefresh
-      }
-    );
-    return lead;
-  }
-
+  // Shared leads (or manual sync): Fetch fresh document from Firestore
   try {
-    console.log(
-      `[LEAD FETCH → FIRESTORE]`,
-      {
-        contactId: lead?.id,
-        reason: "fetchFreshSharedLead",
-        isShared,
-        forceRefresh
-      }
-    );
-
     const docRef = doc(db, "contacts", lead.id);
-    const docSnap = await getDoc(docRef);
+    const docSnap = await diagGetDoc(docRef, {
+      function: "fetchFreshSharedLead",
+      trigger: forceRefresh ? "Manual Sync" : "Open Shared Modal"
+    });
 
     trackFirestoreRead({
       collection: "contacts",
@@ -146,39 +125,18 @@ export const fetchFreshSharedLead = async (lead, attenderId, attenderName, force
     if (!docSnap.exists()) return lead;
 
     const rawData = docSnap.data();
-    const matchedStateObj = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName);
-    const attState = matchedStateObj || {};
-
-    const lastHistTime = Array.isArray(rawData.history) && rawData.history.length > 0 
-      ? (rawData.history[rawData.history.length - 1]?.timestamp || rawData.history[rawData.history.length - 1]?.date)
-      : null;
-    const newLastCalledAt = attState.lastCalledAt || rawData.lastCalledAt || attState.updatedAt || rawData.updatedAt || lastHistTime || rawData.createdAt || null;
-
-    const calledForVal = attState["Called For"] || attState.calledFor || rawData["Called For"] || rawData.calledFor || rawData.programId || rawData.programName || "";
-    const sourceVal = attState.Source || attState.source || rawData.Source || rawData.source || "";
-    const statusVal = attState.status || rawData.status || "Pending";
-    const remarkVal = attState.remark || rawData.remark || "";
-    const fullHistory = Array.isArray(rawData.history) && rawData.history.length > 0
-      ? rawData.history
-      : (Array.isArray(attState.history) ? attState.history : []);
+    const attState = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName) || {};
 
     const freshLead = {
       ...rawData,
       id: lead.id,
-      status: statusVal,
-      remark: remarkVal,
-      "Called For": calledForVal,
-      calledFor: calledForVal,
-      programId: calledForVal,
-      Source: sourceVal,
-      source: sourceVal,
-      tags: Array.isArray(rawData.tags) ? rawData.tags : (Array.isArray(rawData.Tags) ? rawData.Tags : []),
-      callType: attState.callType || rawData.callType || "outgoing",
-      history: fullHistory,
-      callbackDate: attState.callbackDate || rawData.callbackDate || attState.callback_date || rawData.callback_date || null,
-      callbackTime: attState.callbackTime || rawData.callbackTime || attState.callback_time || rawData.callback_time || null,
-      callbackStatus: attState.callbackStatus || rawData.callbackStatus || null,
-      lastCalledAt: newLastCalledAt,
+      status: attState.status || rawData.status || "Pending",
+      remark: attState.remark || rawData.remark || "",
+      "Called For": attState["Called For"] || attState.calledFor || rawData["Called For"] || rawData.calledFor || "",
+      calledFor: attState["Called For"] || attState.calledFor || rawData["Called For"] || rawData.calledFor || "",
+      Source: attState.Source || attState.source || rawData.Source || rawData.source || "",
+      source: attState.Source || attState.source || rawData.Source || rawData.source || "",
+      history: Array.isArray(rawData.history) && rawData.history.length > 0 ? rawData.history : (attState.history || []),
       attenderState: attState,
       _lastFetchedAt: Date.now()
     };
@@ -190,105 +148,32 @@ export const fetchFreshSharedLead = async (lead, attenderId, attenderName, force
 
     return freshLead;
   } catch (err) {
-    console.warn(`[ON-DEMAND FETCH FAILED] Could not fetch shared lead ${lead.id}:`, err);
+    console.warn(`[FETCH FAILED] ${lead.id}:`, err);
     return lead;
   }
 };
 
-// WRITE QUEUE COALESCING (Offline / Low-Connectivity Atomic Queue)
-const PENDING_WRITES_KEY = "tgf_pending_writes_v1";
+// Pending Write Queue for Offline Persistence / Coalesced Updates
+const pendingWriteQueue = [];
+let isFlushingQueue = false;
 
-export const getPendingWrites = async () => {
-  return (await getIDBCache(PENDING_WRITES_KEY)) || [];
+export const queuePendingWrite = (type, payload) => {
+  pendingWriteQueue.push({ type, payload, timestamp: Date.now() });
 };
 
-export const queuePendingWrite = async (typeOrObj, payload) => {
-  let writeItem = {};
-  if (typeof typeOrObj === "string") {
-    writeItem = {
-      type: typeOrObj,
-      ...(payload || {}),
-      id: payload?.logId || payload?.id || payload?.data?.phone || `pending_${Date.now()}`
-    };
-  } else if (typeOrObj && typeof typeOrObj === "object") {
-    writeItem = {
-      ...typeOrObj,
-      id: typeOrObj.logId || typeOrObj.id || `pending_${Date.now()}`
-    };
-  }
-
-  if (!writeItem.id) return;
-  const currentQueue = await getPendingWrites();
-
-  // Coalesce rapid writes for the same contact/logId
-  const existingIdx = currentQueue.findIndex(w => w.id === writeItem.id || (w.logId && writeItem.logId && w.logId === writeItem.logId));
-
-  if (existingIdx >= 0) {
-    const existing = currentQueue[existingIdx];
-    const mergedUpdates = {
-      ...(existing.updates || {}),
-      ...(writeItem.updates || {})
-    };
-
-    if (existing.updates?.attenderStates || writeItem.updates?.attenderStates) {
-      mergedUpdates.attenderStates = {
-        ...(existing.updates?.attenderStates || {}),
-        ...(writeItem.updates?.attenderStates || {})
-      };
-    }
-
-    currentQueue[existingIdx] = {
-      ...existing,
-      ...writeItem,
-      updates: mergedUpdates,
-      timestamp: Date.now()
-    };
-    console.log(`⚡ [WRITE COALESCED] Merged rapid offline updates for contact: ${writeItem.id}`);
-  } else {
-    currentQueue.push({
-      ...writeItem,
-      timestamp: Date.now()
-    });
-    console.log(`📥 [WRITE QUEUED] Queued offline write for contact: ${writeItem.id}`);
-  }
-
-  await setIDBCache(PENDING_WRITES_KEY, currentQueue);
-};
-
-export const clearPendingWriteItem = async (id) => {
-  const currentQueue = await getPendingWrites();
-  const filtered = currentQueue.filter(w => w.id !== id);
-  await setIDBCache(PENDING_WRITES_KEY, filtered);
-};
-
-export const flushPendingWrites = async (directFirebaseHandler) => {
-  const pending = await getPendingWrites();
-  if (!Array.isArray(pending) || pending.length === 0) return;
-  
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
-    console.log("Device is currently offline. Retaining pending write queue...");
-    return;
-  }
-
-  console.log(`🔄 [FLUSH QUEUE] Flushing ${pending.length} pending offline write(s)...`);
-
-  for (const item of pending) {
-    try {
-      if (typeof directFirebaseHandler === "function") {
-        await directFirebaseHandler(item);
+export const flushPendingWrites = async (processorFn) => {
+  if (isFlushingQueue || pendingWriteQueue.length === 0) return;
+  isFlushingQueue = true;
+  try {
+    while (pendingWriteQueue.length > 0) {
+      const item = pendingWriteQueue.shift();
+      if (typeof processorFn === "function") {
+        await processorFn(item);
       }
-      await clearPendingWriteItem(item.id);
-      console.log(`✅ [FLUSH SUCCESS] Synced pending write for contact: ${item.id}`);
-    } catch (err) {
-      console.error(`❌ [FLUSH ERROR] Failed to flush write for ${item.id}:`, err);
     }
+  } catch (err) {
+    console.warn("[PENDING WRITE FLUSH ERROR]", err);
+  } finally {
+    isFlushingQueue = false;
   }
 };
-
-if (typeof window !== "undefined") {
-  window.addEventListener("online", () => {
-    console.log("Network online detected! Triggering pending write flush...");
-    flushPendingWrites();
-  });
-}
-
