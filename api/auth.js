@@ -14,7 +14,7 @@ if (getApps().length > 0) {
     // Since top-level await isn't allowed in CommonJS, we can't easily await deleteApp here.
     // Wait, Vite uses ESM. We can't top-level await unless module is ESM, but Vite handles it.
     // Just re-assigning it might be enough, but Firebase throws if we initializeApp again.
-  } catch(e) {}
+  } catch(e) { /* ignore */ }
 }
 
 // Initialize Firebase Admin if not already initialized

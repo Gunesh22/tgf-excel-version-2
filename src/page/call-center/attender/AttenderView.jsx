@@ -774,7 +774,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       // 1. Text Search Query
       const q = searchQuery.trim().toLowerCase();
       if (q) {
-        const qDigits = q.replace(/[\s\-\.\(\)\+]/g, "");
+        const qDigits = q.replace(/[\s().+-]/g, "");
         const isPhoneQuery = qDigits.length >= 3 && /^\d+$/.test(qDigits);
 
         let isMatch = false;
@@ -791,7 +791,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
         if (!isMatch && isPhoneQuery) {
           const logPhones = [
             log.Phone, log.phone, log.Mobile, log.mobile, log.Whatsapp, log.whatsapp, log.normalizedPhone, log.normalizedMobile
-          ].map(p => String(p || "").replace(/[\s\-\.\(\)\+]/g, "")).filter(Boolean);
+          ].map(p => String(p || "").replace(/[\s().+-]/g, "")).filter(Boolean);
 
           if (logPhones.some(p => p.includes(qDigits))) {
             isMatch = true;
@@ -1054,7 +1054,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       const keys = Object.keys(log);
       const phoneKey = keys.find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno"].includes(k.toLowerCase()))
         || keys.find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
-      const rawPhone = phoneKey ? String(log[phoneKey] || "").replace(/[\s\-\.\(\)\+]/g, "").trim() : "";
+      const rawPhone = phoneKey ? String(log[phoneKey] || "").replace(/[\s().+-]/g, "").trim() : "";
       const phone = rawPhone.length >= 10 ? rawPhone.slice(-10) : rawPhone;
       if (!phone || phone.length < 5) return;
       if (!map[progId]) map[progId] = {};
