@@ -8,7 +8,7 @@ if (!getApps().length) {
   process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
   process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
   initializeApp({
-    projectId: 'tgf-call-center-2',
+    projectId: 'tgf-call-center-2-7144d',
   });
 }
 
