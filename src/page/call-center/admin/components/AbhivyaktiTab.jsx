@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "react-hot-toast";
 import * as XLSX from "xlsx";
 import {
-  Download, Calendar, TrendingUp, UserCheck, Smile, Info, Search, X, ChevronDown, Check, ChevronRight
+  Download, Calendar, TrendingUp, UserCheck, Smile, Info, Search, X, ChevronDown, Check, ChevronRight, RotateCw
 } from "lucide-react";
 import { CONNECTED_STATUSES, getContactKhoji } from "../utils.jsx";
+import { clearLocalRegistrationsCache } from "../../../../lib/db/cacheService.js";
 
 function ReportSection({ title, subtitle, badge, action, children, defaultOpen = true }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -208,6 +209,9 @@ const parseDate = (val) => {
   if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
   if (typeof val.toDate === "function") return val.toDate();
   if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+  if (typeof val === "object" && val !== null && (val._methodName === "serverTimestamp" || val.operand?.toFieldTransform)) {
+    return new Date();
+  }
   if (typeof val === "number") {
     const d = new Date(val);
     return isNaN(d.getTime()) ? null : d;
@@ -808,6 +812,17 @@ export default function AbhivyaktiTab({
           <p className="text-slate-500 mt-1">Track registrations, sources, conversions, and export reporting sheets.</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={async () => {
+              toast.loading("Refreshing registrations data...", { id: "refresh-regs" });
+              await clearLocalRegistrationsCache();
+              window.location.reload();
+            }}
+            className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl transition-all cursor-pointer"
+            title="Purge cache and re-fetch latest registrations from Firestore"
+          >
+            <RotateCw size={16} /> Refresh
+          </button>
           <button onClick={handleExport} disabled={!filteredRegistrations.length}
             className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-sm transition-all disabled:opacity-50">
             <Download size={18} /> Export Workbook

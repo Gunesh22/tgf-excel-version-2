@@ -193,7 +193,7 @@ export default function EditHistoryModal({
         if (sourceField) {
           updates[sourceField] = latestSource;
         }
-        await updateCallLog(row.id, updates, attenderId || null, edited.attenderName || "Admin");
+        await updateCallLog(row.id, updates, attenderId || null, edited.attenderName || "Admin", row);
       }
 
       toast.success("Call history logs updated successfully!", { id: toastId });

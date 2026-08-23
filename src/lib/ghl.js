@@ -61,12 +61,14 @@ const ghlHeaders = () => {
  */
 const callGhlApiProxy = async (endpoint, method = "POST", payload = null, params = null, signal = null) => {
   try {
+    console.log(`[GHL REQUEST]\nmethod: ${method}\nendpoint: /api/ghl (${endpoint})\npurpose: GHL Proxy Request`);
     const proxyRes = await fetch("/api/ghl", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpoint, method, payload, params }),
       signal,
     });
+    console.log(`[GHL RESPONSE]\nstatus: ${proxyRes.status}`);
     if (proxyRes.ok) {
       return await proxyRes.json();
     }
@@ -100,7 +102,10 @@ export const searchContacts = async (
     isV1 ? { limit: pageLimit, query: query || undefined, startAfter: v1StartAfter || undefined, startAfterId: v1StartAfterId || undefined } : null,
     signal
   );
-  if (proxyResult) return proxyResult;
+  if (proxyResult) {
+    console.log(`[GHL RESPONSE]\nstatus: 200 (Proxy)\nresult_count: ${(proxyResult.contacts || []).length}`);
+    return proxyResult;
+  }
 
   // Fallback to direct client fetch if serverless route is inactive
   if (isV1) {
@@ -110,18 +115,22 @@ export const searchContacts = async (
     if (v1StartAfter) url.searchParams.set("startAfter", v1StartAfter);
     if (v1StartAfterId) url.searchParams.set("startAfterId", v1StartAfterId);
 
+    console.log(`[GHL REQUEST]\nmethod: GET\nendpoint: ${url.pathname}\npurpose: Direct Search V1`);
     const res = await fetch(url.toString(), {
       method: "GET",
       headers: ghlHeaders(),
       signal,
     });
 
+    console.log(`[GHL RESPONSE]\nstatus: ${res.status}`);
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
       throw new Error(err.message || `GHL V1 API error: ${res.status}`);
     }
 
-    return res.json();
+    const data = await res.json();
+    console.log(`[GHL RESPONSE]\nstatus: ${res.status}\nresult_count: ${(data.contacts || []).length}`);
+    return data;
   } else {
     const body = {
       locationId: locId,
@@ -131,6 +140,7 @@ export const searchContacts = async (
     if (query) body.query = query;
     if (filters) body.filters = filters;
 
+    console.log(`[GHL REQUEST]\nmethod: POST\nendpoint: /contacts/search\npurpose: Direct Search V2`);
     const res = await fetch("https://services.leadconnectorhq.com/contacts/search", {
       method: "POST",
       headers: ghlHeaders(),
@@ -138,12 +148,15 @@ export const searchContacts = async (
       signal,
     });
 
+    console.log(`[GHL RESPONSE]\nstatus: ${res.status}`);
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
       throw new Error(err.message || `GHL API error: ${res.status}`);
     }
 
-    return res.json();
+    const data = await res.json();
+    console.log(`[GHL RESPONSE]\nstatus: ${res.status}\nresult_count: ${(data.contacts || []).length}`);
+    return data;
   }
 };
 

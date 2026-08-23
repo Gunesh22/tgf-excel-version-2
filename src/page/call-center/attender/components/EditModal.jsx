@@ -1047,9 +1047,7 @@ export const EditModal = ({
     return uniqueList;
   }, [savedRow.history, savedRow.remark, savedRow.status, savedRow.programName, savedRow.attenderName, savedRow.assignedName, savedRow.updatedAt, savedRow.createdAt, savedRow.attenderStates, globalDup, edited.history, attenderId]);
 
-  useEffect(() => {
-    console.log(`[DIAGNOSTIC] EditModal opened for "${savedRow.Name || savedRow.name}" | rawHistoryCount: ${(savedRow.history || []).length} | mergedHistoryCount: ${(mergedHistory || []).length}`, mergedHistory);
-  }, [savedRow, attenderId, attenderName, mergedHistory]);
+
 
   // Identity helpers
   const getLogName = () => {

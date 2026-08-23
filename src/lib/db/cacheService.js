@@ -298,3 +298,38 @@ export const updateLocalAttenderCache = async (attenderId, updatedDoc) => {
     console.warn("Failed to update local IDB attender cache:", e);
   }
 };
+
+export const updateLocalRegistrationsCache = async (registrationDoc) => {
+  if (!registrationDoc || (!registrationDoc.registrationId && !registrationDoc.id)) return;
+  const regId = registrationDoc.registrationId || registrationDoc.id;
+  const month = registrationDoc.registeredYearMonth || getMonthStr(new Date());
+  const cacheKeys = [`tgf_cache_registrations_ALL`, `tgf_cache_registrations_${month}`];
+
+  for (const cacheKey of cacheKeys) {
+    try {
+      const existing = await getIDBCache(cacheKey);
+      if (Array.isArray(existing)) {
+        const idx = existing.findIndex(item => item.registrationId === regId || item.id === regId);
+        let newArray = [];
+        if (idx >= 0) {
+          newArray = [...existing];
+          newArray[idx] = { ...newArray[idx], ...registrationDoc };
+        } else {
+          newArray = [{ ...registrationDoc, registrationId: regId }, ...existing];
+        }
+        await setIDBCache(cacheKey, newArray);
+      }
+    } catch (e) {
+      console.warn(`Failed to update local IDB registrations cache for ${cacheKey}:`, e);
+    }
+  }
+};
+
+export const clearLocalRegistrationsCache = async () => {
+  try {
+    const keys = [`tgf_cache_registrations_ALL`];
+    for (const key of keys) {
+      await deleteIDBCache(key).catch(() => {});
+    }
+  } catch (e) {}
+};

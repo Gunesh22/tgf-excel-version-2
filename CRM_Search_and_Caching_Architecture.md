@@ -161,3 +161,38 @@ To prevent false-positive shared lead badges (e.g. treating an attender's ID and
   - **Text:** `Shared with: <Attender Names>` (e.g. `Shared with: Manisha`)
   - **Action:** Compact **Sync** button (`[↻] Sync`) triggering a single-lead snapshot refresh to pull live updates submitted by team members.
 
+---
+
+## 8. Atomic Dual-Write & Partition-Preserving Specifications
+
+### Architecture Overview
+To eliminate Firestore read spikes and prevent state drift between Master collections and Admin Read Models, all mutations execute via single, atomic `writeBatch()` transactions.
+
+```
+                         ONE USER SAVE / EDIT
+                                  │
+                                  ▼
+                         Firestore writeBatch()
+            ┌─────────────────────┼─────────────────────┐
+            ▼                     ▼                     ▼
+       contacts            callCenterCache        registrationsCache
+     MASTER MODEL           ADMIN CALL MODEL       ADMIN REG MODEL
+```
+
+### Partition Preservation & Concurrency Semantics
+* **Deep Map Merging (`{ merge: true }`)**: Updates use `batch.set(cacheRef, { contacts: { [logId]: prunedData } }, { merge: true })`.
+* **Partition-Preserving**: Ensures updates to a single contact do not overwrite or erase unrelated contact keys within the partition document.
+* **Concurrent Different-Contact Writes**: Safe for simultaneous writes to different contact IDs within the same monthly partition document (`callCenterCache/YYYY-MM`).
+* **Same-Contact Collisions**: Follows standard Firestore last-write-wins rules for identical contact IDs.
+
+### Production Read/Write Metrics Summary
+
+| Action | Firestore Reads | Firestore Writes | Dual-Write Collections |
+| :--- | :--- | :--- | :--- |
+| **Normal Lead Edit** | **0 Reads** ⚡ | 2 Writes | `contacts` + `callCenterCache` |
+| **New Call Entry** | **1 Read** *(Phone Lookup)* | 2 Writes | `contacts` + `callCenterCache` |
+| **Registration (`Reg.Done`)**| **0 Reads** (Edit) / **1 Read** (New) | 4 Writes *(1 Batch)* | `contacts` + `callCenterCache` + `registrations` + `registrationsCache` |
+| **Admin View (Warm Load)** | **0 Reads** ⚡ | 0 Writes | Served instantly from IndexedDB |
+| **Admin View (Cold Load)** | **1–2 Reads** | 0 Writes | One-time partition document fetch |
+
+

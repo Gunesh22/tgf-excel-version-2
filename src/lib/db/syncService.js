@@ -2,7 +2,7 @@ import {
   collection, query, where, onSnapshot, doc, getDoc, setDoc, or
 } from "firebase/firestore";
 import { db } from "../firebase.js";
-import { findMatchingAttenderState } from "./core.js";
+import { findMatchingAttenderState, trackFirestoreRead } from "./core.js";
 import { getIDBCache, setIDBCache, updateLocalAttenderCache, fetchPartitionCacheForColdBoot } from "./cacheService.js";
 
 // Clean Zero-Background-Listener subscribeToCallLogs (0 Reads on Reload)
@@ -74,21 +74,33 @@ export const fetchFreshSharedLead = async (lead, attenderId, attenderName, force
                    lead.isSharedLead === true ||
                    historyAttendersCount > 1;
   const leadName = lead.Name || lead.name || "Lead";
+  const localCacheExists = !!lead;
+  const cacheAgeMs = lead?._lastFetchedAt ? Date.now() - lead._lastFetchedAt : null;
+  const willFetchFromFirestore = (isShared || forceRefresh) && !(lead._lastFetchedAt && (Date.now() - lead._lastFetchedAt) < 60000 && !forceRefresh);
 
   console.log(
-    `[FETCH SHARED LEAD DIAGNOSTIC] Lead "${leadName}" (${lead.id}) | isShared: ${isShared} | forceRefresh: ${forceRefresh} | assignedTo:`,
-    lead.assignedTo,
-    "| attenderStates keys:",
-    Object.keys(lead.attenderStates || {}),
-    "| historyAttendersCount:",
-    historyAttendersCount
+    `[LEAD FETCH DECISION]`,
+    {
+      contactId: lead?.id || lead?.docId,
+      name: leadName,
+      isShared,
+      forceRefresh,
+      localCacheExists,
+      cacheAgeMs,
+      ACTION: willFetchFromFirestore ? "FIRESTORE_READ" : "LOCAL_CACHE"
+    }
   );
 
   // If not shared AND not force-refreshed, serve 100% from IndexedDB (0 Reads)
   if (!isShared && !forceRefresh) {
     console.log(
-      `%c🟢 [SOLO LEAD - 0 READS] "${leadName}" (${lead.id}) is solo lead. Serving 100% from IndexedDB (0 Firestore Reads)`,
-      "background: #065f46; color: #34d399; font-weight: bold; padding: 3px 8px; border-radius: 4px;"
+      `[LEAD FETCH → IDB]`,
+      {
+        contactId: lead?.id,
+        reason: "cache_sufficient",
+        isShared,
+        forceRefresh
+      }
     );
     return lead;
   }
@@ -97,25 +109,39 @@ export const fetchFreshSharedLead = async (lead, attenderId, attenderName, force
   const now = Date.now();
   if (!forceRefresh && lead._lastFetchedAt && (now - lead._lastFetchedAt) < 60000) {
     console.log(
-      `%c⚡ [FRESH CACHE RE-USED - 0 READS] "${leadName}" was synced ${Math.round((now - lead._lastFetchedAt) / 1000)}s ago. Reusing local cache (0 Reads).`,
-      "background: #065f46; color: #a7f3d0; font-weight: bold; padding: 3px 8px; border-radius: 4px;"
+      `[LEAD FETCH → IDB]`,
+      {
+        contactId: lead?.id,
+        reason: "cache_sufficient",
+        isShared,
+        forceRefresh
+      }
     );
     return lead;
   }
 
-  console.log(
-    `%c📡 [FIRESTORE REQUEST - 1 READ] Fetching fresh details for SHARED lead "${leadName}" (${lead.id})...`,
-    "background: #1e40af; color: #93c5fd; font-weight: bold; padding: 3px 8px; border-radius: 4px;"
-  );
-
   try {
+    console.log(
+      `[LEAD FETCH → FIRESTORE]`,
+      {
+        contactId: lead?.id,
+        reason: "fetchFreshSharedLead",
+        isShared,
+        forceRefresh
+      }
+    );
+
     const docRef = doc(db, "contacts", lead.id);
     const docSnap = await getDoc(docRef);
 
-    console.log(
-      `%c✅ [FIRESTORE RESPONSE RECEIVED] Successfully fetched shared lead "${leadName}" (${lead.id}) | Cost: 1 Firestore Read`,
-      "background: #047857; color: #a7f3d0; font-weight: bold; padding: 3px 8px; border-radius: 4px;"
-    );
+    trackFirestoreRead({
+      collection: "contacts",
+      operation: "getDoc",
+      document: lead.id,
+      documentsReturned: docSnap.exists() ? 1 : 0,
+      reason: "fetchFreshSharedLead",
+      source: "modal/fetchFreshSharedLead"
+    });
 
     if (!docSnap.exists()) return lead;
 

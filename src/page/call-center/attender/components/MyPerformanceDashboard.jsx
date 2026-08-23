@@ -390,9 +390,7 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
 
   // Extract all attempts all-time
   const allAttempts = useMemo(() => {
-    const res = getAttenderAttempts(logs, attenderName, attenderId);
-    console.log(`[MyPerformanceDashboard DEBUG] Total raw attempts found for ${attenderName} (${attenderId}):`, res.length, res);
-    return res;
+    return getAttenderAttempts(logs, attenderName, attenderId);
   }, [logs, attenderName, attenderId]);
 
   // Today's calls count
@@ -404,7 +402,6 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
       const d = att.updatedAt;
       return d && d >= start && d <= end;
     });
-    console.log(`[MyPerformanceDashboard DEBUG] Today's attempts (${start.toISOString()} to ${end.toISOString()}):`, todayAttempts.length, todayAttempts);
     return todayAttempts.length;
   }, [allAttempts]);
 
@@ -437,9 +434,7 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
 
   // Date-filtered call attempts
   const filteredAttempts = useMemo(() => {
-    const res = filterAttemptsByDate(allAttempts, dateRange, customStart, customEnd);
-    console.log(`[MyPerformanceDashboard DEBUG] Filtered attempts for range "${dateRange}":`, res.length, res);
-    return res;
+    return filterAttemptsByDate(allAttempts, dateRange, customStart, customEnd);
   }, [allAttempts, dateRange, customStart, customEnd]);
 
   const stats = useMemo(() => {
@@ -647,7 +642,7 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
           <div className="flex items-center gap-8">
             {/* Pie */}
             <div className="relative w-32 h-32 shrink-0">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={128}>
                 <PieChart>
                   <Pie data={stats.statusChartData} cx="50%" cy="50%" innerRadius={38} outerRadius={52} paddingAngle={2} dataKey="value">
                     {stats.statusChartData.map((_, i) => (

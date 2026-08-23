@@ -37,12 +37,16 @@ import { ColumnsSelector } from "./components/ColumnsSelector";
 
 function parseTimestamp(t) {
   if (!t) return null;
-  if (t instanceof Date) return t;
+  if (t instanceof Date) return isNaN(t.getTime()) ? null : t;
   if (typeof t.toDate === "function") return t.toDate();
   if (typeof t === "object" && t.seconds !== undefined) {
     return new Date(t.seconds * 1000 + Math.round((t.nanoseconds || 0) / 1000000));
   }
-  return new Date(t);
+  if (typeof t === "number" || typeof t === "string") {
+    const d = new Date(t);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
 }
 
 function enrichLogsWithCallbackFlags(logs) {
@@ -304,9 +308,9 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
 
     setEditingRow(row); // 0ms Instant Modal Render from local cache
 
-    // Fetch fresh copy from Firestore contacts collection (1 Read) on modal open
+    // Fetch fresh copy for shared leads (0 Reads for solo leads or fresh cache)
     if (row.id && !row._isNew) {
-      const fresh = await fetchFreshSharedLead(row, attenderId, attenderName, true);
+      const fresh = await fetchFreshSharedLead(row, attenderId, attenderName, false);
       if (fresh) {
         setEditingRow(fresh);
         setCallLogs(prev => prev.map(l => l.id === fresh.id ? { ...l, ...fresh } : l));
@@ -1198,7 +1202,6 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     });
 
     const sorted = [...standardOrder, ...Array.from(allKeysSet).sort()];
-    console.log("[DEBUG] dynamicCols:", sorted);
     return sorted;
   }, [tagFilteredLogs, INTERNAL_KEYS_LOWER]);
 

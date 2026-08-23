@@ -9,7 +9,7 @@ import { db } from "../firebase.js";
 import {
   formatContactName, isIgnoredField, findMatchingAttenderState,
   combineContactHistories, normalizePhone, extractIndividualPhones,
-  getMonthStr, getByteSize
+  getMonthStr, getByteSize, trackFirestoreRead, trackFirestoreWrite
 } from "./core.js";
 import {
   getIDBCache, setIDBCache, fetchPartitionCacheForColdBoot
@@ -1257,17 +1257,49 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
     where(documentId(), "<=", endMonth + "\uf8ff")
   );
 
+  console.log(`[ADMIN CACHE QUERY]`, {
+    startMonth: queryStartMonth,
+    endMonth,
+    queryType: "callCenterCache",
+    expectedMonths: [queryStartMonth, endMonth]
+  });
+
   const unsubCache = onSnapshot(cacheQuery, async (snap) => {
-    console.log(
-      "%c📡 [SNAPSHOT READ - Admin callCenterCache]",
-      "background: #1e1b4b; color: #818cf8; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
-      `Realtime update received | Docs: ${snap.docs.length} | Read cost: ${snap.docChanges().length || snap.docs.length} doc(s)`
-    );
+    const docIds = snap.docs.map(d => d.id);
+    const addedCount = snap.docChanges().filter(c => c.type === "added").length;
+    const modifiedCount = snap.docChanges().filter(c => c.type === "modified").length;
+    const removedCount = snap.docChanges().filter(c => c.type === "removed").length;
+
+    console.log(`[ADMIN CACHE SNAPSHOT]`, {
+      source: snap.metadata.fromCache ? "IDB/LOCAL_CACHE" : "FIRESTORE",
+      docsReturned: snap.docs.length,
+      documentIds: docIds,
+      changes: {
+        added: addedCount,
+        modified: modifiedCount,
+        removed: removedCount
+      }
+    });
+
+    if (!snap.metadata.fromCache && snap.docs.length > 0) {
+      trackFirestoreRead({
+        collection: "callCenterCache",
+        operation: "onSnapshot",
+        documentsReturned: snap.docs.length,
+        reason: "subscribeToAllCallLogs",
+        source: "admin/callCenterCache"
+      });
+    }
+
     if (snap.empty && lockedDocs.length === 0) {
       try {
         const cached = await getIDBCache(cacheKey);
         if (Array.isArray(cached) && cached.length > 0) {
-          console.log(`⚡ [ADMIN IDB ZERO-READ CACHE] Served ${cached.length} logs from IndexedDB (0 Firestore Reads)`);
+          console.log(
+            "%c⚡ [0-READ CACHE HIT - subscribeToAllCallLogs]",
+            "background: #065f46; color: #34d399; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
+            `Served ${cached.length} logs from IndexedDB | 0 Firestore Reads`
+          );
           finalCallback(cached);
           return;
         }
@@ -1294,6 +1326,7 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
   });
 
   return () => {
+    console.log(`[FIRESTORE LISTENER]\ncollection: callCenterCache\nlistener: STOP`);
     unsubCache();
   };
 };
@@ -1625,10 +1658,12 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
   }
 
   const cacheKey = `tgf_cache_registrations_${targetOption}`;
+  let hasEmittedSnapshot = false;
 
-  // 1. Check IndexedDB first: If data is present in IndexedDB, serve it and DO NOT contact Firestore (0 READS!)
-  getIDBCache(cacheKey).then(async cachedDocs => {
-    if (Array.isArray(cachedDocs) && cachedDocs.length > 0) {
+  // 1. Immediately emit cached registrations from IndexedDB for 0ms initial load
+  getIDBCache(cacheKey).then(cachedDocs => {
+    if (!hasEmittedSnapshot && Array.isArray(cachedDocs) && cachedDocs.length > 0) {
+      console.log(`[REGISTRATION IDB CACHE] Loaded ${cachedDocs.length} registrations from IndexedDB (0 Reads)`);
       const hydrated = cachedDocs.map(doc => {
         if (!doc) return doc;
         const copy = { ...doc };
@@ -1643,75 +1678,73 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
         }
         return copy;
       });
-      console.log(
-        "%c⚡ [INDEXEDDB ZERO-READ SUCCESS - Registrations]",
-        "background: #065f46; color: #34d399; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
-        `Served ${hydrated.length} registrations from IndexedDB for '${targetOption}' (0 Firestore Reads - No Snapshot Created)`
-      );
       finalCallback(hydrated);
-      return;
-    }
-
-    // 2. ONLY if IndexedDB is EMPTY: Fetch partition document once from Firestore
-    const { startMonth, endMonth } = getMonthRange(targetOption);
-    const cacheQuery = query(
-      collection(db, "registrationsCache"),
-      where(documentId(), ">=", startMonth),
-      where(documentId(), "<=", endMonth + "\uf8ff")
-    );
-
-    try {
-      console.log(`[registrationsCache] IndexedDB empty for '${targetOption}'. Performing one-time fetch from Firestore...`);
-      const snap = await getDocs(cacheQuery);
-      let docs = [];
-
-      if (snap.empty) {
-        console.log(`[registrationsCache] No partition cache found for range ${startMonth} to ${endMonth}. Falling back to live registrations collection...`);
-        const fallbackQ = query(
-          collection(db, "registrations"),
-          where("registeredYearMonth", ">=", startMonth),
-          where("registeredYearMonth", "<=", endMonth)
-        );
-        const liveSnap = await getDocs(fallbackQ);
-        docs = liveSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(
-          "%c⚠️ [FALLBACK READ - Live Registrations]",
-          "background: #854d0e; color: #fde047; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
-          `Fetched ${docs.length} registrations directly from live registrations collection (${liveSnap.docs.length} reads)`
-        );
-      } else {
-        const regsMap = {};
-        snap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          const docRegs = data.registrations || {};
-          Object.entries(docRegs).forEach(([id, r]) => {
-            regsMap[id] = { id, ...r };
-          });
-        });
-        docs = Object.values(regsMap).filter(r => !r._deleted);
-        console.log(
-          "%c📦 [ONE-TIME PARTITION READ - registrationsCache]",
-          "background: #1e1b4b; color: #38bdf8; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
-          `Fetched ${docs.length} registrations from ${snap.docs.length} partition doc(s) (Cost: ${snap.docs.length} read(s))`
-        );
-      }
-
-      docs.sort((a, b) => {
-        const ta = a.registeredAt?.toMillis ? a.registeredAt.toMillis() : (a.registeredAt?.seconds ? a.registeredAt.seconds * 1000 : 0);
-        const tb = b.registeredAt?.toMillis ? b.registeredAt.toMillis() : (b.registeredAt?.seconds ? b.registeredAt.seconds * 1000 : 0);
-        return tb - ta;
-      });
-
-      await setIDBCache(cacheKey, docs);
-      finalCallback(docs);
-    } catch (err) {
-      console.error("subscribeToRegistrations fetch error:", err);
     }
   }).catch(err => {
     console.warn("IndexedDB access error in subscribeToRegistrations:", err);
   });
 
-  return () => {}; // Pure cache-first, no realtime listener subscription needed
+  // 2. Realtime partition listener on registrationsCache
+  const { startMonth, endMonth } = getMonthRange(targetOption);
+  const cacheQuery = query(
+    collection(db, "registrationsCache"),
+    where(documentId(), ">=", startMonth),
+    where(documentId(), "<=", endMonth + "\uf8ff")
+  );
+
+  console.log(`[REGISTRATION CACHE QUERY]`, {
+    startMonth,
+    endMonth,
+    queryType: "registrationsCache"
+  });
+
+  const unsubscribe = onSnapshot(cacheQuery, async (snap) => {
+    hasEmittedSnapshot = true;
+    const partitionIds = snap.docs.map(d => d.id);
+    const source = snap.metadata.fromCache ? "IDB/LOCAL_CACHE" : "FIRESTORE";
+
+    console.log(`[REGISTRATION CACHE SNAPSHOT]`, {
+      source,
+      partitionCount: partitionIds.length,
+      partitionIds
+    });
+
+    if (!snap.metadata.fromCache) {
+      trackFirestoreRead({
+        collection: "registrationsCache",
+        operation: "onSnapshot",
+        documentsReturned: partitionIds.length,
+        reason: "subscribeToRegistrations",
+        source: "admin/registrationsCache"
+      });
+    }
+
+    let docs = [];
+    if (!snap.empty) {
+      const regsMap = {};
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        const docRegs = data.registrations || {};
+        Object.entries(docRegs).forEach(([id, r]) => {
+          regsMap[id] = { id, ...r };
+        });
+      });
+      docs = Object.values(regsMap).filter(r => !r._deleted);
+    }
+
+    docs.sort((a, b) => {
+      const ta = a.registeredAt?.toMillis ? a.registeredAt.toMillis() : (a.registeredAt?.seconds ? a.registeredAt.seconds * 1000 : 0);
+      const tb = b.registeredAt?.toMillis ? b.registeredAt.toMillis() : (b.registeredAt?.seconds ? b.registeredAt.seconds * 1000 : 0);
+      return tb - ta;
+    });
+
+    await setIDBCache(cacheKey, docs);
+    finalCallback(docs);
+  }, (err) => {
+    console.error("subscribeToRegistrations listener error:", err);
+  });
+
+  return unsubscribe;
 };
 
 /**

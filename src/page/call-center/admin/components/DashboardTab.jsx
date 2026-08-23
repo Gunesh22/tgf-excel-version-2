@@ -750,8 +750,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
           <h3 className="text-sm font-bold text-gray-700 mb-4">Outcome Distribution</h3>
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 h-[240px]">
-            <div className="w-full sm:w-1/2 h-full min-h-[200px]">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={200}>
+            <div className="w-full sm:w-1/2 h-[220px]">
+              <ResponsiveContainer width="100%" height={220}>
                 <PieChart>
                   <Pie
                     data={outcomeData}

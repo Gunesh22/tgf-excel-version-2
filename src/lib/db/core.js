@@ -353,3 +353,68 @@ export const getByteSize = (obj) => {
   }
 };
 
+// ─────────────────────────────────────────────
+// SESSION COUNTER & COST AUDIT TRACKING
+// ─────────────────────────────────────────────
+if (typeof window !== "undefined" && !window.__CRM_FIRESTORE_STATS__) {
+  window.__CRM_FIRESTORE_STATS__ = {
+    reads: 0,
+    writes: 0,
+    readOperations: [],
+    writeOperations: []
+  };
+}
+
+export const trackFirestoreRead = (details) => {
+  const docsReturned = details.documentsReturned !== undefined ? details.documentsReturned : 1;
+  if (typeof window !== "undefined" && window.__CRM_FIRESTORE_STATS__) {
+    window.__CRM_FIRESTORE_STATS__.reads += docsReturned;
+    window.__CRM_FIRESTORE_STATS__.readOperations.push({
+      time: new Date().toISOString(),
+      ...details
+    });
+  }
+  console.log(`[FIRESTORE READ]`, details);
+};
+
+export const trackFirestoreWrite = (details) => {
+  const writeCount = details.writeCount || (Array.isArray(details.paths) ? details.paths.length : 1);
+  if (typeof window !== "undefined" && window.__CRM_FIRESTORE_STATS__) {
+    window.__CRM_FIRESTORE_STATS__.writes += writeCount;
+    window.__CRM_FIRESTORE_STATS__.writeOperations.push({
+      time: new Date().toISOString(),
+      ...details,
+      writeCount
+    });
+  }
+  console.log(`[FIRESTORE WRITE]`, { ...details, writeCount });
+};
+
+export const sanitizeForFirestore = (obj) => {
+  if (!obj || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeForFirestore(item)).filter(item => item !== undefined);
+  }
+  const clean = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val === undefined) continue;
+    if (val && typeof val === "object" && !(val instanceof Date) && typeof val.toDate !== "function" && typeof val.toMillis !== "function" && val._methodName !== "deleteField") {
+      clean[key] = sanitizeForFirestore(val);
+    } else {
+      clean[key] = val;
+    }
+  }
+  return clean;
+};
+
+export const checkHasUndefinedFields = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined) return true;
+    if (v && typeof v === "object" && !(v instanceof Date) && typeof v.toDate !== "function" && typeof v.toMillis !== "function" && checkHasUndefinedFields(v)) {
+      return true;
+    }
+  }
+  return false;
+};
+

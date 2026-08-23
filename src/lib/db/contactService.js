@@ -10,12 +10,13 @@ import { isKhojiField } from "../khojiHelper.js";
 import {
   formatContactName, isIgnoredField, findMatchingAttenderState,
   combineContactHistories, normalizePhone, extractIndividualPhones,
-  getByteSize
+  getByteSize, trackFirestoreRead, trackFirestoreWrite, sanitizeForFirestore,
+  checkHasUndefinedFields
 } from "./core.js";
 import {
   getIDBCache, setIDBCache, dupCheckCacheMap,
   getDupCheckCache, setDupCheckCache, updateLocalAttenderCache,
-  fetchPartitionCacheForColdBoot
+  updateLocalRegistrationsCache, fetchPartitionCacheForColdBoot
 } from "./cacheService.js";
 import {
   getActiveTags, registerActiveTag, INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME,
@@ -642,20 +643,25 @@ export const checkGlobalDuplicate = async (phone, excludeContactId = null) => {
 
   // 200ms debounce timer
   await new Promise(resolve => setTimeout(resolve, 200));
-  if (myController.cancelled) return null; // Superseded by newer keystroke
-
   const promises = [];
-  console.log(`[FIRESTORE READ - checkGlobalDuplicate] Querying 'contacts' collection | variations: ${numbersToCheck.join(", ")} | queriesCount: ${numbersToCheck.length}`);
   numbersToCheck.forEach(norm => {
     promises.push(getDocs(query(collection(db, "contacts"), where("normalizedPhones", "array-contains", norm))));
     promises.push(getDocs(query(collection(db, "contacts"), where("normalizedPhone", "==", norm))));
     promises.push(getDocs(query(collection(db, "contacts"), where("normalizedMobile", "==", norm))));
   });
-  
+
   const snaps = await Promise.all(promises);
   let totalDocsReturned = 0;
   snaps.forEach(s => totalDocsReturned += s.docs.length);
-  console.log(`[FIRESTORE READ - checkGlobalDuplicate] Completed | totalDocsReturned: ${totalDocsReturned}`);
+  
+  trackFirestoreRead({
+    collection: "contacts",
+    operation: "query",
+    query: `normalizedPhones/Phone/Mobile in [${numbersToCheck.join(", ")}]`,
+    documentsReturned: totalDocsReturned,
+    reason: "checkGlobalDuplicate",
+    source: "edit/checkGlobalDuplicate"
+  });
   
   const matchesMap = new Map();
   snaps.forEach(snap => {
@@ -842,16 +848,25 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
   let previousStatus = "";
   let logData = {};
 
-  try {
-    const logSnap = await getDoc(contactRef);
-    if (logSnap.exists()) {
-      logData = logSnap.data();
-    } else if (existingContact) {
-      logData = existingContact;
+  if (existingContact) {
+    logData = existingContact;
+    console.log(
+      "%c⚡ [0-READ CACHE HIT - updateCallLogDirectFirebase]",
+      "background: #065f46; color: #34d399; font-weight: bold; padding: 3px 8px; border-radius: 4px;",
+      `Bypassed getDoc using existingContact for "${logData.Name || logId}" (${logId}) | 0 Firestore Reads`
+    );
+  } else {
+    try {
+      const logSnap = await getDoc(contactRef);
+      console.log(
+        `[FIRESTORE READ]\ncollection: contacts\noperation: getDoc\ndocument: ${logId}\ndocuments_returned: ${logSnap.exists() ? 1 : 0}\nestimated_read_cost: 1\nreason: updateCallLogDirectFirebase`
+      );
+      if (logSnap.exists()) {
+        logData = logSnap.data();
+      }
+    } catch (e) {
+      console.warn("Failed to fetch contact data in updateCallLogDirectFirebase", e);
     }
-  } catch (e) {
-    console.warn("Failed to fetch contact data in updateCallLog", e);
-    if (existingContact) logData = existingContact;
   }
 
   if (attenderId && logData.attenderStates?.[attenderId]?.status !== undefined) {
@@ -1039,18 +1054,6 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     }
   });
 
-  // Execute atomically using a writeBatch to prevent partial updates or duplicate snapshot triggers
-  console.log(`[FIRESTORE BATCH WRITE] Contact ID: ${logId}`, { rootPayload, deepUpdates });
-  const batch = writeBatch(db);
-  if (Object.keys(rootPayload).length > 0) {
-    batch.set(contactRef, rootPayload, { merge: true });
-  }
-  if (Object.keys(deepUpdates).length > 0) {
-    batch.update(contactRef, deepUpdates);
-  }
-  await batch.commit();
-  console.log(`[FIRESTORE BATCH WRITE SUCCESS] Contact ID: ${logId}`);
-
   const mergedAttenderStates = { ...(logData.attenderStates || {}) };
   if (attenderId) {
     mergedAttenderStates[attenderId] = {
@@ -1064,6 +1067,90 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     attenderStates: mergedAttenderStates,
     updatedAt: new Date()
   };
+
+  // Execute atomically using a writeBatch to update contacts, callCenterCache, and registrationsCache together
+  const cleanRootPayload = sanitizeForFirestore(rootPayload);
+  const cleanDeepUpdates = sanitizeForFirestore(deepUpdates);
+  console.log(`[FIRESTORE BATCH WRITE] Contact ID: ${logId}`, { rootPayload: cleanRootPayload, deepUpdates: cleanDeepUpdates });
+  
+  const batch = writeBatch(db);
+  if (Object.keys(cleanRootPayload).length > 0) {
+    batch.set(contactRef, cleanRootPayload, { merge: true });
+  }
+  if (Object.keys(cleanDeepUpdates).length > 0) {
+    batch.update(contactRef, cleanDeepUpdates);
+  }
+
+  // 2. Dual Write: callCenterCache partition document
+  const currentMonth = getMonthStr(new Date());
+
+  // Track document paths being written in this batch
+  const batchPaths = [`contacts/${logId}`, `callCenterCache/${currentMonth}`];
+  const cacheRef = doc(db, "callCenterCache", currentMonth);
+  const prunedForCache = sanitizeForFirestore(pruneContactForCacheForMonth({ id: logId, ...freshData }, currentMonth));
+  batch.set(cacheRef, { contacts: { [logId]: prunedForCache } }, { merge: true });
+
+  let isRegDone = updates.status === "Reg.Done" || freshData.status === "Reg.Done";
+  let registrationId = null;
+  let regPayload = null;
+
+  // 3. Dual Write: registrations + registrationsCache if status is Reg.Done
+  if (isRegDone) {
+    const calledForVal = freshData["Called For"] || freshData.calledFor || freshData.called_for || freshData.programName || "Incoming Calls";
+    const cleanedCalledFor = String(calledForVal).trim().replace(/[^a-zA-Z0-9]/g, "_");
+    registrationId = `${logId}_${cleanedCalledFor}`;
+    const regRef = doc(db, "registrations", registrationId);
+    const regCacheRef = doc(db, "registrationsCache", currentMonth);
+
+    const rawRegPayload = {
+      ...freshData,
+      id: logId,
+      registrationId,
+      registeredYearMonth: currentMonth,
+      registeredAt: serverTimestamp(),
+      conversionSource: freshData.Source || freshData.sourse || "Direct",
+      convertedBy: attenderName || freshData.attenderName || "Unknown",
+      programName: freshData.programName || "Incoming Calls"
+    };
+
+    const hasUndefinedFields = checkHasUndefinedFields(rawRegPayload);
+    regPayload = sanitizeForFirestore(rawRegPayload);
+
+    console.log("[REGISTRATION BATCH]", {
+      registrationId,
+      payload: regPayload,
+      hasUndefinedFields
+    });
+
+    batch.set(regRef, regPayload, { merge: true });
+    batch.set(regCacheRef, { registrations: { [registrationId]: regPayload } }, { merge: true });
+    batchPaths.push(`registrations/${registrationId}`, `registrationsCache/${currentMonth}`);
+    updateLocalRegistrationsCache(regPayload).catch(() => {});
+  }
+
+  try {
+    await batch.commit();
+
+    if (isRegDone && registrationId) {
+      console.log("[REGISTRATION BATCH SUCCESS]", {
+        registrationId,
+        writes: [`registrations/${registrationId}`, `registrationsCache/${currentMonth}`]
+      });
+    }
+
+    trackFirestoreWrite({
+      operation: "batch",
+      paths: batchPaths,
+      writeCount: batchPaths.length,
+      reason: `updateCallLog ("${freshData.Name || logId}")`,
+      contactId: logId
+    });
+  } catch (error) {
+    if (isRegDone) {
+      console.error("[REGISTRATION BATCH FAILED]", error);
+    }
+    throw error;
+  }
 
   // Handle "Reg.Done" registrations collection sync (only when status/program changed, saving 1 read per save)
   const registrationSyncRequired = 
@@ -1104,7 +1191,7 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
       const registeredPrograms = [];
       allHistory.forEach(h => {
         if (h.status === "Reg.Done") {
-          const prog = h.calledFor || h.programName || freshData.programName || "Unknown";
+          const prog = h.calledFor || h.programName || freshData["Called For"] || freshData.calledFor || freshData.programName || "Incoming Calls";
           const cleanProg = String(prog).trim();
           if (cleanProg && !registeredPrograms.some(p => p.name.toLowerCase() === cleanProg.toLowerCase())) {
             registeredPrograms.push({
@@ -1118,7 +1205,7 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
       });
 
       // Legacy/Fallback: check if current status is Reg.Done
-      const currentProg = freshData["Called For"] || freshData.calledFor || "Unknown";
+      const currentProg = freshData["Called For"] || freshData.calledFor || freshData.called_for || freshData.programName || "Incoming Calls";
       if (freshData.status === "Reg.Done" && currentProg) {
         const cleanProg = String(currentProg).trim();
         if (!registeredPrograms.some(p => p.name.toLowerCase() === cleanProg.toLowerCase())) {
@@ -1147,16 +1234,53 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
         });
       }
 
-      // Fetch all existing registration documents for this contact
-      const q = query(
-        collection(db, "registrations"),
-        where(documentId(), ">=", logId),
-        where(documentId(), "<=", logId + "\uf8ff")
-      );
-      const existingRegsSnap = await getDocs(q);
-      const existingRegMap = {};
-      existingRegsSnap.docs.forEach(docSnap => {
-        existingRegMap[docSnap.id] = docSnap.ref;
+      // Derive candidate registration IDs from in-memory contact history & attenderStates (0 Firestore Reads)
+      const candidateRegIds = new Set();
+      const candidatePrograms = new Set();
+
+      const addCandidateProg = (p) => {
+        if (p) {
+          const clean = String(p).trim();
+          if (clean) candidatePrograms.add(clean);
+        }
+      };
+
+      addCandidateProg(freshData["Called For"] || freshData.calledFor || freshData.called_for || freshData.programName);
+      addCandidateProg(updates["Called For"] || updates.calledFor || updates.called_for || updates.programName);
+      if (existingContact) {
+        addCandidateProg(existingContact["Called For"] || existingContact.calledFor || existingContact.called_for || existingContact.programName);
+      }
+
+      allHistory.forEach(h => {
+        addCandidateProg(h.calledFor || h.programName);
+      });
+      if (existingContact && Array.isArray(existingContact.history)) {
+        existingContact.history.forEach(h => {
+          addCandidateProg(h.calledFor || h.programName);
+        });
+      }
+      if (freshData.attenderStates) {
+        Object.values(freshData.attenderStates).forEach(state => {
+          addCandidateProg(state["Called For"] || state.calledFor);
+          if (Array.isArray(state.history)) {
+            state.history.forEach(h => addCandidateProg(h.calledFor || h.programName));
+          }
+        });
+      }
+      if (existingContact && existingContact.attenderStates) {
+        Object.values(existingContact.attenderStates).forEach(state => {
+          addCandidateProg(state["Called For"] || state.calledFor);
+          if (Array.isArray(state.history)) {
+            state.history.forEach(h => addCandidateProg(h.calledFor || h.programName));
+          }
+        });
+      }
+
+      candidatePrograms.forEach(prog => {
+        const cleanedProg = prog.replace(/[^a-zA-Z0-9]/g, "_");
+        if (cleanedProg) {
+          candidateRegIds.add(`${logId}_${cleanedProg}`);
+        }
       });
 
       const activeRegIds = new Set();
@@ -1164,8 +1288,17 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
       // Write or update active registrations
       for (const rp of registeredPrograms) {
         const cleanedCalledFor = String(rp.name).trim().replace(/[^a-zA-Z0-9]/g, "_");
-        const registrationId = `${logId}_${cleanedCalledFor}`;
-        activeRegIds.add(registrationId);
+        const currentRegId = `${logId}_${cleanedCalledFor}`;
+        activeRegIds.add(currentRegId);
+
+        // Skip redundant setDoc writes if this registration ID was ALREADY written by writeBatch
+        if (isRegDone && registrationId && currentRegId === registrationId) {
+          console.log("[REGISTRATION WRITE SKIPPED]", {
+            registrationId: currentRegId,
+            reason: "already_written_by_batch"
+          });
+          continue;
+        }
 
         // Determine registration month (IST)
         const regDate = rp.timestamp 
@@ -1186,21 +1319,31 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
           programName: freshData.programName || rp.name || "Unknown"
         };
 
-        Object.keys(payload).forEach(key => {
-          if (payload[key] === undefined || payload[key] === deleteField() || (payload[key] && typeof payload[key] === "object" && payload[key]._methodName === "deleteField")) {
-            delete payload[key];
-          }
-        });
+        const cleanPayload = sanitizeForFirestore(payload);
 
-        await setDoc(doc(db, "registrations", registrationId), payload, { merge: true });
-        await registerRegistrationMonth(yearMonth);
+        await setDoc(doc(db, "registrations", currentRegId), cleanPayload, { merge: true });
+        await setDoc(doc(db, "registrationsCache", yearMonth), { registrations: { [currentRegId]: cleanPayload } }, { merge: true });
+        trackFirestoreWrite({
+          operation: "setDoc",
+          paths: [`registrations/${currentRegId}`, `registrationsCache/${yearMonth}`],
+          writeCount: 2,
+          reason: "syncRegistrationForContact",
+          contactId: logId
+        });
+        updateLocalRegistrationsCache({ ...payload, registrationId: currentRegId }).catch(() => {});
       }
 
-      // Delete any outdated/orphan registrations for this contact
-      for (const [id, ref] of Object.entries(existingRegMap)) {
-        if (!activeRegIds.has(id)) {
-          await deleteDoc(ref);
-          console.log("🗑️ Deleted unregistered/orphaned registration document:", id);
+      // Delete any outdated/orphan registrations for this contact (derived in-memory, 0 reads)
+      for (const candId of candidateRegIds) {
+        if (!activeRegIds.has(candId)) {
+          await deleteDoc(doc(db, "registrations", candId));
+          trackFirestoreWrite({
+            operation: "deleteDoc",
+            paths: [`registrations/${candId}`],
+            writeCount: 1,
+            reason: "syncRegistrationForContact (orphan cleanup)",
+            contactId: logId
+          });
         }
       }
     }
@@ -1287,7 +1430,7 @@ export const removeAttenderFromContact = async (contactId, attenderId) => {
 
 // Add a manual incoming or outgoing call entry
 
-export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName, data, programId = null, programName = null) => {
+export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName, data, programId = null, programName = null, preallocatedId = null) => {
   const now = new Date();
   const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
@@ -1326,7 +1469,9 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
       const snap3 = await Promise.race([getDocs(q3), timeoutLookup]);
       
       const mergedDocs = snap3.docs || [];
-      console.log("%c🔥 [FIRESTORE READ - Phone Lookup]", "background: #064e3b; color: #34d399; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Queried "contacts" for duplicate phone check. Matches found: ${mergedDocs.length}`);
+      console.log(
+        `[FIRESTORE READ]\ncollection: contacts\noperation: query\nquery: normalizedPhones array-contains-any [${finalNormalizedPhones.join(", ")}]\ndocuments_returned: ${mergedDocs.length}\nestimated_read_cost: ${mergedDocs.length}\nreason: addIncomingCallLog (Phone Lookup)`
+      );
       const existingSnap = { empty: mergedDocs.length === 0, docs: mergedDocs };
 
       if (!existingSnap.empty) {
@@ -1450,10 +1595,16 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
     attenderName: attenderName, // compatibility
     lastEditedBy: attenderName,
     lastEditedAt: new Date().toISOString(),
-    callType: data.callType || "incoming",
+    lastCalledAt: new Date().toISOString(),
+    callType: data.callType || currentAttState.callType || "incoming",
+    status: data.status !== undefined ? data.status : (currentAttState.status || "Call Log Added"),
+    remark: data.remark !== undefined ? data.remark : (currentAttState.remark || ""),
+    callbackDate: targetCallbackDate,
+    callbackStatus: targetCallbackStatus,
+    objectionReason: data.objectionReason !== undefined ? data.objectionReason : (currentAttState.objectionReason || ""),
     tags: mergedTags,
     attenderStates: updatedStates,
-    updatedAt: serverTimestamp(),
+    updatedAt: new Date().toISOString(),
     programId: finalProgramId,
     programName: finalProgramName,
     "Sub Program": finalProgramName,
@@ -1464,7 +1615,7 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
   if (isExisting && existingData.createdAt) {
     logPayload.createdAt = existingData.createdAt;
   } else {
-    logPayload.createdAt = serverTimestamp();
+    logPayload.createdAt = new Date().toISOString();
   }
 
   if (data.status === "Reg.Done") {
@@ -1480,6 +1631,11 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
     }
   });
 
+  const batch = writeBatch(db);
+  let finalId = existingDocId;
+
+  const batchPaths = [];
+
   if (isExisting && existingDocId) {
     const contactRef = doc(db, "contacts", existingDocId);
     const { attenderStates, ...restPayload } = logPayload;
@@ -1488,78 +1644,166 @@ export const addIncomingCallLogDirectFirebase = async (attenderId, attenderName,
       _deleted: deleteField(),
       [`attenderStates.${attenderId}`]: updatedStates[attenderId]
     };
-    await setDoc(contactRef, dotPayload, { merge: true });
+    batch.set(contactRef, dotPayload, { merge: true });
     docRef = { id: existingDocId };
-    console.log("%c⚡ [FIRESTORE WRITE - Contact Update]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Updated existing lead in "contacts": ${existingDocId}`);
+    batchPaths.push(`contacts/${existingDocId}`);
   } else {
-    docRef = await addDoc(collection(db, "contacts"), logPayload);
-    console.log("%c⚡ [FIRESTORE WRITE - New Contact]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Created new lead in "contacts": ${docRef.id}`);
+    const newDocRef = (preallocatedId && !preallocatedId.startsWith("local_inc_"))
+      ? doc(db, "contacts", preallocatedId)
+      : doc(collection(db, "contacts"));
+    finalId = newDocRef.id;
+    docRef = { id: finalId };
+    batch.set(newDocRef, sanitizeForFirestore(logPayload));
+    batchPaths.push(`contacts/${finalId}`);
   }
 
+  // Dual Write to Admin Read Model (callCenterCache partition)
+  const prunedCacheContact = sanitizeForFirestore(pruneContactForCacheForMonth({ id: finalId, ...logPayload }, yearMonth));
+  const cacheRef = doc(db, "callCenterCache", yearMonth);
+  batch.set(cacheRef, { contacts: { [finalId]: prunedCacheContact } }, { merge: true });
+  batchPaths.push(`callCenterCache/${yearMonth}`);
 
+  let isAddRegDone = data.status === "Reg.Done";
+  let addRegId = null;
 
-  // Handle "Reg.Done" registrations collection sync
-  if (data.status === "Reg.Done") {
-    try {
-      const payload = {
-        ...logPayload,
-        id: docRef.id,
-        registeredYearMonth: yearMonth,
-        registeredAt: serverTimestamp(),
-        conversionSource: logPayload.Source || logPayload.Sourse || "Direct",
-        convertedBy: attenderName || "Unknown",
-        programName: logPayload.programName || "Incoming Calls"
-      };
+  // Dual Write if Reg.Done (registrations MASTER + registrationsCache ADMIN READ MODEL)
+  if (isAddRegDone) {
+    const rawPayload = {
+      ...logPayload,
+      id: finalId,
+      registeredYearMonth: yearMonth,
+      registeredAt: serverTimestamp(),
+      conversionSource: logPayload.Source || logPayload.Sourse || "Direct",
+      convertedBy: attenderName || "Unknown",
+      programName: logPayload.programName || "Incoming Calls"
+    };
 
-      Object.keys(payload).forEach(key => {
-        if (payload[key] === undefined) {
-          delete payload[key];
-        }
+    const hasUndefinedFields = checkHasUndefinedFields(rawPayload);
+    const payload = sanitizeForFirestore(rawPayload);
+
+    const calledForVal = payload["Called For"] || payload.calledFor || payload.called_for || payload.programName || "Incoming Calls";
+    const cleanedCalledFor = String(calledForVal).trim().replace(/[^a-zA-Z0-9]/g, "_");
+    addRegId = `${finalId}_${cleanedCalledFor}`;
+
+    console.log("[REGISTRATION BATCH]", {
+      registrationId: addRegId,
+      payload,
+      hasUndefinedFields
+    });
+
+    const regRef = doc(db, "registrations", addRegId);
+    const regCacheRef = doc(db, "registrationsCache", yearMonth);
+
+    batch.set(regRef, payload, { merge: true });
+    batch.set(regCacheRef, { registrations: { [addRegId]: payload } }, { merge: true });
+    batchPaths.push(`registrations/${addRegId}`, `registrationsCache/${yearMonth}`);
+    updateLocalRegistrationsCache({ ...payload, registrationId: addRegId }).catch(() => {});
+  }
+
+  // Commit all writes atomically in ONE single network call!
+  try {
+    await batch.commit();
+
+    if (isAddRegDone && addRegId) {
+      console.log("[REGISTRATION BATCH SUCCESS]", {
+        registrationId: addRegId,
+        writes: [`registrations/${addRegId}`, `registrationsCache/${yearMonth}`]
       });
-
-      const calledForVal = payload["Called For"] || payload.calledFor || "Unknown";
-      const cleanedCalledFor = String(calledForVal).trim().replace(/[^a-zA-Z0-9]/g, "_");
-      const registrationId = `${docRef.id}_${cleanedCalledFor}`;
-
-      await setDoc(doc(db, "registrations", registrationId), payload, { merge: true });
-      console.log("%c⚡ [FIRESTORE WRITE - Registration]", "background: #701a75; color: #f0abfc; font-weight: bold; padding: 2px 6px; border-radius: 4px;", `Saved registration record in "registrations": ${registrationId}`);
-      await registerRegistrationMonth(yearMonth);
-    } catch (e) {
-      console.error("Incoming registration write failed:", e);
     }
+
+    trackFirestoreWrite({
+      operation: "batch",
+      paths: batchPaths,
+      writeCount: batchPaths.length,
+      reason: `addIncomingCallLog ("${logPayload.Name || finalId}")`,
+      contactId: finalId
+    });
+  } catch (error) {
+    if (isAddRegDone) {
+      console.error("[REGISTRATION BATCH FAILED]", error);
+    }
+    throw error;
   }
 
   // Register tag in active tags collection
   await registerActiveTag(finalProgramName);
+
+  if (attenderId && finalId) {
+    const freshCacheLead = {
+      ...logPayload,
+      id: finalId,
+      Name: logPayload.Name || data.Name || data.name || "New Lead",
+      Phone: logPayload.Phone || data.Phone || data.phone || "",
+      status: logPayload.status || data.status || "Call Log Added",
+      createdAt: logPayload.createdAt || new Date().toISOString()
+    };
+    await updateLocalAttenderCache(attenderId, freshCacheLead).catch(() => {});
+  }
 
   return docRef.id;
 };
 
 
 export const addIncomingCallLog = async (attenderId, attenderName, data, programId = null, programName = null) => {
-  const localId = `local_inc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+  const localId = (data && data.id && !data.id.startsWith("local_inc_"))
+    ? data.id
+    : doc(collection(db, "contacts")).id;
+  const nowISO = new Date().toISOString();
+  const targetStatus = data.status !== undefined && data.status !== null && String(data.status).trim() !== "" 
+    ? data.status 
+    : "Call Log Added";
+
+  const newLeadDoc = {
+    ...data,
+    id: localId,
+    Name: formatContactName(data.Name || data.name || "New Lead"),
+    Phone: data.Phone || data.phone || "",
+    callType: data.callType || "incoming",
+    status: targetStatus,
+    remark: data.remark || "",
+    callbackDate: data.callbackDate || null,
+    callbackStatus: data.callbackStatus || null,
+    objectionReason: data.objectionReason || "",
+    lastCalledAt: nowISO,
+    updatedAt: nowISO,
+    createdAt: nowISO,
+    assignedTo: attenderId ? [attenderId] : [],
+    assignedName: attenderName || "",
+    attenderId: attenderId || "",
+    attenderName: attenderName || "",
+    attenderStates: attenderId ? {
+      [attenderId]: {
+        attenderId,
+        attenderName,
+        status: targetStatus,
+        remark: data.remark || "",
+        callType: data.callType || "incoming",
+        lastCalledAt: nowISO,
+        updatedAt: nowISO
+      }
+    } : {}
+  };
 
   // 1. Instantly update local IndexedDB cache for 0ms UI load
   if (attenderId) {
-    await updateLocalAttenderCache(attenderId, localId, {
-      ...data,
-      id: localId,
-      Name: formatContactName(data.Name || data.name || "New Lead"),
-      Phone: data.Phone || data.phone || "",
-      callType: data.callType || "incoming",
-      status: data.status || "Call Log Added",
-      createdAt: new Date().toISOString()
-    });
+    await updateLocalAttenderCache(attenderId, newLeadDoc);
   }
 
   // 2. Trigger direct write to Firebase asynchronously in background
-  addIncomingCallLogDirectFirebase(attenderId, attenderName, data, programId, programName)
+  addIncomingCallLogDirectFirebase(attenderId, attenderName, data, programId, programName, localId)
     .then(docId => {
-      console.log(`[ADD INC SUCCESS] Firebase write completed for new lead: ${docId}`);
+      console.log("[NEW CONTACT ID]", {
+        generatedId: localId,
+        returnedId: localId,
+        firebaseWriteId: docId
+      });
+      if (attenderId && docId) {
+        updateLocalAttenderCache(attenderId, { ...newLeadDoc, id: docId });
+      }
     })
     .catch(err => {
       console.warn("⚠️ Firebase write deferred to pending queue:", err?.message || err);
-      queuePendingWrite("addIncomingCallLog", { attenderId, attenderName, data, programId, programName });
+      queuePendingWrite("addIncomingCallLog", { attenderId, attenderName, data, programId, programName, localId });
     });
 
   return localId;
@@ -1572,7 +1816,7 @@ export const processPendingWriteItem = async (item) => {
   if (item.type === "updateCallLog" && item.logId) {
     await updateCallLogDirectFirebase(item.logId, item.updates, item.attenderId, item.attenderName, item.existingContact);
   } else if (item.type === "addIncomingCallLog") {
-    await addIncomingCallLogDirectFirebase(item.attenderId, item.attenderName, item.data, item.programId, item.programName);
+    await addIncomingCallLogDirectFirebase(item.attenderId, item.attenderName, item.data, item.programId, item.programName, item.localId);
   }
 };
 

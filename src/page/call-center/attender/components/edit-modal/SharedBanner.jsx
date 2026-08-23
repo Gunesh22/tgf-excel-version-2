@@ -16,16 +16,7 @@ export const SharedBanner = ({
     ? sharedList.filter(name => name && name.toLowerCase().trim() !== currentAttenderName.toLowerCase().trim())
     : sharedList;
 
-  console.log(
-    `[SHARED BANNER DIAGNOSTIC] Lead "${leadData.Name || leadData.name || leadData.id}" | _isNew: ${!!leadData._isNew} | currentAttender: "${currentAttenderName}" | assignedTo:`,
-    leadData.assignedTo,
-    "| attenderStates keys:",
-    Object.keys(leadData.attenderStates || {}),
-    "| sharedList:",
-    sharedList,
-    "| otherAttenders:",
-    otherAttenders
-  );
+
 
   if (!sharedList || sharedList.length <= 1) return null;
 

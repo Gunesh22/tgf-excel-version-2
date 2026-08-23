@@ -674,10 +674,6 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       return true;
     });
 
-    console.log(`[MonthlyReportTab DEBUG] Filtered allAttempts count:`, filtered.length, `(Date range: ${startDate} to ${endDate}, Attenders: ${selectedAttenderIds.join(",")})`);
-    filtered.forEach((att, idx) => {
-      console.log(`  #${idx+1} [MonthlyReportTab] ${att.contactName} (${att.contactPhone}) | Status: "${att.status}" | Time: ${att.timestamp ? new Date(att.timestamp).toISOString() : 'N/A'} | Remark: "${att.remark}"`);
-    });
     return filtered;
   }, [allHistoricalAttempts, startDate, endDate, selectedAttenderIds, selectedCallTypes, selectedKhojiStatuses, attenders]);
 
