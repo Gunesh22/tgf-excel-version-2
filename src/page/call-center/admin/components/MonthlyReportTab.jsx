@@ -4,7 +4,7 @@ import * as XLSX from "xlsx";
 import {
   Download, ChevronRight, ChevronDown, Calendar, TrendingUp, UserCheck, Smile, Info, Search, X, Check
 } from "lucide-react";
-import { subscribeToAllCallLogs } from "../../../../lib/db";
+// removed unused db import
 import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp, getCanonicalStatus, getContactPhone, getContactName, getContactCity, getContactKhoji } from "../utils.jsx";
 import { isKhojiAffirmative, isKhojiNegative } from "../../attender/utils.js";
 
@@ -205,7 +205,7 @@ function MonthlyTable({ headers, rows, totals, formatValue }) {
   );
 }
 
-function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All" }) {
+function MultiSelect({ options, selected, onChange, allLabel = "All" }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const ref = React.useRef(null);
@@ -465,11 +465,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       const feedbackKey = Object.keys(log).find(k => ["prog. feedback", "feedback", "user feedback", "program feedback"].includes(k.toLowerCase()));
       const feedbackVal = feedbackKey ? String(log[feedbackKey] || "").trim() : "";
 
-      const contactName = getContactName(log);
-      const contactPhone = getContactPhone(log);
-      const contactCity = getContactCity(log);
-      const khojiVal = getContactKhoji(log);
-      const contactTags = Array.isArray(log.tags) ? log.tags : [];
+            const contactTags = Array.isArray(log.tags) ? log.tags : [];
       const programName = log.programName || "Unknown";
 
       const rawAttempts = [];
@@ -1828,7 +1824,7 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
                     
                     return (
                       <div 
-                        key={`${row["Attender Name"]}-${index}`} 
+                        key={row["Attender Name"]} 
                         className={`grid grid-cols-1 md:grid-cols-12 items-center gap-4 px-6 py-4 rounded-3xl border transition-all ${
                           rank === 1 
                             ? "bg-amber-50/40 border-amber-100 shadow-sm" 

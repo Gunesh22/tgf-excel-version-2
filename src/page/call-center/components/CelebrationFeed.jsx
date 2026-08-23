@@ -56,14 +56,14 @@ class ConfettiParticle {
 export default function CelebrationFeed() {
   const [activeCelebration, setActiveCelebration] = useState(null);
   const celebratedIds = useRef(new Set());
-  const initialMountTime = useRef(Date.now());
   const queue = useRef([]);
   const canvasRef = useRef(null);
   const particles = useRef([]);
   const animationFrameId = useRef(null);
+  const processingRef = useRef(false);
 
   // --- Confetti Loop Logic ---
-  const triggerConfetti = () => {
+  const triggerConfetti = React.useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -126,7 +126,7 @@ export default function CelebrationFeed() {
     };
 
     tick();
-  };
+  }, []);
 
   // Resize canvas handler
   useEffect(() => {
@@ -147,6 +147,25 @@ export default function CelebrationFeed() {
 
   // --- Real-time listener for registrations ---
   const isFirstSnapshot = useRef(true);
+
+  const processQueue = React.useCallback(() => {
+    if (processingRef.current || queue.current.length === 0) return;
+
+    processingRef.current = true;
+    const nextReg = queue.current.shift();
+    setActiveCelebration(nextReg);
+    triggerConfetti();
+
+    // Hide banner after 6.5 seconds and trigger next in queue
+    setTimeout(() => {
+      setActiveCelebration(null);
+      processingRef.current = false;
+      // Wait a tiny bit before starting the next one for visual spacing
+      setTimeout(() => {
+        processQueue();
+      }, 500);
+    }, 6500);
+  }, [triggerConfetti]);
 
   useEffect(() => {
     const unsub = subscribeToRecentRegistrations((list) => {
@@ -171,24 +190,7 @@ export default function CelebrationFeed() {
     return () => {
       if (unsub) unsub();
     };
-  }, []);
-
-  const processQueue = () => {
-    if (activeCelebration || queue.current.length === 0) return;
-
-    const nextReg = queue.current.shift();
-    setActiveCelebration(nextReg);
-    triggerConfetti();
-
-    // Hide banner after 6.5 seconds and trigger next in queue
-    setTimeout(() => {
-      setActiveCelebration(null);
-      // Wait a tiny bit before starting the next one for visual spacing
-      setTimeout(() => {
-        processQueue();
-      }, 500);
-    }, 6500);
-  };
+  }, [processQueue]);
 
   // Extract variables safely for the active banner if present
   const nameKey = activeCelebration

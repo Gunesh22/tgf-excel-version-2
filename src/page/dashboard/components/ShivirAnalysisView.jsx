@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import ReactApexChart from "react-apexcharts";
-import { normalizeStr } from "../utils";
+import { } from "../utils";
 
 export const ShivirAnalysisView = ({ data, colsMap }) => {
     const { shivirCol } = colsMap;

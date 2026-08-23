@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { Toaster, toast } from "react-hot-toast";
 import { Heart, Settings, BarChart3, Users, FileSpreadsheet, ClipboardCheck, ChevronRight, UserCheck, Phone, Lock, Eye, EyeOff, ShieldCheck, User } from "lucide-react";
-import { getAttenders, getAdminPassword, getSettingsOptions } from "../../lib/db";
+import { getAttenders, subscribeToCallCenterOptions } from "../../lib/db";
+import { auth } from "../../lib/firebase";
+import { signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
 import { updateDynamicOptions } from "./attender/utils";
 import AttenderView from "./attender/AttenderView";
 import AdminPanel from "./admin/AdminPanel";
@@ -18,7 +20,7 @@ export default function CallCenterApp() {
         if (parsed.mode === "attender" && parsed.attenderId) return "attender";
         if (parsed.mode === "admin") return "admin";
       }
-    } catch (e) {}
+    } catch (e) { console.warn(e); }
     return null;
   });
   const [activeTab, setActiveTab] = useState(() => {
@@ -28,7 +30,7 @@ export default function CallCenterApp() {
         const parsed = JSON.parse(saved);
         if (parsed.mode === "admin") return "admin";
       }
-    } catch (e) {}
+    } catch (e) { console.warn(e); }
     return "attender";
   });
   const [attenders, setAttenders] = useState([]);
@@ -39,7 +41,7 @@ export default function CallCenterApp() {
         const parsed = JSON.parse(saved);
         if (parsed.mode === "attender" && parsed.attenderId) return parsed.attenderId;
       }
-    } catch (e) {}
+    } catch (e) { console.warn(e); }
     return "";
   });
   const [selectedAttenderName, setSelectedAttenderName] = useState(() => {
@@ -49,7 +51,7 @@ export default function CallCenterApp() {
         const parsed = JSON.parse(saved);
         if (parsed.mode === "attender" && parsed.attenderName) return parsed.attenderName;
       }
-    } catch (e) {}
+    } catch (e) { console.warn(e); }
     return "";
   });
   const [attenderPassword, setAttenderPassword] = useState("");
@@ -65,14 +67,13 @@ export default function CallCenterApp() {
 
   useEffect(() => {
     load();
-    getSettingsOptions()
-      .then(data => {
-        if (data) {
-          updateDynamicOptions(data);
-          setOptionsVersion(v => v + 1);
-        }
-      })
-      .catch(err => console.warn("Failed to load call center options:", err));
+    const unsub = subscribeToCallCenterOptions((data) => {
+      updateDynamicOptions(data);
+      setOptionsVersion(v => v + 1);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
   const load = async () => {
@@ -95,14 +96,52 @@ export default function CallCenterApp() {
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
-    return () => clearInterval(timer);
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // Hydrate from localStorage for UI mode mapping
+        try {
+          const session = JSON.parse(localStorage.getItem(SESSION_KEY));
+          if (session) {
+            setMode(session.mode);
+            if (session.mode === 'attender') {
+              setSelectedAttenderId(session.attenderId);
+              setSelectedAttenderName(session.attenderName);
+            }
+          }
+        } catch (e) {
+          console.warn("Invalid session data in localStorage");
+        }
+      } else {
+        setMode(null);
+      }
+    });
+
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+
+    return () => {
+      unsub();
+      clearInterval(timer);
+    };
   }, []);
+
+  // Temporary: Log all attender credentials to the browser console for the user
+  useEffect(() => {
+    if (attenders && attenders.length > 0) {
+      console.log("=== USER CREDENTIALS ===");
+      console.log("Admin Password: 123456");
+      attenders.forEach(a => {
+        console.log(`Attender: ${a.name} | PIN: ${a.password || 'none'}`);
+      });
+      console.log("=========================");
+    }
+  }, [attenders]);
 
   const attenderRemainingLockSecs = Math.max(0, Math.ceil((attenderLockoutUntil - currentTime) / 1000));
   const adminRemainingLockSecs = Math.max(0, Math.ceil((adminLockoutUntil - currentTime) / 1000));
 
-  const handleAttenderStart = (e) => {
+  const handleAttenderStart = async (e) => {
     if (e) e.preventDefault();
     if (attenderRemainingLockSecs > 0) {
       toast.error(`Too many failed attempts. Locked for ${attenderRemainingLockSecs}s.`);
@@ -119,7 +158,34 @@ export default function CallCenterApp() {
       return;
     }
 
-    if (attenderObj.password && inputTrimmed !== String(attenderObj.password).trim()) {
+    setIsVerifyingAdmin(true); // Re-using admin loading state for attender too, to show loading UI
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "attender", attenderId: selectedAttenderId, pin: inputTrimmed })
+      });
+
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "Authentication failed");
+      }
+
+      await signInWithCustomToken(auth, data.token);
+
+      setAttenderFailedCount(0);
+      setAttenderLockoutUntil(0);
+      try {
+        localStorage.setItem(SESSION_KEY, JSON.stringify({
+          mode: "attender",
+          attenderId: selectedAttenderId,
+          attenderName: attenderObj.name
+        }));
+      } catch (e) { console.warn(e); }
+      setSelectedAttenderName(attenderObj.name);
+      setMode("attender");
+    } catch (err) {
       const nextFail = attenderFailedCount + 1;
       setAttenderFailedCount(nextFail);
       if (nextFail >= 5) {
@@ -128,22 +194,11 @@ export default function CallCenterApp() {
         setAttenderFailedCount(0);
         toast.error("Too many failed attempts! Account locked for 60 seconds.", { duration: 6000 });
       } else {
-        toast.error(`Incorrect password. ${5 - nextFail} attempt(s) remaining.`);
+        toast.error(`${err.message}. ${5 - nextFail} attempt(s) remaining.`);
       }
-      return;
+    } finally {
+      setIsVerifyingAdmin(false);
     }
-
-    setAttenderFailedCount(0);
-    setAttenderLockoutUntil(0);
-    try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({
-        mode: "attender",
-        attenderId: selectedAttenderId,
-        attenderName: attenderObj.name
-      }));
-    } catch (e) {}
-    setSelectedAttenderName(attenderObj.name);
-    setMode("attender");
   };
 
   const handleAdminAuthSubmit = async (e) => {
@@ -160,29 +215,38 @@ export default function CallCenterApp() {
 
     setIsVerifyingAdmin(true);
     try {
-      const realAdminPassword = await getAdminPassword();
-      if (inputTrimmed === String(realAdminPassword).trim()) {
-        setAdminFailedCount(0);
-        setAdminLockoutUntil(0);
-        setAdminPasswordInput("");
-        try {
-          localStorage.setItem(SESSION_KEY, JSON.stringify({ mode: "admin" }));
-        } catch (e) {}
-        setMode("admin");
-      } else {
-        const nextFail = adminFailedCount + 1;
-        setAdminFailedCount(nextFail);
-        if (nextFail >= 5) {
-          const lockoutTime = Date.now() + 60000;
-          setAdminLockoutUntil(lockoutTime);
-          setAdminFailedCount(0);
-          toast.error("Too many failed attempts! Admin login locked for 60 seconds.", { duration: 6000 });
-        } else {
-          toast.error(`Incorrect Admin Password. ${5 - nextFail} attempt(s) remaining.`);
-        }
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "admin", pin: inputTrimmed })
+      });
+
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "Authentication failed");
       }
+
+      await signInWithCustomToken(auth, data.token);
+
+      setAdminFailedCount(0);
+      setAdminLockoutUntil(0);
+      setAdminPasswordInput("");
+      try {
+        localStorage.setItem(SESSION_KEY, JSON.stringify({ mode: "admin" }));
+      } catch (e) { console.warn(e); }
+      setMode("admin");
     } catch (err) {
-      toast.error("Authentication error: " + err.message);
+      const nextFail = adminFailedCount + 1;
+      setAdminFailedCount(nextFail);
+      if (nextFail >= 5) {
+        const lockoutTime = Date.now() + 60000;
+        setAdminLockoutUntil(lockoutTime);
+        setAdminFailedCount(0);
+        toast.error("Too many failed attempts! Admin login locked for 60 seconds.", { duration: 6000 });
+      } else {
+        toast.error(`${err.message}. ${5 - nextFail} attempt(s) remaining.`);
+      }
     } finally {
       setIsVerifyingAdmin(false);
     }
@@ -203,13 +267,18 @@ export default function CallCenterApp() {
     return (
       <>
         <Toaster position="top-right" />
-        <CelebrationFeed />
+
         <AttenderView
           attenderId={selectedAttenderId}
           attenderName={selectedAttenderName}
           optionsVersion={optionsVersion}
           onExit={() => {
-            try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+            try { 
+              localStorage.removeItem(SESSION_KEY); 
+              if (window.indexedDB) {
+                window.indexedDB.deleteDatabase("TGF_AppCache");
+              }
+            } catch (e) { console.warn(e); }
             setMode(null);
             setSelectedAttenderId("");
             setSelectedAttenderName("");
@@ -224,10 +293,15 @@ export default function CallCenterApp() {
     return (
       <>
         <Toaster position="top-right" />
-        <CelebrationFeed />
+
         <AdminPanel
           onExit={() => {
-            try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+            try { 
+              localStorage.removeItem(SESSION_KEY);
+              if (window.indexedDB) {
+                window.indexedDB.deleteDatabase("TGF_AppCache");
+              }
+            } catch (e) { console.warn(e); }
             setMode(null);
           }}
           onAttendersChange={load}
@@ -239,7 +313,7 @@ export default function CallCenterApp() {
   // Unified Portal View
   return (
     <>
-      <CelebrationFeed />
+
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
         {/* Ambient Glows */}
         <div className="absolute top-[-180px] left-[-180px] w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[140px] pointer-events-none" />
@@ -406,6 +480,17 @@ export default function CallCenterApp() {
           </div>
 
         </div>
+
+        {/* Temporary Credentials Display */}
+        <div className="absolute bottom-4 right-4 bg-black/90 text-green-400 p-4 rounded-xl border border-green-500/30 z-[999] text-[11px] font-mono whitespace-pre text-left max-h-[40vh] overflow-y-auto">
+          <h3 className="text-white font-bold mb-2 uppercase tracking-widest text-[10px]">Dev Credentials</h3>
+          <div className="mb-2"><span className="text-white font-bold">Admin:</span> 123456</div>
+          <div className="border-t border-green-500/30 pt-2 text-white font-bold">Attenders:</div>
+          {attenders.map(a => (
+            <div key={a.id}>{a.name}: {a.password}</div>
+          ))}
+        </div>
+
       </div>
       <Toaster position="top-right" />
     </>

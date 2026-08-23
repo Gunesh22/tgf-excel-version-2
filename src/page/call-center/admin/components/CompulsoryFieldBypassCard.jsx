@@ -16,9 +16,9 @@ export default function CompulsoryFieldBypassCard({ options, setOptions }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [togglingStatus, setTogglingStatus] = useState(null);
 
-  const statusOptions = options?.statusOptions || [];
-  const connectedStatuses = options?.connectedStatuses || [];
-  const notConnectedStatuses = options?.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES;
+  const statusOptions = useMemo(() => options?.statusOptions || [], [options?.statusOptions]);
+  const connectedStatuses = useMemo(() => options?.connectedStatuses || [], [options?.connectedStatuses]);
+  const notConnectedStatuses = useMemo(() => options?.notConnectedStatuses || DEFAULT_NOT_CONNECTED_STATUSES, [options?.notConnectedStatuses]);
   const optionalCompulsoryStatuses = options?.optionalCompulsoryStatuses || notConnectedStatuses;
 
   const filteredStatuses = useMemo(() => {

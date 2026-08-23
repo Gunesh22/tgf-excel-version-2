@@ -1,15 +1,89 @@
+import { initializeApp, getApps, cert } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
+
+
+import fs from 'fs';
+import path from 'path';
+
+// Initialize Firebase Admin if not already initialized
+if (!getApps().length) {
+  try {
+    let rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
+    let useEmulator = process.env.VITE_USE_FIREBASE_EMULATOR === 'true';
+    
+    // Fallback: Manually read .env if process.env is missing it (common in local Vite setups)
+    if (!rawServiceAccount || !useEmulator) {
+      try {
+        const envFile = fs.readFileSync(path.resolve(process.cwd(), '.env'), 'utf-8');
+        
+        const match = envFile.match(/FIREBASE_SERVICE_ACCOUNT='([^']+)'/);
+        if (match) rawServiceAccount = match[1];
+
+        const emuMatch = envFile.match(/VITE_USE_FIREBASE_EMULATOR=(true|false)/);
+        if (emuMatch && emuMatch[1] === 'true') useEmulator = true;
+      } catch (e) { /* ignore */ }
+    }
+
+    if (useEmulator) {
+      console.log("[GHL.JS] ⚠️ EMULATOR MODE ENABLED! Pointing Firebase Admin to localhost...");
+      process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+      process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
+    }
+
+    const serviceAccount = rawServiceAccount ? JSON.parse(rawServiceAccount) : null;
+
+    if (serviceAccount) {
+      initializeApp({
+        credential: cert(serviceAccount),
+      });
+    } else {
+      initializeApp();
+    }
+  } catch (error) {
+    console.error("Firebase Admin Initialization Error:", error);
+  }
+}
+
 export default async function handler(req, res) {
-  // Enable CORS
+  const db = getFirestore();
+  const auth = getAuth();
+
+  const ALLOWED_ORIGINS = ['http://localhost:5173', 'https://your-production-domain.com'];
+  const origin = req.headers.origin;
+  
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (!origin) {
+    res.setHeader('Access-Control-Allow-Origin', '*'); // Allow non-browser requests (like curl) if secret is present
+  }
+  
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
   try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized: Missing Firebase Auth token" });
+    }
+
+    const idToken = authHeader.split("Bearer ")[1];
+    let decodedToken;
+    try {
+      decodedToken = await getAuth().verifyIdToken(idToken);
+    } catch {
+      return res.status(403).json({ error: "Forbidden: Invalid or expired Firebase Auth token" });
+    }
+
+    if (decodedToken.admin !== true) {
+      return res.status(403).json({ error: "Forbidden: Only administrators can access the GHL API" });
+    }
+
     const GHL_TOKEN = process.env.GHL_TOKEN || process.env.VITE_GHL_TOKEN;
     const GHL_LOCATION_ID = process.env.GHL_LOCATION_ID || process.env.VITE_GHL_LOCATION_ID;
     const GHL_VERSION = process.env.GHL_VERSION || process.env.VITE_GHL_VERSION || "2021-07-28";

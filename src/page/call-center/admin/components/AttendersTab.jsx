@@ -528,8 +528,8 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
             <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-2">
               <button onClick={() => setShowReassignModal(false)} className="px-4 py-2 text-gray-500 hover:text-gray-700 font-bold text-sm rounded-xl">Cancel</button>
               <button onClick={handleReassign} disabled={reassigning}
-                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-sm transition disabled:opacity-50">
-                {reassigning ? "Processing..." : "Confirm Reassignment"}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-sm transition disabled:opacity-50 flex items-center gap-2">
+                {reassigning ? <><Loader size={16} className="animate-spin" /> Processing...</> : "Confirm Reassignment"}
               </button>
             </div>
           </div>

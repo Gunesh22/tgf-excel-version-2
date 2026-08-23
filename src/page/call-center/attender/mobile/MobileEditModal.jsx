@@ -3,12 +3,12 @@ import { toast } from "react-hot-toast";
 import {
   Phone, Plus, X, Tag, User, MapPin, MessageSquare,
   Hash, Clock, CheckCircle2, AlertCircle, Trash2,
-  CalendarDays, Loader, Flame, Edit3, ArrowLeft, Users
+  CalendarDays, Loader, Flame, Edit3, ArrowLeft
 } from "lucide-react";
 import {
-  addIncomingCallLog, updateCallLog, checkGlobalDuplicate, findMatchingAttenderState
+  addIncomingCallLog, updateCallLog, findMatchingAttenderState
 } from "../../../../lib/db";
-import { searchCRMByPhone } from "../../../../lib/ghl";
+import { } from "../../../../lib/ghl";
 import {
   STATUS_OPTIONS,
   OBJECTION_REASONS,
@@ -22,7 +22,6 @@ import {
 
 import SearchableDropdown from "../components/edit-modal/SearchableDropdown";
 import DuplicateBanner from "../components/edit-modal/DuplicateBanner";
-import SharedBanner from "../components/edit-modal/SharedBanner";
 import HistoryTimeline from "../components/edit-modal/HistoryTimeline";
 import CityAutofillInput from "../components/edit-modal/CityAutofillInput";
 import EditHistoryModal from "../components/edit-modal/EditHistoryModal";
@@ -41,11 +40,8 @@ export default function MobileEditModal({
   row,
   attenderId,
   attenderName = "Unknown",
-  programs = [],
-  onSave,
   onDelete,
-  onClose,
-  onRefreshLead
+  onClose
 }) {
   const getNormalizedRow = () => {
     const normalized = { ...row };
@@ -92,7 +88,7 @@ export default function MobileEditModal({
     const norm = getNormalizedRow();
     setSavedRow(norm);
     setEdited(norm);
-  }, [row]);
+  }, [row, attenderName, savedRow]);
 
   const calledForField = useMemo(() => {
     if (edited["Called For"] !== undefined) return "Called For";
@@ -108,17 +104,9 @@ export default function MobileEditModal({
   const [activeTab, setActiveTab] = useState(() => (row && row._isNew ? "profile" : "call"));
   const [saving, setSaving] = useState(false);
   const [showEditHistory, setShowEditHistory] = useState(false);
-  const [showCalledForPrompt, setShowCalledForPrompt] = useState(false);
-  const [promptSelection, setPromptSelection] = useState("");
-  const [pendingSave, setPendingSave] = useState(false);
-  const [showUndoStatusPrompt, setShowUndoStatusPrompt] = useState(false);
-
-  const [globalDup, setGlobalDup] = useState(null);
-  const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
-  const [isSearchingCRM, setIsSearchingCRM] = useState(false);
-
-  const newNoteRef = useRef(null);
-  const isSavingRef = useRef(false);
+        
+      
+    const isSavingRef = useRef(false);
 
   const handleChange = (field, val) => {
     setEdited(prev => ({ ...prev, [field]: val }));
@@ -288,7 +276,7 @@ export default function MobileEditModal({
       try {
         const d = new Date(val);
         return isNaN(d.getTime()) ? 0 : d.getTime();
-      } catch (e) {
+      } catch {
         return 0;
       }
     };
@@ -428,12 +416,6 @@ export default function MobileEditModal({
 
         {/* 3. Modal Body Content */}
         <div className="overflow-y-auto flex-1 px-5 py-5 space-y-5 bg-white">
-          <SharedBanner
-            edited={edited}
-            row={row}
-            currentAttenderName={attenderName}
-            onRefreshLead={onRefreshLead}
-          />
           {activeTab === "call" ? (
             <div className="space-y-4">
               {/* Call Type pills */}

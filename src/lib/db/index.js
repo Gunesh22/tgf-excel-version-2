@@ -1,7 +1,12 @@
-export * from "./core.js";
-export * from "./cacheService.js";
-export * from "./authService.js";
-export * from "./programService.js";
-export * from "./contactService.js";
-export * from "./adminService.js";
-export * from "./syncService.js";
+// Barrel export file
+export * from './auth.js';
+export * from './metadata.js';
+export {
+  subscribeToCallLogs,
+  forceDeltaSync,
+  subscribeToSyncStatus
+} from './sync.js';
+export * from './contacts.js';
+export * from './assignments.js';
+export * from './cache.js';
+export * from './reports.js';

@@ -1,0 +1,103 @@
+﻿
+> linechart@0.0.0 lint
+> eslint .
+
+
+D:\TGF Call\src\lib\db\auth.js
+  21:11  error  Empty block statement  no-empty
+  36:13  error  Empty block statement  no-empty
+
+D:\TGF Call\src\lib\db\contacts.js
+  654:13  error  'attenderStates' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+D:\TGF Call\src\lib\db\metadata.js
+   10:37  error  'forceRefresh' is assigned a value but never used  no-unused-vars
+   16:41  error  'tag' is defined but never used                    no-unused-vars
+   21:39  error  'tag' is defined but never used                    no-unused-vars
+  859:50  error  'attState' is defined but never used               no-unused-vars
+  859:60  error  'attenderName' is defined but never used           no-unused-vars
+
+D:\TGF Call\src\lib\db\reports.js
+   231:19  error  Empty block statement           no-empty
+   705:11  error  'documentId' is not defined     no-undef
+   706:11  error  'documentId' is not defined     no-undef
+   781:22  error  'newRef' is not defined         no-undef
+   787:20  error  'newRef' is not defined         no-undef
+   927:17  error  Empty block statement           no-empty
+  1224:15  error  'documentId' is not defined     no-undef
+  1225:15  error  'documentId' is not defined     no-undef
+  1245:11  error  'documentId' is not defined     no-undef
+  1246:11  error  'documentId' is not defined     no-undef
+  1638:26  error  'id' is defined but never used  no-unused-vars
+
+D:\TGF Call\src\lib\ghl.js
+  460:36  error  Unnecessary escape character: \-  no-useless-escape
+
+D:\TGF Call\src\lib\telemetry.js
+  6:11  error  Empty block statement  no-empty
+
+D:\TGF Call\src\page\call-center\ImportContacts.jsx
+   67:6   warning  React Hook useEffect has a missing dependency: 'handleDiscoverTags'. Either include it or remove the dependency array                                                                                   react-hooks/exhaustive-deps
+  158:9   warning  The 'handleDiscoverTags' function makes the dependencies of useEffect Hook (at line 60) change on every render. To fix this, wrap the definition of 'handleDiscoverTags' in its own useCallback() Hook  react-hooks/exhaustive-deps
+  227:18  error    '_' is defined but never used                                                                                                                                                                           no-unused-vars
+
+D:\TGF Call\src\page\call-center\admin\components\AbhivyaktiTab.jsx
+  106:53  error  'placeholder' is defined but never used                                                                                         no-unused-vars
+  232:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+D:\TGF Call\src\page\call-center\admin\components\MonthlyReportTab.jsx
+   807:17  error  '_' is defined but never used                                                                        no-unused-vars
+   840:17  error  '_' is defined but never used                                                                        no-unused-vars
+  1446:9   error  'denominator' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u          no-unused-vars
+  1448:9   error  'incomingDenominator' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  1449:9   error  'outgoingDenominator' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  1450:33  error  'incDen' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u               no-unused-vars
+  1451:33  error  'outDen' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u               no-unused-vars
+
+D:\TGF Call\src\page\call-center\attender\AttenderView.jsx
+   775:41  error    Unnecessary escape character: \.                                                                                  no-useless-escape
+   775:43  error    Unnecessary escape character: \(                                                                                  no-useless-escape
+   775:45  error    Unnecessary escape character: \)                                                                                  no-useless-escape
+   775:47  error    Unnecessary escape character: \+                                                                                  no-useless-escape
+   792:52  error    Unnecessary escape character: \.                                                                                  no-useless-escape
+   792:54  error    Unnecessary escape character: \(                                                                                  no-useless-escape
+   792:56  error    Unnecessary escape character: \)                                                                                  no-useless-escape
+   792:58  error    Unnecessary escape character: \+                                                                                  no-useless-escape
+   982:6   warning  React Hook useMemo has a missing dependency: 'attenderId'. Either include it or remove the dependency array       react-hooks/exhaustive-deps
+  1055:77  error    Unnecessary escape character: \.                                                                                  no-useless-escape
+  1055:79  error    Unnecessary escape character: \(                                                                                  no-useless-escape
+  1055:81  error    Unnecessary escape character: \)                                                                                  no-useless-escape
+  1055:83  error    Unnecessary escape character: \+                                                                                  no-useless-escape
+  1090:6   warning  React Hook useMemo has an unnecessary dependency: 'attenderId'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+
+D:\TGF Call\src\page\call-center\attender\components\CallButton.jsx
+  8:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+D:\TGF Call\src\page\call-center\attender\components\EditModal.jsx
+  393:6  warning  React Hook useMemo has unnecessary dependencies: 'attenderName' and 'savedRow'. Either exclude them or remove the dependency array         react-hooks/exhaustive-deps
+  397:6  warning  React Hook useMemo has unnecessary dependencies: 'attenderName' and 'savedRow'. Either exclude them or remove the dependency array         react-hooks/exhaustive-deps
+  977:6  warning  React Hook useMemo has missing dependencies: 'attenderName', 'row.id', and 'savedRow'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+D:\TGF Call\src\page\call-center\attender\components\WhatsAppButton.jsx
+   9:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+  27:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+D:\TGF Call\src\page\call-center\attender\components\edit-modal\CallEntryTab.jsx
+  18:3  error  'row' is defined but never used  no-unused-vars
+
+D:\TGF Call\src\page\call-center\attender\mobile\MobileEditModal.jsx
+   20:3   error    'isNotConnectedStatus' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                                     no-unused-vars
+   91:6   warning  React Hook useEffect has a missing dependency: 'getNormalizedRow'. Either include it or remove the dependency array             react-hooks/exhaustive-deps
+  119:24  error    'field' is defined but never used                                                                                               no-unused-vars
+  322:6   warning  React Hook useMemo has missing dependencies: 'attenderName' and 'savedRow'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+D:\TGF Call\src\page\call-center\components\CelebrationFeed.jsx
+  113:37  error    'idx' is defined but never used                                                                                                                                                              no-unused-vars
+  176:9   warning  The 'processQueue' function makes the dependencies of useEffect Hook (at line 146) change on every render. To fix this, wrap the definition of 'processQueue' in its own useCallback() Hook  react-hooks/exhaustive-deps
+  176:9   warning  The 'processQueue' function makes the dependencies of useEffect Hook (at line 174) change on every render. To fix this, wrap the definition of 'processQueue' in its own useCallback() Hook  react-hooks/exhaustive-deps
+
+D:\TGF Call\src\page\dashboard\components\LeadsTableView.jsx
+  110:8  warning  React Hook useMemo has missing dependencies: 'isDupRow', 'shivirCol', and 'sourceCol'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+Ô£û 62 problems (50 errors, 12 warnings)
+
