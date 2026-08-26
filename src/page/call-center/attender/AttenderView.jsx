@@ -6,7 +6,7 @@ import {
   Edit3, X, Save, FileText, Calendar, Tag, User, MapPin, MessageSquare,
   Hash, Clock, PhoneOff, CheckCircle2, AlertCircle, Trash2,
   PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame, SlidersHorizontal, FileSpreadsheet, CheckSquare,
-  Bell, Sparkles, UserCheck
+  Bell, Sparkles, UserCheck, RefreshCw
 } from "lucide-react";
 import {
   subscribeToCallLogs, updateCallLog, addIncomingCallLog,
@@ -14,7 +14,8 @@ import {
   INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME, ensureIncomingProgram,
   OUTGOING_PROGRAM_ID, OUTGOING_PROGRAM_NAME, ensureOutgoingProgram,
   globalSearchContacts, searchAttenderContacts, claimContact, removeAttenderFromContact, claimCRMContact,
-  fetchHistoricalCachePartition, purgeStaleHistoricalCache, fetchFreshSharedLead
+  fetchHistoricalCachePartition, purgeStaleHistoricalCache, fetchFreshSharedLead,
+  fetchPartitionCacheForColdBoot, setIDBCache
 } from "../../../lib/db";
 import { searchCRM } from "../../../lib/ghl";
 import {
@@ -34,6 +35,7 @@ import {
 import { EditModal } from "./components/EditModal";
 import { MyPerformanceDashboard } from "./components/MyPerformanceDashboard";
 import { ColumnsSelector } from "./components/ColumnsSelector";
+import CommandPalette from "../../../components/ui/CommandPalette";
 
 function parseTimestamp(t) {
   if (!t) return null;
@@ -132,12 +134,13 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   const [selectedTags, setSelectedTags] = useState([]);
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
   const [tagSearchQuery, setTagSearchQuery] = useState("");
-  const DEFAULT_HIDDEN_COLS = ["Phone", "Mobile", "Email", "City", "State", "Tags", "Callback", "Sub Program", "Calls Done", "Attender"];
+  const DEFAULT_HIDDEN_COLS = ["Phone", "Mobile", "Email", "City", "State", "Tags", "Callback", "Sub Program", "Attender"];
 
   const [hiddenColumns, setHiddenColumns] = useState(() => {
     try {
       const saved = localStorage.getItem(`hidden_cols_${attenderId}`);
-      return saved ? JSON.parse(saved) : DEFAULT_HIDDEN_COLS;
+      const parsed = saved ? JSON.parse(saved) : DEFAULT_HIDDEN_COLS;
+      return parsed.filter(c => c !== "Calls Done");
     } catch {
       return DEFAULT_HIDDEN_COLS;
     }
@@ -146,6 +149,18 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
   const [colSearchQuery, setColSearchQuery] = useState("");
   const [programDropOpen, setProgramDropOpen] = useState(false);
   const [programSearch, setProgramSearch] = useState("");
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCommandPaletteOpen(prev => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
 
   useEffect(() => {
     try {
@@ -533,6 +548,27 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
     }
   };
 
+  const [isRebuildingCache, setIsRebuildingCache] = useState(false);
+
+  const handleRebuildCache = async () => {
+    if (isRebuildingCache) return;
+    setIsRebuildingCache(true);
+    const toastId = toast.loading("Rebuilding cache from callCenterCache (Last 3 Months)...");
+    try {
+      // ONLY fetch from callCenterCache partition docs for last 3 months (all parts)
+      const freshLogs = await fetchPartitionCacheForColdBoot(attenderId, attenderName, 3);
+      const cacheKey = `tgf_attender_logs_${attenderId}`;
+      await setIDBCache(cacheKey, freshLogs);
+      setCallLogs(enrichLogsWithCallbackFlags(freshLogs));
+      toast.success(`Cache rebuilt from callCenterCache! Loaded ${freshLogs.length} contacts across last 3 months.`, { id: toastId });
+    } catch (err) {
+      console.error("[REBUILD ATTENDER CACHE ERROR]", err);
+      toast.error("Failed to rebuild cache from callCenterCache: " + (err.message || err), { id: toastId });
+    } finally {
+      setIsRebuildingCache(false);
+    }
+  };
+
   const openCallEntryDialog = () => {
     setEditingRow({
       _isNew: true,
@@ -841,11 +877,26 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       const tagsStr = l.Tags ? String(l.Tags).trim() : "";
       const splitTags = tagsStr.split(",").map(x => x.trim()).filter(Boolean);
       const subProg = l["Sub Program"] || l.subProgram || "";
+      const calledFor = l["Called For"] || l.calledFor || "";
+      const progId = l.programId || "";
+      const progName = l.programName || "";
 
       const allContactTags = new Set([...tags, ...splitTags]);
       if (subProg) {
         subProg.split(",").map(x => x.trim()).filter(Boolean).forEach(x => allContactTags.add(x));
       }
+      if (calledFor) {
+        calledFor.split(",").map(x => x.trim()).filter(Boolean).forEach(x => allContactTags.add(x));
+      }
+      if (progId) allContactTags.add(String(progId).trim());
+      if (progName) allContactTags.add(String(progName).trim());
+
+      // Map program IDs to program names so ID-based tags match UI tag selections
+      programs.forEach(p => {
+        if (p.id && (allContactTags.has(p.id) || p.id === progId)) {
+          if (p.name) allContactTags.add(p.name);
+        }
+      });
 
       const programNames = new Set(programs.map(p => p.name));
       programNames.add("Incoming Calls");
@@ -1078,10 +1129,35 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
         if (!filterCallbackStatus.includes(cbStatus)) return false;
       }
 
-      // 10. Call Count Filter
+      // 10. Single-Attender Call Count Filter
       if (filterCallCount.length > 0) {
-        const hasAttempt = log.status || log.callbackDate || log.remark || log.remarks;
-        const count = log.history ? log.history.length : (hasAttempt ? 1 : 0);
+        let attenderCallCount = 0;
+
+        if (log.attenderStates && typeof log.attenderStates === "object") {
+          const stateObj = findMatchingAttenderState(log.attenderStates, attenderId, attenderName);
+          if (stateObj) {
+            if (Array.isArray(stateObj.history) && stateObj.history.length > 0) {
+              attenderCallCount = stateObj.history.length;
+            } else if (stateObj.remark || stateObj.status || stateObj.lastCalledAt) {
+              attenderCallCount = 1;
+            }
+          }
+        }
+
+        if (attenderCallCount === 0) {
+          const hasAttempt = log.status || log.callbackDate || log.remark || log.remarks;
+          const isMyLead = (log.attenderId && String(log.attenderId).toLowerCase().trim() === String(attenderId || "").toLowerCase().trim()) ||
+                           (log.assignedName && String(log.assignedName).toLowerCase().trim() === String(attenderName || "").toLowerCase().trim());
+          if (isMyLead) {
+            if (Array.isArray(log.history) && log.history.length > 0) {
+              attenderCallCount = log.history.length;
+            } else if (hasAttempt) {
+              attenderCallCount = 1;
+            }
+          }
+        }
+
+        const count = attenderCallCount;
         let match = false;
         if (filterCallCount.includes("0") && count === 0) match = true;
         if (filterCallCount.includes("1") && count === 1) match = true;
@@ -1445,6 +1521,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           setFilterStatus={setFilterStatus}
           onExit={onExit}
           openCallEntryDialog={openCallEntryDialog}
+          handleRebuildCache={handleRebuildCache}
+          isRebuildingCache={isRebuildingCache}
           setEditingRow={handleSelectRow}
           setGlobalSearchOpen={setGlobalSearchOpen}
           showAdvancedFilters={showAdvancedFilters}
@@ -1507,8 +1585,8 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
         />
       </div>
 
-      {/* Desktop-Only Layout (>= 768px) — 100% UNTOUCHED ORIGINAL CODE */}
-      <div className="hidden md:flex flex-col h-screen bg-gray-50 font-sans">
+      {/* Desktop-Only Layout (>= 768px) */}
+      <div className="hidden md:flex flex-col h-screen bg-slate-50 font-sans text-slate-900">
       <style>{`
         @keyframes slideUp {
           from { opacity: 0; transform: translateY(20px) scale(0.97); }
@@ -1517,36 +1595,36 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
       `}</style>
 
       {/* Top Bar */}
-      <header className="bg-white border-b border-gray-200 px-3 sm:px-6 py-3 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0 shadow-sm">
-        <div className="flex items-center justify-between md:justify-start gap-4 sm:gap-6">
-          <div className="flex items-center gap-3">
-            <button onClick={onExit} className="p-2 hover:bg-gray-100 rounded-xl transition">
-              <ArrowLeft size={18} className="text-gray-500" />
+      <header className="bg-white border-b border-slate-200 px-4 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0 shadow-2xs">
+        <div className="flex items-center justify-between md:justify-start gap-4">
+          <div className="flex items-center gap-2.5">
+            <button onClick={onExit} className="p-1.5 hover:bg-slate-100 rounded-lg transition border border-slate-200 text-slate-600 hover:text-slate-900 cursor-pointer" title="Exit to Portal">
+              <ArrowLeft size={16} />
             </button>
             <div>
-              <h1 className="font-black text-gray-900 text-base sm:text-lg leading-none">My Call Sheet</h1>
-              <p className="text-xs text-gray-400 font-medium">{attenderName}</p>
+              <h1 className="font-bold text-slate-900 text-base leading-none">My Call Sheet</h1>
+              <p className="text-[11px] text-slate-500 font-medium mt-0.5">{attenderName}</p>
             </div>
           </div>
 
           {/* View Toggle tabs */}
-          <div className="flex items-center bg-gray-100 p-0.5 rounded-xl border border-gray-200 shrink-0">
+          <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 shrink-0">
             <button
               onClick={() => setActiveView("sheet")}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
                 activeView === "sheet"
-                  ? "bg-slate-800 text-white shadow-sm"
-                  : "text-slate-500 hover:text-slate-700"
+                  ? "bg-indigo-600 text-white shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               Call Sheet
             </button>
             <button
               onClick={() => setActiveView("performance")}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
                 activeView === "performance"
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-slate-500 hover:text-slate-700"
+                  ? "bg-indigo-600 text-white shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               My Performance
@@ -1641,35 +1719,47 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           </div>
         </div>
 
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          {/* Get Numbers */}
-          <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-2.5 sm:px-3 py-1.5 flex-1 sm:flex-initial">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Quick Search & Command Trigger (Ctrl+K) */}
+          <button
+            type="button"
+            onClick={() => setCommandPaletteOpen(true)}
+            className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-500 transition cursor-pointer"
+            title="Search contacts & commands (Ctrl + K)"
+          >
+            <Search size={13} className="text-slate-400" />
+            <span className="hidden sm:inline font-medium">Search...</span>
+            <kbd className="font-mono text-[10px] bg-white text-slate-500 border border-slate-200 rounded px-1 shadow-2xs">Ctrl K</kbd>
+          </button>
+
+          {/* Secondary Workflow: Get Numbers */}
+          <div className="flex items-center gap-2 bg-slate-100 border border-slate-200 rounded-lg p-1">
             {/* Searchable Tag Dropdown */}
             <div className="relative" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setProgramDropOpen(false); setProgramSearch(""); } }}>
               <button
                 type="button"
                 onClick={() => { setProgramDropOpen(o => !o); setProgramSearch(""); }}
-                className="flex items-center gap-1.5 bg-transparent text-sm font-semibold text-blue-700 focus:outline-none cursor-pointer min-w-[120px] max-w-[200px]"
+                className="flex items-center gap-1.5 bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:text-slate-900 rounded-md px-2.5 py-1 focus:outline-none cursor-pointer min-w-[130px] max-w-[200px]"
               >
                 <span className="truncate">
                   {selectedProgramId ? (programs.find(p => p.id === selectedProgramId)?.name || "Select Tag...") : "Select Tag..."}
                 </span>
-                <ChevronDown size={14} className={`shrink-0 text-blue-500 transition-transform ${programDropOpen ? "rotate-180" : ""}`} />
+                <ChevronDown size={13} className={`shrink-0 text-slate-400 transition-transform ${programDropOpen ? "rotate-180" : ""}`} />
               </button>
 
               {programDropOpen && (
-                <div className="absolute left-0 top-full mt-1.5 w-64 bg-white border border-blue-100 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                <div className="absolute left-0 top-full mt-1.5 w-64 bg-white border border-slate-200 rounded-lg shadow-xl z-50 overflow-hidden">
                   {/* Search input */}
-                  <div className="p-2 border-b border-gray-100">
+                  <div className="p-2 border-b border-slate-100">
                     <div className="relative">
-                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                       <input
                         autoFocus
                         type="text"
                         placeholder="Search tags..."
                         value={programSearch}
                         onChange={e => setProgramSearch(e.target.value)}
-                        className="w-full pl-7 pr-3 py-1.5 text-xs font-semibold bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 focus:bg-white transition"
+                        className="w-full pl-7 pr-3 py-1.5 text-xs font-medium bg-slate-50 border border-slate-200 rounded-md focus:outline-none focus:border-indigo-500 focus:bg-white transition"
                       />
                     </div>
                   </div>
@@ -1680,7 +1770,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
                       type="button"
                       tabIndex={0}
                       onClick={() => { setSelectedProgramId(""); setSelectedProgramName(""); setSelectedSubProgram(""); setProgramDropOpen(false); setProgramSearch(""); }}
-                      className={`w-full text-left px-3 py-2 text-xs font-semibold hover:bg-blue-50 transition ${!selectedProgramId ? "text-blue-700 bg-blue-50" : "text-gray-400"}`}
+                      className={`w-full text-left px-3 py-1.5 text-xs font-medium hover:bg-slate-50 transition ${!selectedProgramId ? "text-indigo-600 bg-indigo-50/50 font-semibold" : "text-slate-400"}`}
                     >
                       — Select Tag...
                     </button>
@@ -1698,37 +1788,53 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
                             setProgramDropOpen(false);
                             setProgramSearch("");
                           }}
-                          className={`w-full text-left px-3 py-2 text-xs font-semibold hover:bg-blue-50 transition truncate ${selectedProgramId === p.id ? "text-blue-700 bg-blue-50/80" : "text-gray-700"}`}
+                          className={`w-full text-left px-3 py-1.5 text-xs font-medium hover:bg-slate-50 transition truncate ${selectedProgramId === p.id ? "text-indigo-600 bg-indigo-50/50 font-semibold" : "text-slate-700"}`}
                         >
                           {p.name}
                         </button>
                       ))
                     }
                     {programs.filter(p => !programSearch || p.name.toLowerCase().includes(programSearch.toLowerCase())).length === 0 && (
-                      <div className="px-3 py-3 text-xs text-gray-400 text-center">No tags match "{programSearch}"</div>
+                      <div className="px-3 py-3 text-xs text-slate-400 text-center">No tags match "{programSearch}"</div>
                     )}
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="flex items-center gap-1 bg-white/50 rounded-lg px-1">
-              <button onClick={() => setRequestCount(c => Math.max(5, c - 5))} className="w-5 h-5 flex items-center justify-center text-blue-600 hover:text-blue-900 font-bold text-sm">-</button>
-              <span className="w-7 text-center font-bold text-sm text-blue-700">{requestCount}</span>
-              <button onClick={() => setRequestCount(c => c + 5)} className="w-5 h-5 flex items-center justify-center text-blue-600 hover:text-blue-900 font-bold text-sm">+</button>
+            <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-md px-1.5 py-0.5">
+              <button onClick={() => setRequestCount(c => Math.max(5, c - 5))} className="w-4 h-4 flex items-center justify-center text-slate-500 hover:text-slate-900 font-bold text-xs cursor-pointer">-</button>
+              <span className="w-6 text-center font-mono font-bold text-xs text-slate-800">{requestCount}</span>
+              <button onClick={() => setRequestCount(c => c + 5)} className="w-4 h-4 flex items-center justify-center text-slate-500 hover:text-slate-900 font-bold text-xs cursor-pointer">+</button>
             </div>
             <button
               onClick={handleGetNumbers}
               disabled={isRequesting || !selectedProgramId}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg font-bold text-xs hover:bg-blue-700 disabled:opacity-50 transition shadow shadow-blue-500/20"
+              className="flex items-center gap-1.5 px-3 py-1 bg-slate-900 hover:bg-slate-800 active:scale-[0.98] text-white rounded-md font-semibold text-xs disabled:opacity-50 transition shadow-2xs cursor-pointer"
             >
-              {isRequesting ? <Loader size={13} className="animate-spin" /> : <PhoneOutgoing size={13} />}
+              {isRequesting ? <Loader size={12} className="animate-spin" /> : <PhoneOutgoing size={12} />}
               Get Numbers
             </button>
           </div>
 
-          <button onClick={openCallEntryDialog} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition shadow-lg shadow-emerald-500/20">
-            <PhoneIncoming size={15} /> Add Call Entry
+          {/* Utility Action: Demoted Rebuild Cache */}
+          <button 
+            type="button"
+            onClick={handleRebuildCache}
+            disabled={isRebuildingCache}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-transparent hover:bg-slate-100 active:scale-[0.98] text-slate-500 hover:text-slate-800 rounded-lg text-xs font-medium border border-slate-200 disabled:opacity-50 transition cursor-pointer"
+            title="Admin utility: Rebuild local database cache"
+          >
+            <RefreshCw size={13} className={isRebuildingCache ? "animate-spin text-slate-600" : "text-slate-400"} />
+            <span>{isRebuildingCache ? "Rebuilding..." : "Rebuild Cache"}</span>
+          </button>
+
+          {/* Primary Action: Add Call Entry */}
+          <button 
+            onClick={openCallEntryDialog} 
+            className="flex items-center gap-2 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white rounded-lg font-semibold text-xs transition shadow-2xs cursor-pointer"
+          >
+            <PhoneIncoming size={14} /> Add Call Entry
           </button>
         </div>
       </header>
@@ -1737,46 +1843,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
 
 
 
-      {/* Edit Modal */}
-      {editingRow && (
-        <EditModal
-          key={editingRow.id || "new-entry"}
-          optionsVersion={optionsVersion}
-          row={editingRow}
-          attenderId={attenderId}
-          attenderName={attenderName}
-          programs={programs.filter(p => p.id !== INCOMING_PROGRAM_ID && p.id !== OUTGOING_PROGRAM_ID)}
-          onSave={(updated, isOptimistic) => {
-            setCallLogs(prev => {
-              const targetId = updated.id || updated.contactId;
-              const rawPhone = updated.Phone || updated.Mobile || updated.phone || updated.mobile;
-              const normP = rawPhone ? normalizePhone(rawPhone) : null;
-              
-              const existingIdx = prev.findIndex(l => {
-                if (targetId && (l.id === targetId || l.contactId === targetId)) return true;
-                if (normP) {
-                  const lPhone = l.Phone || l.Mobile || l.phone || l.mobile;
-                  if (lPhone && normalizePhone(lPhone) === normP) return true;
-                }
-                return false;
-              });
 
-              if (existingIdx !== -1) {
-                const next = [...prev];
-                next[existingIdx] = { ...next[existingIdx], ...updated, id: targetId || next[existingIdx].id };
-                return next;
-              } else {
-                return [{ ...updated, id: targetId || `local_inc_${Date.now()}` }, ...prev];
-              }
-            });
-            if (!isOptimistic) setEditingRow(null);
-          }}
-          onDelete={handleDeleteRow}
-          onClose={() => setEditingRow(null)}
-          onRefreshLead={handleRefreshSingleLead}
-          isFetchingShared={isFetchingShared}
-        />
-      )}
 
       {/* Global Search Modal */}
       {globalSearchOpen && (
@@ -2009,7 +2076,7 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           ))}
         </div>
       ) : activeView === "performance" ? (
-        <MyPerformanceDashboard logs={tagFilteredLogs} attenderName={attenderName} attenderId={attenderId} />
+        <MyPerformanceDashboard logs={callLogs} attenderName={attenderName} attenderId={attenderId} />
       ) : (
         <div className="flex-1 flex flex-col overflow-hidden">
           <ContactTable
@@ -2099,9 +2166,21 @@ export default function AttenderView({ attenderId, attenderName, optionsVersion,
           onDelete={handleDeleteRow}
           onClose={handleCloseModal}
           onRefreshLead={handleRefreshSingleLead}
+          isFetchingShared={isFetchingShared}
         />
       )
     )}
+
+      {/* Global Command Palette (Ctrl+K / Cmd+K) */}
+      <CommandPalette
+        isOpen={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        contacts={callLogs}
+        onSelectContact={(c) => setEditingRow(c)}
+        onOpenCallEntry={openCallEntryDialog}
+        onRebuildCache={handleRebuildCache}
+        onGetNumbers={handleGetNumbers}
+      />
     </>
   );
 }

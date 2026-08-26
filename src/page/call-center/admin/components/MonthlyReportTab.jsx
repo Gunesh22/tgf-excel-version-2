@@ -473,47 +473,59 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       const programName = log.programName || "Unknown";
 
       const rawAttempts = [];
+      const seenEventKeys = new Set();
+
+      const addAttemptIfNew = (attId, attName, status, remark, dateVal, callType, calledFor, source) => {
+        const canonicalStatus = getCanonicalStatus(status || "Pending");
+        const ts = parseTimestamp(dateVal) || parseTimestamp(log.createdAt);
+        if (!ts) return;
+
+        const eventKey = `${log.id}_${ts.getTime()}_${canonicalStatus}`;
+        if (seenEventKeys.has(eventKey)) return;
+        seenEventKeys.add(eventKey);
+
+        rawAttempts.push({
+          timestamp: ts,
+          attenderId: attId,
+          attenderName: attName || "Unknown",
+          status: canonicalStatus,
+          remark: remark || "",
+          callType: callType || "outgoing",
+          calledFor: calledFor || "",
+          source: source || ""
+        });
+      };
 
       // A. Collect from attenderStates
       if (log.attenderStates && typeof log.attenderStates === "object") {
         Object.entries(log.attenderStates).forEach(([attId, state]) => {
+          if (!state) return;
+          const stateAttName = state.attenderName || "Unknown";
           if (state.history && Array.isArray(state.history) && state.history.length > 0) {
             state.history.forEach(h => {
-              if ((!h.status || h.status === "Pending") && !h.timestamp) return;
-              rawAttempts.push({
-                timestamp: parseTimestamp(h.timestamp) || parseTimestamp(h.date) || parseTimestamp(state.lastCalledAt),
-                attenderId: attId,
-                attenderName: h.attenderName || state.attenderName || "Unknown",
-                status: h.status || state.status || "Pending",
-                remark: h.remark || "",
-                callType: h.callType || state.callType || "outgoing",
-                calledFor: h.calledFor || state["Called For"] || state.calledFor || "",
-                source: h.source || state.Source || state.source || ""
-              });
+              addAttemptIfNew(
+                attId,
+                h.attenderName || stateAttName,
+                h.status || state.status,
+                h.remark,
+                h.timestamp || h.date || state.lastCalledAt,
+                h.callType || state.callType,
+                h.calledFor || state["Called For"] || state.calledFor,
+                h.source || state.Source || state.source
+              );
             });
           }
           if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
-            const dateVal = state.lastCalledAt;
-            const ts = parseTimestamp(dateVal);
-            const existsInStateHistory = Array.isArray(state.history) && state.history.some(h => {
-              const hTs = parseTimestamp(h.timestamp);
-              const sameTime = hTs && ts && Math.abs(hTs.getTime() - ts.getTime()) < 5000;
-              const sameStatus = getCanonicalStatus(h.status) === getCanonicalStatus(state.status);
-              const sameRemark = (h.remark || "").trim().toLowerCase() === (state.remark || "").trim().toLowerCase();
-              return sameTime && (sameStatus || sameRemark);
-            });
-            if (!existsInStateHistory) {
-              rawAttempts.push({
-                timestamp: ts,
-                attenderId: attId,
-                attenderName: state.attenderName || "Unknown",
-                status: state.status || "Pending",
-                remark: state.remark || "",
-                callType: state.callType || "outgoing",
-                calledFor: state["Called For"] || state.calledFor || "",
-                source: state.Source || state.source || ""
-              });
-            }
+            addAttemptIfNew(
+              attId,
+              stateAttName,
+              state.status,
+              state.remark,
+              state.lastCalledAt || state.updatedAt || state.createdAt,
+              state.callType,
+              state["Called For"] || state.calledFor,
+              state.Source || state.source
+            );
           }
         });
       }
@@ -521,51 +533,31 @@ export default function MonthlyReportTab({ programs, attenders = [], settingsOpt
       // B. Collect from top-level log.history
       if (log.history && Array.isArray(log.history) && log.history.length > 0) {
         log.history.forEach(h => {
-          if ((!h.status || h.status === "Pending") && !h.timestamp) return;
-          const ts = parseTimestamp(h.timestamp) || parseTimestamp(h.date) || parseTimestamp(log.lastCalledAt || log.createdAt);
-          const alreadyAdded = rawAttempts.some(ra => {
-            const sameTime = ra.timestamp && ts && Math.abs(ra.timestamp.getTime() - ts.getTime()) < 5000;
-            const sameStatus = getCanonicalStatus(ra.status) === getCanonicalStatus(h.status);
-            const sameRemark = (ra.remark || "").trim().toLowerCase() === (h.remark || "").trim().toLowerCase();
-            return sameTime && (sameStatus || sameRemark);
-          });
-          if (!alreadyAdded) {
-            rawAttempts.push({
-              timestamp: ts,
-              attenderId: h.attenderId || log.attenderId || "legacy",
-              attenderName: h.attenderName || log.attenderName || "Unknown",
-              status: h.status || "Pending",
-              remark: h.remark || "",
-              callType: h.callType || log.callType || "outgoing",
-              calledFor: h.calledFor || "",
-              source: h.source || ""
-            });
-          }
+          addAttemptIfNew(
+            h.attenderId || log.attenderId || "legacy",
+            h.attenderName || log.attenderName || "Unknown",
+            h.status,
+            h.remark,
+            h.timestamp || h.date || log.lastCalledAt || log.createdAt,
+            h.callType || log.callType,
+            h.calledFor || log["Called For"] || log.calledFor,
+            h.source || log.Source || log.source
+          );
         });
       }
 
       // C. Collect top-level log standalone call if no attempts were found in attenderStates/history
       if (rawAttempts.length === 0 && (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark)) {
-        const dateVal = log.lastCalledAt || log.createdAt;
-        const ts = parseTimestamp(dateVal);
-        const alreadyAdded = rawAttempts.some(ra => {
-          const sameTime = ra.timestamp && ts && Math.abs(ra.timestamp.getTime() - ts.getTime()) < 5000;
-          const sameStatus = getCanonicalStatus(ra.status) === getCanonicalStatus(log.status);
-          const sameRemark = (ra.remark || "").trim().toLowerCase() === (log.remark || "").trim().toLowerCase();
-          return sameTime && (sameStatus || sameRemark);
-        });
-        if (!alreadyAdded) {
-          rawAttempts.push({
-            timestamp: ts,
-            attenderId: log.attenderId || "legacy",
-            attenderName: log.attenderName || "Legacy Attender",
-            status: log.status || "Pending",
-            remark: log.remark || "",
-            callType: log.callType || "outgoing",
-            calledFor: log["Called For"] || log.calledFor || "",
-            source: log.Source || log.source || ""
-          });
-        }
+        addAttemptIfNew(
+          log.attenderId || "legacy",
+          log.attenderName || "Legacy Attender",
+          log.status,
+          log.remark,
+          log.lastCalledAt || log.createdAt,
+          log.callType,
+          log["Called For"] || log.calledFor,
+          log.Source || log.source
+        );
       }
 
       const totalContactCalls = rawAttempts.length;

@@ -129,14 +129,15 @@ export function ContactTable({
     return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN") : "";
   };
 
-  const visibleCount = 1 + dynamicCols.filter(col => !hiddenColumns.includes(col)).length
+  const visibleCount = 1 + dynamicCols.filter(col => !hiddenColumns.includes(col) && col !== "Calls Done").length
+    + (!hiddenColumns.includes("Calls Done") ? 1 : 0)
     + (!hiddenColumns.includes("Type") ? 1 : 0)
     + (!hiddenColumns.includes("Status") ? 1 : 0)
     + (!hiddenColumns.includes("Remark") ? 1 : 0)
     + (!hiddenColumns.includes("Callback") ? 1 : 0);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden bg-white">
       <div
         ref={scrollRef}
         onMouseDown={onMouseDown}
@@ -146,33 +147,36 @@ export function ContactTable({
         className="flex-1 overflow-auto cursor-grab"
         style={{ userSelect: "none" }}
       >
-        <table className="table-auto w-full text-left border-collapse text-sm">
-          <thead className="bg-[#f8f9fa] border-b border-gray-300 sticky top-0 z-10 shadow-sm">
+        <table className="table-auto w-full text-left border-collapse text-xs">
+          <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
             <tr>
-              <th className="py-3 px-4 text-xs font-black text-gray-600 uppercase w-12 border-r border-gray-200 bg-[#e9ecef]">#</th>
+              <th className="py-2.5 px-3 text-[11px] font-semibold text-slate-500 uppercase w-10 text-center">#</th>
               {dynamicCols.map(col => {
-                if (hiddenColumns.includes(col)) return null;
+                if (col === "Calls Done" || hiddenColumns.includes(col)) return null;
                 return (
-                  <th key={col} className="py-3 px-4 text-xs font-bold text-gray-600 uppercase border-r border-gray-200 min-w-[140px] whitespace-nowrap">
+                  <th key={col} className="py-2.5 px-3 text-[11px] font-semibold text-slate-500 uppercase min-w-[130px] whitespace-nowrap">
                     {col}
                   </th>
                 );
               })}
+              {!hiddenColumns.includes("Calls Done") && (
+                <th className="py-2.5 px-3 text-[11px] font-semibold text-slate-500 uppercase min-w-[80px] text-center">Calls</th>
+              )}
               {!hiddenColumns.includes("Type") && (
-                <th className="py-3 px-4 text-xs font-bold text-gray-600 uppercase border-r border-gray-200 min-w-[100px]">Type</th>
+                <th className="py-2.5 px-3 text-[11px] font-semibold text-slate-500 uppercase min-w-[80px]">Type</th>
               )}
               {!hiddenColumns.includes("Status") && (
-                <th className="py-3 px-4 text-xs font-bold text-gray-600 uppercase border-r border-gray-200 min-w-[140px]">Status</th>
+                <th className="py-2.5 px-3 text-[11px] font-semibold text-slate-500 uppercase min-w-[120px]">Status</th>
               )}
               {!hiddenColumns.includes("Remark") && (
-                <th className="py-3 px-4 text-xs font-bold text-gray-600 uppercase border-r border-gray-200 min-w-[300px]">Remark</th>
+                <th className="py-2.5 px-3 text-[11px] font-semibold text-slate-500 uppercase min-w-[280px]">Remark</th>
               )}
               {!hiddenColumns.includes("Callback") && (
-                <th className="py-3 px-4 text-xs font-bold text-gray-600 uppercase min-w-[120px]">Callback</th>
+                <th className="py-2.5 px-3 text-[11px] font-semibold text-slate-500 uppercase min-w-[110px]">Callback</th>
               )}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-slate-100 bg-white">
             {paginated.map((log, idx) => {
               const isDue = log._callbackDue;
               const isHot = log.isHotLead;
@@ -180,23 +184,23 @@ export function ContactTable({
               const isUnanswered = isUnansweredCallback(log);
               const isCalled = !!(log.status || log.callbackDate || log.remark || log.Remark || log.remarks);
 
-              let rowBg = "hover:bg-gray-50";
+              let statusBorder = "border-l-2 border-l-transparent";
               if (isDue) {
-                rowBg = "bg-red-100 border-l-[6px] border-l-red-600 shadow-sm";
+                statusBorder = "border-l-4 border-l-rose-500";
               } else if (isHot) {
-                rowBg = "bg-orange-100 border-l-[6px] border-l-orange-500";
+                statusBorder = "border-l-4 border-l-amber-500";
               } else if (hasFollowup) {
-                rowBg = "bg-blue-100 border-l-[6px] border-l-blue-500";
+                statusBorder = "border-l-4 border-l-sky-500";
               } else if (isUnanswered) {
-                rowBg = "bg-amber-100/90 border-l-[6px] border-l-amber-500 shadow-sm";
+                statusBorder = "border-l-4 border-l-indigo-400";
               } else if (isCalled) {
-                rowBg = "bg-emerald-50 border-l-[6px] border-l-emerald-500";
+                statusBorder = "border-l-4 border-l-emerald-500";
               }
 
               return (
                 <tr
                   key={`${log.id || 'log'}_${idx}`}
-                  className={`cursor-pointer transition-colors ${rowBg}`}
+                  className={`cursor-pointer transition-colors bg-white hover:bg-slate-50 border-b border-slate-100 ${statusBorder}`}
                   onClick={() => {
                     if (!didDrag.current) {
                       console.log("[DEBUG] Selected Row:", log);
@@ -204,11 +208,11 @@ export function ContactTable({
                     }
                   }}
                 >
-                  <td className="py-2 px-4 text-xs font-bold text-gray-400 text-center bg-[#f8f9fa] border-r border-gray-200 align-top">
+                  <td className="py-2 px-3 text-[11px] font-medium text-slate-400 text-center align-top">
                     {(page - 1) * rowsPerPage + idx + 1}
                   </td>
                   {dynamicCols.map((col, ci) => {
-                    if (hiddenColumns.includes(col)) return null;
+                    if (col === "Calls Done" || hiddenColumns.includes(col)) return null;
 
                     const getVal = (item, column) => {
                       const standardOrder = ["Name", "Phone", "Mobile", "Email", "City", "State", "Khoji", "Tags", "Source", "Called For"];
@@ -255,11 +259,11 @@ export function ContactTable({
                       const tagsArr = Array.from(seen).sort();
 
                       if (tagsArr.length === 0) {
-                        return <td key={col} className="py-4 px-4 border-r border-gray-100 text-sm text-gray-400 align-top">—</td>;
+                        return <td key={col} className="py-2 px-3 text-xs text-slate-300 align-top">—</td>;
                       }
 
                       return (
-                        <td key={col} className="py-2 px-4 border-r border-gray-100 text-sm text-gray-700 min-w-[140px] align-top">
+                        <td key={col} className="py-2 px-3 text-xs text-slate-700 min-w-[130px] align-top">
                           <CollapsedTags tags={tagsArr} />
                         </td>
                       );
@@ -269,8 +273,8 @@ export function ContactTable({
                     const isShared = sharedList.length > 1;
 
                     return (
-                      <td key={col} className={`py-2 px-4 border-r border-gray-100 text-sm ${isName ? "font-bold text-gray-900" : "text-gray-700"} min-w-[140px] whitespace-normal align-top`}>
-                        {ci === 0 && log.isHotLead && <Flame size={15} className="text-orange-500 shrink-0 inline mr-1" fill="currentColor" />}
+                      <td key={col} className={`py-2 px-3 text-xs ${isName ? "font-semibold text-slate-900" : "text-slate-700"} min-w-[130px] whitespace-normal align-top`}>
+                        {ci === 0 && log.isHotLead && <Flame size={14} className="text-amber-500 shrink-0 inline mr-1" fill="currentColor" />}
                         {val || "\u2014"}
                         {isName && isShared && (
                           <span 
@@ -279,33 +283,67 @@ export function ContactTable({
                               if (onRefreshLead) onRefreshLead(log);
                             }}
                             title={`Shared Lead with: ${sharedList.join(", ")} | Click to sync latest team updates`}
-                            className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 cursor-pointer transition shadow-2xs"
+                            className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 cursor-pointer transition"
                           >
-                            <Users size={10} /> Shared ({sharedList.length}) <RotateCw size={9} className="hover:rotate-180 transition-transform" />
+                            <Users size={9} /> Shared ({sharedList.length}) <RotateCw size={9} className="hover:rotate-180 transition-transform" />
                           </span>
                         )}
                         {isDupInProg && (
-                          <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200">
+                          <span className="ml-1.5 inline-flex items-center px-1.5 py-0.2 rounded text-[8px] font-semibold uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200">
                             Same Person
                           </span>
                         )}
                       </td>
                     );
                   })}
+                  {!hiddenColumns.includes("Calls Done") && (
+                    <td className="py-2 px-3 text-center font-medium align-top">
+                      {(() => {
+                        const targetId = log.attenderId;
+                        const targetName = (log.attenderName || "").toLowerCase().trim();
+                        let count = 0;
+
+                        if (targetId && log.attenderStates && log.attenderStates[targetId]) {
+                          const st = log.attenderStates[targetId];
+                          if (Array.isArray(st.history) && st.history.length > 0) {
+                            count = st.history.length;
+                          } else if (st.lastCalledAt || st.status || st.remark) {
+                            count = 1;
+                          }
+                        } else if (Array.isArray(log.history) && log.history.length > 0) {
+                          const attenderHistory = log.history.filter(h => {
+                            if (targetId && (h.attenderId === targetId || h.assignedTo === targetId)) return true;
+                            const hName = (h.attenderName || h.name || "").toLowerCase().trim();
+                            if (targetName && hName === targetName) return true;
+                            return false;
+                          });
+                          count = attenderHistory.length > 0 ? attenderHistory.length : 1;
+                        } else if (log.status || log.remark || log.Remark || log.callbackDate) {
+                          count = 1;
+                        }
+
+                        return (
+                          <span className={`inline-flex items-center px-1.5 py-0.2 rounded text-[11px] font-mono font-medium ${count > 0 ? "bg-slate-100 text-slate-700 border border-slate-200" : "text-slate-300"}`}>
+                            {count}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                  )}
                   {!hiddenColumns.includes("Type") && (
-                    <td className="py-2 px-4 border-r border-gray-100 align-top">
-                      <span className={`text-xs font-black uppercase tracking-wider px-2.5 py-1 rounded-xl ${log.callType === "incoming" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>
+                    <td className="py-2 px-3 align-top">
+                      <span className={`text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.2 rounded border ${log.callType === "incoming" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-700 border-slate-200"}`}>
                         {log.callType || "outgoing"}
                       </span>
                     </td>
                   )}
                   {!hiddenColumns.includes("Status") && (
-                    <td className="py-2 px-4 border-r border-gray-100 align-top">
+                    <td className="py-2 px-3 align-top">
                       {(() => {
                         const badge = getStatusBadge(log);
                         return (
-                          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${badge.bg} ${badge.text}`}>
-                            {log.isHotLead && <Flame size={10} className="inline" fill="currentColor" />}
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${badge.bg} ${badge.text}`}>
+                            {log.isHotLead && <Flame size={10} className="inline text-amber-500" fill="currentColor" />}
                             {badge.label}
                           </span>
                         );
@@ -313,7 +351,7 @@ export function ContactTable({
                     </td>
                   )}
                   {!hiddenColumns.includes("Remark") && (
-                    <td className="py-2 px-4 border-r border-gray-100 text-gray-700 text-sm leading-relaxed min-w-[300px] whitespace-normal align-top">
+                    <td className="py-2 px-3 text-slate-700 text-xs leading-relaxed min-w-[280px] whitespace-normal align-top">
                       {(() => {
                         const directRemark = getFieldWithFallback(log, "remark") || log.remark || log.Remark || "";
                         if (directRemark) return directRemark;
@@ -321,40 +359,40 @@ export function ContactTable({
                           const lastRemark = [...log.history].reverse().find(h => h.remark)?.remark;
                           if (lastRemark) {
                             return (
-                              <span className="text-gray-500 italic text-xs">
+                              <span className="text-slate-500 italic text-xs">
                                 {lastRemark}
                               </span>
                             );
                           }
                         }
-                        return <span className="text-gray-200 font-medium">—</span>;
+                        return <span className="text-slate-300">—</span>;
                       })()}
                     </td>
                   )}
                   {!hiddenColumns.includes("Callback") && (
-                    <td className="py-2 px-4 align-top whitespace-nowrap">
+                    <td className="py-2 px-3 align-top whitespace-nowrap">
                       {getCallbackStr(log) ? (
-                        <div className="flex flex-col gap-1">
+                        <div className="flex flex-col gap-0.5">
                           {isDue ? (
-                            <span className="text-sm font-black text-red-600 flex items-center gap-1.5">
-                              <Clock size={14} className="animate-pulse" /> {getCallbackStr(log)}
+                            <span className="text-xs font-semibold text-rose-600 flex items-center gap-1">
+                              <Clock size={12} className="animate-pulse" /> {getCallbackStr(log)}
                             </span>
                           ) : (
-                            <span className="text-sm font-semibold text-amber-600">{getCallbackStr(log)}</span>
+                            <span className="text-xs font-semibold text-amber-700">{getCallbackStr(log)}</span>
                           )}
                           {log.callbackStatus && (
-                            <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded w-fit ${
-                              log.callbackStatus === "done" ? "bg-emerald-100 text-emerald-700" :
-                              log.callbackStatus === "rescheduled" ? "bg-blue-100 text-blue-700" :
-                              log.callbackStatus === "cancelled" ? "bg-red-100 text-red-600" :
-                              "bg-amber-100 text-amber-700"
+                            <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded w-fit border ${
+                              log.callbackStatus === "done" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                              log.callbackStatus === "rescheduled" ? "bg-sky-50 text-sky-700 border-sky-200" :
+                              log.callbackStatus === "cancelled" ? "bg-rose-50 text-rose-700 border-rose-200" :
+                              "bg-amber-50 text-amber-700 border-amber-200"
                             }`}>
-                              {log.callbackStatus === "done" ? "✅ Done" : log.callbackStatus === "rescheduled" ? "🔄 Rescheduled" : log.callbackStatus === "cancelled" ? "❌ Cancelled" : "⏳ Pending"}
+                              {log.callbackStatus === "done" ? "✓ Done" : log.callbackStatus === "rescheduled" ? "↺ Rescheduled" : log.callbackStatus === "cancelled" ? "✕ Cancelled" : "⏳ Pending"}
                             </span>
                           )}
                         </div>
                       ) : (
-                        <span className="text-gray-200 font-medium">—</span>
+                        <span className="text-slate-300">—</span>
                       )}
                     </td>
                   )}
@@ -364,11 +402,11 @@ export function ContactTable({
             {paginated.length === 0 && (
               <tr>
                 <td colSpan={visibleCount}>
-                  <div className="py-24 text-center pb-32">
-                    <p className="text-xl font-bold text-gray-400">
+                  <div className="py-20 text-center bg-slate-50/50">
+                    <p className="text-sm font-semibold text-slate-500">
                       {callLogs.length === 0
-                        ? "Pick a program above and click 'Get Numbers' to start calling, or add an incoming call."
-                        : "No entries match filters."}
+                        ? "Select a tag above and click 'Get Numbers' to start calling, or add an incoming call."
+                        : "No entries match the selected filters."}
                     </p>
                   </div>
                 </td>

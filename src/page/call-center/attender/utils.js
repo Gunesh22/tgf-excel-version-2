@@ -581,13 +581,23 @@ export function getSharedAttenders(log) {
     }
   };
 
-  // 1. Gather mappings from attenderStates
+  // 1. Gather mappings from attenderStates (and nested history inside each state)
   if (log.attenderStates && typeof log.attenderStates === "object") {
     Object.entries(log.attenderStates).forEach(([key, state]) => {
       if (state && typeof state === "object" && !state._deleted && !state.isDeleted) {
         const attId = state.attenderId || key;
         const attName = state.attenderName || state.assignedName || state.name;
         registerPair(attId, attName);
+
+        if (Array.isArray(state.history)) {
+          state.history.forEach(h => {
+            if (h && typeof h === "object") {
+              const hId = h.attenderId || attId;
+              const hName = h.attenderName || h.assignedName || h.by || h.editedBy || h.name;
+              registerPair(hId, hName);
+            }
+          });
+        }
       }
     });
   }
@@ -609,9 +619,20 @@ export function getSharedAttenders(log) {
     registerPair(rawId, rawName);
   });
 
+  // 4. Gather mapping from top-level history array
+  if (Array.isArray(log.history)) {
+    log.history.forEach(item => {
+      if (item && typeof item === "object") {
+        const attId = item.attenderId;
+        const attName = item.attenderName || item.assignedName || item.by || item.editedBy || item.name;
+        registerPair(attId, attName);
+      }
+    });
+  }
+
   const attendersSet = new Set();
 
-  // A. Process attenderStates (Attenders with active entries on this lead)
+  // A. Process attenderStates
   if (log.attenderStates && typeof log.attenderStates === "object") {
     Object.entries(log.attenderStates).forEach(([key, state]) => {
       if (state && typeof state === "object" && !state._deleted && !state.isDeleted) {
@@ -619,8 +640,8 @@ export function getSharedAttenders(log) {
         const attName = (state.attenderName || state.assignedName || state.name || "").trim();
         const canonical = (attName && !attName.match(/^[a-zA-Z0-9_-]{15,35}$/))
           ? attName
-          : (idToNameMap.get(attId) || attId);
-        if (canonical && !canonical.match(/^[a-zA-Z0-9_-]{15,35}$/)) attendersSet.add(canonical);
+          : (idToNameMap.get(attId) || (attId.match(/^[a-zA-Z0-9_-]{15,35}$/) ? `Attender (${attId.slice(0, 5)})` : attId));
+        if (canonical) attendersSet.add(canonical);
       }
     });
   }
@@ -630,35 +651,25 @@ export function getSharedAttenders(log) {
     if (!item || typeof item !== "string") return;
     const trimmed = item.trim();
     if (!trimmed) return;
-    const resolved = idToNameMap.get(trimmed) || (trimmed.match(/^[a-zA-Z0-9_-]{15,35}$/) ? "" : trimmed);
+    const resolved = idToNameMap.get(trimmed) || (trimmed.match(/^[a-zA-Z0-9_-]{15,35}$/) ? `Attender (${trimmed.slice(0, 5)})` : trimmed);
     if (resolved) attendersSet.add(resolved);
   });
 
-  // C. Process history array (Attenders who logged calls)
+  // C. Process history arrays
   if (Array.isArray(log.history)) {
     log.history.forEach(item => {
       if (item && typeof item === "object") {
         const attId = item.attenderId;
         const attName = item.attenderName || item.assignedName || item.by || item.editedBy || item.name;
-        registerPair(attId, attName);
-        if (attName && typeof attName === "string") {
-          const trimmed = attName.trim();
-          if (trimmed && !trimmed.match(/^[a-zA-Z0-9_-]{15,35}$/)) {
-            attendersSet.add(trimmed);
-          }
-        }
+        const resolved = (attName && !attName.match(/^[a-zA-Z0-9_-]{15,35}$/))
+          ? attName.trim()
+          : (idToNameMap.get(attId) || "");
+        if (resolved) attendersSet.add(resolved);
       }
     });
   }
 
   const rawList = Array.from(attendersSet);
-  const humanNames = rawList.map(x => idToNameMap.get(x) || x).filter(x => !x.match(/^[a-zA-Z0-9_-]{15,35}$/));
-  const rawIds = rawList.filter(x => x.match(/^[a-zA-Z0-9_-]{15,35}$/) && !idToNameMap.has(x));
-
-  if (humanNames.length > 0) {
-    return Array.from(new Set([...humanNames, ...rawIds]));
-  }
-
   return rawList;
 }
 

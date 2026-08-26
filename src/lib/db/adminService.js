@@ -3,7 +3,7 @@ import {
   updateDoc, deleteDoc, query, where,
   serverTimestamp, writeBatch, onSnapshot,
   limit, Timestamp, orderBy,
-  deleteField, documentId, runTransaction
+  deleteField, documentId, runTransaction, getCountFromServer
 } from "firebase/firestore";
 import { db } from "../firebase.js";
 import {
@@ -12,32 +12,30 @@ import {
   getMonthStr, getByteSize, trackFirestoreRead, trackFirestoreWrite
 } from "./core.js";
 import {
-  getIDBCache, setIDBCache, fetchPartitionCacheForColdBoot
+  getIDBCache, setIDBCache, fetchPartitionCacheForColdBoot, getAllIDBKeys, clearAdminIDBCache
 } from "./cacheService.js";
 import {
   getActiveTags, INCOMING_PROGRAM_ID, INCOMING_PROGRAM_NAME,
   OUTGOING_PROGRAM_ID, OUTGOING_PROGRAM_NAME
 } from "./programService.js";
 import { subscribeToCallLogs } from "./syncService.js";
+import { pruneContactForCacheForMonth, getCutoffMonth } from "./contactService.js";
 import {
   diagGetDoc, diagGetDocs, diagOnSnapshot, diagSetDoc, diagAddDoc,
   diagUpdateDoc, diagDeleteDoc, diagWriteBatch, diagRunTransaction,
   diagGetCountFromServer
 } from "./firebaseDiagnostics.js";
 
-export const populateGlobalActivePartitionsCache = (snapDocs) => {
-  if (!Array.isArray(snapDocs)) return;
-  snapDocs.forEach(d => {
-    if (!d || d.id === "contacts") return;
-    const match = d.id.match(/^(\d{4}-\d{2})/);
-    if (match) {
-      const monthKey = match[1];
-      if (!globalActivePartitionsCache[monthKey]) {
-        globalActivePartitionsCache[monthKey] = {};
-      }
-      globalActivePartitionsCache[monthKey][d.id] = d.data() || { contacts: {} };
-    }
-  });
+export const isContactEligibleForCache = (data) => {
+  if (!data || data._deleted) return false;
+  if (data.isAssigned === false) return false;
+  const hasAssignedTo = (Array.isArray(data.assignedTo) && data.assignedTo.length > 0) || (Array.isArray(data.attenderIds) && data.attenderIds.length > 0) || !!data.assignedTo;
+  const hasAttender = !!data.attenderId || !!data.attenderName;
+  const hasAttenderStates = data.attenderStates && typeof data.attenderStates === "object" && Object.keys(data.attenderStates).length > 0;
+  const hasHistory = (Array.isArray(data.history) && data.history.length > 0);
+  const hasCallsOrStatus = (data.status && data.status !== "Pending") || !!data.lastCalledAt || !!data.remark;
+
+  return data.isAssigned === true || hasAssignedTo || hasAttender || hasAttenderStates || hasHistory || hasCallsOrStatus;
 };
 
 // Cold Boot Partition Cache Fetcher: Reads callCenterCache partition docs (~2-3 reads/month) when local IndexedDB is empty
@@ -76,6 +74,7 @@ export const rebuildCallCenterCache = async (isDryRun = false, forceFetchMaster 
       }
 
       await setDoc(doc(db, "callCenterCache", "placeholder"), { isPlaceholder: true });
+      await clearAdminIDBCache().catch(() => {});
 
       return {
         status: "success",
@@ -114,15 +113,10 @@ export const rebuildCallCenterCache = async (isDryRun = false, forceFetchMaster 
       const allContactsSnap = await getDocs(collection(db, "contacts"));
       allContactsSnap.docs.forEach(d => {
         const data = d.data();
-        if (data._deleted) return;
-        const isAssigned = data.isAssigned === true || 
-                           !!data.attenderId || 
-                           (Array.isArray(data.attenderIds) && data.attenderIds.length > 0) ||
-                           (data.attenderStates && Object.keys(data.attenderStates).length > 0);
-
-        if (!isAssigned) return;
+        if (!isContactEligibleForCache(data)) return;
 
         const contactMonths = new Set();
+        contactMonths.add(currentMonth);
 
         const addIfValidMonth = (ts) => {
           if (!ts) return;
@@ -272,13 +266,14 @@ export const rebuildCallCenterCache = async (isDryRun = false, forceFetchMaster 
     // Server Count Verification (1 read cost)
     let masterCount = 0;
     try {
-      const q = query(collection(db, "contacts"), where("isAssigned", "==", true));
+      const q = query(collection(db, "contacts"), where("_deleted", "!=", true));
       const countSnap = await getCountFromServer(q);
       masterCount = countSnap.data().count;
     } catch (err) {
       console.warn("getCountFromServer verification skipped:", err);
     }
 
+    await clearAdminIDBCache().catch(() => {});
     console.log(`✅ [CACHE REBUILD SUCCESS] Consolidated ${totalContactsConsolidated} contacts into ${totalNewPartsCount} parts. Master Count: ${masterCount}`);
     return {
       status: "success",
@@ -293,29 +288,95 @@ export const rebuildCallCenterCache = async (isDryRun = false, forceFetchMaster 
 };
 
 
-export const exportCallCenterCacheToJson = async () => {
-  console.log("[CACHE EXPORT] Downloading all cache documents...");
+export const exportCallCenterCacheToJson = async (options = {}) => {
+  const { duration = "all", startMonth = "", endMonth = "" } =
+    typeof options === "string" ? { duration: options } : options || {};
+
+  console.log(`[CACHE EXPORT] Downloading cache documents for duration: ${duration}...`);
   const cacheColl = collection(db, "callCenterCache");
   const cacheSnap = await getDocs(cacheColl);
   const exportData = {};
-  
-  cacheSnap.docs.forEach(d => {
-    exportData[d.id] = d.data();
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1; // 1-12
+
+  let targetMonthsSet = null;
+
+  if (duration === "current_month") {
+    const curStr = `${currentYear}-${String(currentMonth).padStart(2, "0")}`;
+    targetMonthsSet = new Set([curStr]);
+  } else if (duration === "last_3_months") {
+    targetMonthsSet = new Set();
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(currentYear, currentMonth - 1 - i, 1);
+      const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      targetMonthsSet.add(mStr);
+    }
+  } else if (duration === "last_6_months") {
+    targetMonthsSet = new Set();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(currentYear, currentMonth - 1 - i, 1);
+      const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      targetMonthsSet.add(mStr);
+    }
+  } else if (duration === "custom" && startMonth && endMonth) {
+    targetMonthsSet = new Set();
+    const [sY, sM] = startMonth.split("-").map(Number);
+    const [eY, eM] = endMonth.split("-").map(Number);
+    let curr = new Date(sY, sM - 1, 1);
+    const end = new Date(eY, eM - 1, 1);
+    while (curr <= end) {
+      const mStr = `${curr.getFullYear()}-${String(curr.getMonth() + 1).padStart(2, "0")}`;
+      targetMonthsSet.add(mStr);
+      curr.setMonth(curr.getMonth() + 1);
+    }
+  }
+
+  let totalContactsCount = 0;
+
+  cacheSnap.docs.forEach((d) => {
+    const docId = d.id;
+    if (docId === "placeholder" || docId === "contacts") {
+      if (duration === "all") {
+        exportData[docId] = d.data();
+      }
+      return;
+    }
+
+    const docMonth = docId.slice(0, 7); // e.g. "2026-08"
+    if (targetMonthsSet && !targetMonthsSet.has(docMonth)) {
+      return; // Skip partition outside selected duration
+    }
+
+    const data = d.data();
+    exportData[docId] = data;
+    if (data.contacts && typeof data.contacts === "object") {
+      totalContactsCount += Object.keys(data.contacts).length;
+    }
   });
-  
+
   const jsonStr = JSON.stringify(exportData, null, 2);
   const blob = new Blob([jsonStr], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `tgf_call_center_cache_export_${new Date().toISOString().slice(0, 10)}.json`;
+  const dateTag = new Date().toISOString().slice(0, 10);
+  a.download = `tgf_call_center_cache_export_${duration}_${dateTag}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  
-  console.log(`[CACHE EXPORT SUCCESS] Saved ${Object.keys(exportData).length} documents.`);
-  return { docCount: Object.keys(exportData).length, byteSize: jsonStr.length };
+
+  console.log(
+    `[CACHE EXPORT SUCCESS] Saved ${Object.keys(exportData).length} partitions (${totalContactsCount} contacts) for duration "${duration}".`
+  );
+  return {
+    docCount: Object.keys(exportData).length,
+    totalContactsCount,
+    byteSize: jsonStr.length,
+    duration
+  };
 };
 
 
@@ -837,7 +898,7 @@ export const updateCacheContacts = async (contactIds, inMemoryDataMap = {}, know
       const raw = inMemoryDataMap[id] || fetchedDataMap[id];
       if (!raw) return;
 
-      const isLive = raw.isAssigned === true && !raw._deleted;
+      const isLive = isContactEligibleForCache(raw);
       const contactMonths = new Set();
 
       if (isLive) {
@@ -922,16 +983,10 @@ export const verifyCallCenterCache = async () => {
     const liveMonthlyData = {};
     liveSnap.docs.forEach(d => {
       const data = d.data();
-      if (data._deleted) return;
-      
-      const isAssigned = data.isAssigned === true || 
-                         !!data.attenderId || 
-                         (Array.isArray(data.attenderIds) && data.attenderIds.length > 0) ||
-                         (data.attenderStates && Object.keys(data.attenderStates).length > 0);
-
-      if (!isAssigned) return;
+      if (!isContactEligibleForCache(data)) return;
       
       const contactMonths = new Set();
+      contactMonths.add(currentMonth);
 
       const addIfValidMonth = (ts) => {
         if (!ts) return;
@@ -971,7 +1026,7 @@ export const verifyCallCenterCache = async () => {
     const cacheColl = collection(db, "callCenterCache");
     const cacheSnap = await getDocs(cacheColl);
     const cacheMonthlyData = {};
-    cacheSnap.docs.filter(d => d.id !== "contacts").forEach(d => {
+    cacheSnap.docs.filter(d => d.id !== "contacts" && d.id !== "placeholder" && /^\d{4}-\d{2}/.test(d.id)).forEach(d => {
       const monthKey = d.id.split("_")[0];
       if (!cacheMonthlyData[monthKey]) {
         cacheMonthlyData[monthKey] = {};
@@ -1003,6 +1058,12 @@ export const verifyCallCenterCache = async () => {
         mismatches.push(`Month ${month} count mismatch: Live has ${liveKeys.length} contacts, Cache has ${cacheKeys.length}`);
       }
       
+      cacheKeys.forEach(id => {
+        if (!liveContactsMap[id]) {
+          mismatches.push(`Month ${month}: Contact ID ${id} is in cache but inactive/deleted in live database.`);
+        }
+      });
+
       liveKeys.forEach(id => {
         const liveC = liveContactsMap[id];
         const cacheC = cacheContactsMap[id];
@@ -1084,7 +1145,7 @@ export const getMonthRange = (option) => {
 };
 
 
-export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
+export const subscribeToAllCallLogs = (tag, scopeOption, callback, bypassIDBCache = false) => {
   let targetOption = scopeOption;
   let finalCallback = callback;
   if (typeof scopeOption === "function") {
@@ -1095,15 +1156,18 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
   }
 
   const cacheKey = `tgf_admin_logs_v3_${targetOption}_${tag || "ALL"}`;
+  let hasFirestoreEmitted = false;
 
   // 1. Immediately emit cached admin logs from IndexedDB if available (0ms, 0 Firebase reads)
-  getIDBCache(cacheKey).then(cachedLogs => {
-    if (Array.isArray(cachedLogs) && cachedLogs.length > 0) {
-      finalCallback(cachedLogs);
-    }
-  }).catch(err => {
-    console.warn("Failed to load admin call logs from IndexedDB:", err);
-  });
+  if (!bypassIDBCache) {
+    getIDBCache(cacheKey).then(cachedLogs => {
+      if (!hasFirestoreEmitted && Array.isArray(cachedLogs) && cachedLogs.length > 0) {
+        finalCallback(cachedLogs);
+      }
+    }).catch(err => {
+      console.warn("Failed to load admin call logs from IndexedDB:", err);
+    });
+  }
 
   const { startMonth, endMonth } = getMonthRange(targetOption);
 
@@ -1118,6 +1182,7 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
   
   const triggerCallback = () => {
     if (!cacheSnap) return;
+    hasFirestoreEmitted = true;
     
     const activeDocs = cacheSnap.docs.filter(d => d.id !== "contacts" && /^\d{4}-\d{2}(_part\d+)?$/.test(d.id));
     const activeIds = new Set(activeDocs.map(d => d.id.split("_")[0]));
@@ -1154,14 +1219,14 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
           
           // Deduplicate top-level history
           const topHistMap = new Map();
-          (existing.history || []).forEach(h => {
+          (existing.history || []).forEach((h, idx) => {
             const tsMs = getTimeMs(h.timestamp || h.date);
-            const k = `${tsMs}_${h.status}_${h.remark}`;
+            const k = `${tsMs || `old_${idx}`}_${h.status || "Pending"}_${(h.remark || "").trim()}`;
             topHistMap.set(k, h);
           });
-          (c.history || []).forEach(h => {
+          (c.history || []).forEach((h, idx) => {
             const tsMs = getTimeMs(h.timestamp || h.date);
-            const k = `${tsMs}_${h.status}_${h.remark}`;
+            const k = `${tsMs || `new_${idx}`}_${h.status || "Pending"}_${(h.remark || "").trim()}`;
             topHistMap.set(k, h);
           });
 
@@ -1177,14 +1242,14 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
                 const winner = tNew >= tOld ? stNew : stOld;
                 
                 const stateHistMap = new Map();
-                (stOld.history || []).forEach(h => {
+                (stOld.history || []).forEach((h, idx) => {
                   const tsMs = getTimeMs(h.timestamp || h.date);
-                  const k = `${tsMs}_${h.status}_${h.remark}`;
+                  const k = `${tsMs || `old_${idx}`}_${h.status || "Pending"}_${(h.remark || "").trim()}`;
                   stateHistMap.set(k, h);
                 });
-                (stNew.history || []).forEach(h => {
+                (stNew.history || []).forEach((h, idx) => {
                   const tsMs = getTimeMs(h.timestamp || h.date);
-                  const k = `${tsMs}_${h.status}_${h.remark}`;
+                  const k = `${tsMs || `new_${idx}`}_${h.status || "Pending"}_${(h.remark || "").trim()}`;
                   stateHistMap.set(k, h);
                 });
 
@@ -1212,7 +1277,15 @@ export const subscribeToAllCallLogs = (tag, scopeOption, callback) => {
       logs = logs.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
     }
     
-    logs = logs.filter(c => c.isAssigned === true && !c._deleted);
+    logs = logs.filter(c => {
+      if (c._deleted === true) return false;
+      if (c.isAssigned === true) return true;
+      const hasAssignedTo = Array.isArray(c.assignedTo) ? c.assignedTo.length > 0 : !!c.assignedTo;
+      const hasAttender = !!(c.attenderId || c.attenderName || c.assignedName);
+      const hasAttenderStates = c.attenderStates && Object.keys(c.attenderStates).length > 0;
+      const hasHistory = Array.isArray(c.history) && c.history.length > 0;
+      return c.isAssigned !== false || hasAssignedTo || hasAttender || hasAttenderStates || hasHistory;
+    });
     
     logs.sort((a, b) => {
       const ta = a.createdAt || 0;
@@ -1675,6 +1748,54 @@ export const getRegistrationsCachePartitionsDetail = async () => {
   }
 };
 
+export const deduplicateRegistrations = (rawDocs) => {
+  if (!Array.isArray(rawDocs) || rawDocs.length === 0) return [];
+  const uniqueMap = new Map();
+
+  rawDocs.forEach(r => {
+    if (!r || r._deleted) return;
+    
+    // Primary key is the registration document ID (registrationId or id)
+    const regIdKey = r.registrationId || r.id;
+    if (regIdKey) {
+      const existing = uniqueMap.get(regIdKey);
+      if (!existing) {
+        uniqueMap.set(regIdKey, r);
+      } else {
+        const getTimestampMs = (item) => {
+          const ts = item.registeredAt || item.updatedAt || item.createdAt;
+          if (!ts) return 0;
+          if (typeof ts.toMillis === "function") return ts.toMillis();
+          if (ts.seconds) return ts.seconds * 1000;
+          const d = new Date(ts);
+          return isNaN(d.getTime()) ? 0 : d.getTime();
+        };
+        if (getTimestampMs(r) >= getTimestampMs(existing)) {
+          uniqueMap.set(regIdKey, r);
+        }
+      }
+    } else {
+      // Fallback for docs without an explicit registration ID
+      const contactKey = r._contactRefId || r.contactId ||
+        (r.normalizedPhone || r.Phone || r.mobile || r.normalizedMobile ? String(r.normalizedPhone || r.Phone || r.mobile || r.normalizedMobile).replace(/\D/g, "") : null);
+      if (!contactKey) return;
+      const progVal = r.calledFor || r["Called For"] || r.programName || "general";
+      const fallbackKey = `${contactKey}___${String(progVal).trim().toLowerCase()}`;
+      if (!uniqueMap.has(fallbackKey)) {
+        uniqueMap.set(fallbackKey, r);
+      }
+    }
+  });
+
+  const res = Array.from(uniqueMap.values());
+  console.log("[DEDUP REGISTRATIONS TRACE]", {
+    rawDocsCount: rawDocs.length,
+    deduplicatedCount: res.length,
+    convertedByList: res.map(d => d.convertedBy || d.attenderName || "Unknown")
+  });
+  return res;
+};
+
 export const subscribeToRegistrations = (scopeOption, callback) => {
   let targetOption = scopeOption;
   let finalCallback = callback;
@@ -1706,7 +1827,9 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
         }
         return copy;
       });
-      finalCallback(hydrated);
+      const deduplicated = deduplicateRegistrations(hydrated);
+      console.log("[REGISTRATIONS IDB EMIT]", { count: deduplicated.length });
+      finalCallback(deduplicated);
     }
   }).catch(err => {
     console.warn("IndexedDB access error in subscribeToRegistrations:", err);
@@ -1760,14 +1883,16 @@ export const subscribeToRegistrations = (scopeOption, callback) => {
       docs = Object.values(regsMap).filter(r => !r._deleted);
     }
 
-    docs.sort((a, b) => {
+    const deduplicatedDocs = deduplicateRegistrations(docs);
+
+    deduplicatedDocs.sort((a, b) => {
       const ta = a.registeredAt?.toMillis ? a.registeredAt.toMillis() : (a.registeredAt?.seconds ? a.registeredAt.seconds * 1000 : 0);
       const tb = b.registeredAt?.toMillis ? b.registeredAt.toMillis() : (b.registeredAt?.seconds ? b.registeredAt.seconds * 1000 : 0);
       return tb - ta;
     });
 
-    await setIDBCache(cacheKey, docs);
-    finalCallback(docs);
+    await setIDBCache(cacheKey, deduplicatedDocs);
+    finalCallback(deduplicatedDocs);
   }, (err) => {
     console.error("subscribeToRegistrations listener error:", err);
   }, {
@@ -1823,15 +1948,17 @@ export const refreshRegistrations = async (scopeOption, callback) => {
     docs = Object.values(regsMap).filter(r => !r._deleted);
   }
 
-  docs.sort((a, b) => {
+  const deduplicatedDocs = deduplicateRegistrations(docs);
+
+  deduplicatedDocs.sort((a, b) => {
     const ta = a.registeredAt?.toMillis ? a.registeredAt.toMillis() : (a.registeredAt?.seconds ? a.registeredAt.seconds * 1000 : 0);
     const tb = b.registeredAt?.toMillis ? b.registeredAt.toMillis() : (b.registeredAt?.seconds ? b.registeredAt.seconds * 1000 : 0);
     return tb - ta;
   });
 
-  await setIDBCache(cacheKey, docs);
-  if (typeof callback === "function") callback(docs);
-  return docs;
+  await setIDBCache(cacheKey, deduplicatedDocs);
+  if (typeof callback === "function") callback(deduplicatedDocs);
+  return deduplicatedDocs;
 };
 
 // ─────────────────────────────────────────────
@@ -2262,3 +2389,121 @@ export const lockAndPurgeMonthlyReport = async (monthStr, adminName = "Admin", p
 
   return { success: true, count: Object.keys(activeContacts || {}).length };
 };
+
+// ─────────────────────────────────────────────
+// FORENSIC AUDIT: SOURCE OF TRUTH COMPARISON
+// ─────────────────────────────────────────────
+
+export const auditPerformanceSourceOfTruth = async (attenderId, monthStr) => {
+  const currentMonth = monthStr || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  console.group(`🔍 [SOURCE OF TRUTH FORENSIC AUDIT] Month: ${currentMonth} | Attender ID: ${attenderId || 'ALL'}`);
+
+  try {
+    // 1. Fetch Admin Source of Truth: Firestore callCenterCache
+    const cacheRef = doc(db, "callCenterCache", `${currentMonth}_part1`);
+    const cacheSnap = await diagGetDoc(cacheRef, { function: "auditPerformanceSourceOfTruth" });
+
+    const adminContactsMap = cacheSnap.exists() ? (cacheSnap.data().contacts || {}) : {};
+    const adminLogs = Object.values(adminContactsMap);
+
+    // 2. Fetch Attender Source of Truth: IndexedDB
+    let attenderLogs = [];
+    if (attenderId) {
+      const cacheKey = `tgf_attender_logs_${attenderId}`;
+      attenderLogs = (await getIDBCache(cacheKey)) || [];
+    } else {
+      // Load all attender log keys from IndexedDB kv_store
+      const allIDBKeys = await getAllIDBKeys();
+      const attenderKeys = allIDBKeys.filter(k => typeof k === "string" && k.startsWith("tgf_attender_logs_"));
+      for (const key of attenderKeys) {
+        const logsForKey = (await getIDBCache(key)) || [];
+        attenderLogs.push(...logsForKey);
+      }
+    }
+
+    console.log(`📊 Raw Doc Counts -> Admin Cache (${currentMonth}_part1): ${adminLogs.length} contacts | Attender IndexedDB: ${attenderLogs.length} contacts`);
+
+    // 3. Extract Today's attempts from Admin Source
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const parseTs = (t) => {
+      if (!t) return null;
+      if (t instanceof Date) return isNaN(t.getTime()) ? null : t;
+      if (typeof t.toDate === "function") return t.toDate();
+      if (typeof t === "object" && t.seconds !== undefined) return new Date(t.seconds * 1000);
+      const d = new Date(t);
+      return isNaN(d.getTime()) ? null : d;
+    };
+
+    const adminTodayAttempts = [];
+    adminLogs.forEach(c => {
+      if (c.attenderStates) {
+        Object.entries(c.attenderStates).forEach(([attId, state]) => {
+          if (attenderId && String(attId).toLowerCase().trim() !== String(attenderId).toLowerCase().trim()) return;
+          (state.history || []).forEach((h, idx) => {
+            const d = parseTs(h.timestamp);
+            if (d && d >= todayStart && d <= todayEnd) {
+              adminTodayAttempts.push({
+                source: "Admin (callCenterCache)",
+                leadId: c.id,
+                name: c.Name || c.name || "Unknown",
+                attenderId: attId,
+                attenderName: state.attenderName || "",
+                status: h.status || "",
+                remark: h.remark || "",
+                timestamp: d.toISOString()
+              });
+            }
+          });
+        });
+      }
+    });
+
+    const attenderTodayAttempts = [];
+    attenderLogs.forEach(c => {
+      if (c.attenderStates) {
+        Object.entries(c.attenderStates).forEach(([attId, state]) => {
+          if (attenderId && String(attId).toLowerCase().trim() !== String(attenderId).toLowerCase().trim()) return;
+          (state.history || []).forEach((h, idx) => {
+            const d = parseTs(h.timestamp);
+            if (d && d >= todayStart && d <= todayEnd) {
+              attenderTodayAttempts.push({
+                source: "Attender (IndexedDB)",
+                leadId: c.id,
+                name: c.Name || c.name || "Unknown",
+                attenderId: attId,
+                attenderName: state.attenderName || "",
+                status: h.status || "",
+                remark: h.remark || "",
+                timestamp: d.toISOString()
+              });
+            }
+          });
+        });
+      }
+    });
+
+    console.log(`📌 Today's Calls -> Admin Source Count: ${adminTodayAttempts.length} | Attender Source Count: ${attenderTodayAttempts.length}`);
+
+    console.group("📋 Admin Today Call Attempts (callCenterCache)");
+    console.table(adminTodayAttempts);
+    console.groupEnd();
+
+    console.group("📋 Attender Today Call Attempts (IndexedDB)");
+    console.table(attenderTodayAttempts);
+    console.groupEnd();
+
+  } catch (err) {
+    console.error("❌ Forensic Audit Error:", err);
+  } finally {
+    console.groupEnd();
+  }
+};
+
+if (typeof window !== "undefined") {
+  window.auditPerformanceSourceOfTruth = auditPerformanceSourceOfTruth;
+}
+

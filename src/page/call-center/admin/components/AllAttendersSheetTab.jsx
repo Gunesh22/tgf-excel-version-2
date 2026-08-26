@@ -326,12 +326,13 @@ export default function AllAttendersSheetTab({
     "Remark",
     "Callback"
   ];
-  const DEFAULT_HIDDEN_COLS = ["Attender", "Phone", "Mobile", "Email", "City", "State", "Tags", "Sub Program", "Calls Done", "Callback"];
+  const DEFAULT_HIDDEN_COLS = ["Attender", "Phone", "Mobile", "Email", "City", "State", "Tags", "Sub Program", "Callback"];
 
   const [hiddenColumns, setHiddenColumns] = useState(() => {
     try {
       const saved = localStorage.getItem("admin_hidden_cols");
-      return saved ? JSON.parse(saved) : DEFAULT_HIDDEN_COLS;
+      const parsed = saved ? JSON.parse(saved) : DEFAULT_HIDDEN_COLS;
+      return parsed.filter(c => c !== "Calls Done");
     } catch {
       return DEFAULT_HIDDEN_COLS;
     }
@@ -1320,7 +1321,7 @@ export default function AllAttendersSheetTab({
 
                 return (
                   <tr
-                    key={log.id}
+                    key={`${log.id || 'log'}_${idx}`}
                     className={`cursor-pointer transition-colors ${rowBg}`}
                     onClick={() => {
                       if (!didDrag.current) {

@@ -34,22 +34,22 @@ export const CallEntryTab = ({
   const newNoteRef = useRef(null);
 
   return (
-    <div className={`space-y-6 p-6 rounded-3xl border transition-all ${callTheme.panelClass}`}>
+    <div className="space-y-4 p-4 text-xs bg-white rounded-lg">
       {/* Call Type and Options */}
-      <div className="space-y-2">
-        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-slate-700 uppercase tracking-wider flex items-center gap-1">
           Call Type
         </label>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1.5">
           {CALL_TYPE_OPTIONS.map(opt => (
             <button
               key={opt}
               type="button"
               onClick={() => handleCallTypeChange(opt)}
-              className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${
+              className={`px-3 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
                 edited.callType === opt
-                  ? callTheme.callTypeBtnSelected
-                  : callTheme.callTypeBtnUnselected
+                  ? "bg-slate-900 text-white border-slate-900 shadow-2xs"
+                  : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
               }`}
             >
               {opt === "outgoing f" ? "Outgoing (F)" : opt === "incoming f" ? "Incoming (F)" : opt.charAt(0).toUpperCase() + opt.slice(1)}
@@ -59,11 +59,11 @@ export const CallEntryTab = ({
       </div>
 
       {/* Called For and Source Dropdowns */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {/* Searchable Dropdown: Called For */}
-        <div className="space-y-2">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-            <Phone size={13} className="text-blue-500" /> Called For <span className="text-red-500 font-bold ml-0.5">*</span>
+        <div className="space-y-1">
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+            <Phone size={12} className="text-slate-400" /> Called For <span className="text-rose-500 font-bold ml-0.5">*</span>
           </label>
           <SearchableDropdown
             options={CALLED_FOR_OPTIONS}
@@ -71,13 +71,13 @@ export const CallEntryTab = ({
             onChange={val => handleChange(calledForField, val)}
             placeholder="Search & select multiple..."
             isMulti={true}
-            colorClass="blue"
+            colorClass="indigo"
             disabled={!getEditable(calledForField)}
           />
           {getOtherValuesForField(calledForField).map((item, idx) => (
-            <div key={idx} className="text-[10px] text-blue-600 font-bold mt-1 flex items-center gap-1">
-              <span className="opacity-70">👤 {item.name}:</span>
-              <span className="bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 font-medium">
+            <div key={idx} className="text-[11px] text-slate-600 font-medium mt-0.5 flex items-center gap-1">
+              <span className="opacity-75">👤 {item.name}:</span>
+              <span className="bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 font-medium">
                 {Array.isArray(item.val) ? item.val.join(", ") : String(item.val)}
               </span>
             </div>
@@ -85,9 +85,9 @@ export const CallEntryTab = ({
         </div>
 
         {/* Searchable Dropdown: Source */}
-        <div className="space-y-2">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-            <Tag size={13} className="text-amber-500" /> Source <span className="text-red-500 font-bold ml-0.5">*</span>
+        <div className="space-y-1">
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+            <Tag size={12} className="text-slate-400" /> Source <span className="text-rose-500 font-bold ml-0.5">*</span>
           </label>
           <SearchableDropdown
             options={SOURCE_OPTIONS}
@@ -98,19 +98,19 @@ export const CallEntryTab = ({
             disabled={!getEditable(sourceField)}
           />
           {getOtherValuesForField(sourceField).map((item, idx) => (
-            <div key={idx} className="text-[10px] text-amber-600 font-bold mt-1 flex items-center gap-1">
-              <span className="opacity-70">👤 {item.name}:</span>
-              <span className="bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 font-medium">{item.val}</span>
+            <div key={idx} className="text-[11px] text-slate-600 font-medium mt-0.5 flex items-center gap-1">
+              <span className="opacity-75">👤 {item.name}:</span>
+              <span className="bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 font-medium">{item.val}</span>
             </div>
           ))}
         </div>
       </div>
 
       {/* Call Result Status & Objection Tracker */}
-      <div className="space-y-6">
-        <div className="space-y-2">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-            <CheckCircle2 size={13} className="text-indigo-500" /> General Result Status <span className="text-red-500 font-bold ml-0.5">*</span>
+      <div className="space-y-3">
+        <div className="space-y-1">
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+            <CheckCircle2 size={12} className="text-slate-400" /> General Result Status <span className="text-rose-500 font-bold ml-0.5">*</span>
           </label>
           <SearchableDropdown
             options={STATUS_OPTIONS}
@@ -143,31 +143,31 @@ export const CallEntryTab = ({
             colorClass="indigo"
           />
           {getOtherValuesForField("status").map((item, idx) => (
-            <div key={idx} className="text-[10px] text-indigo-600 font-bold mt-1 flex items-center gap-1">
-              <span className="opacity-70">👤 {item.name}:</span>
-              <span className="bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-medium">{item.val}</span>
+            <div key={idx} className="text-[11px] text-slate-600 font-medium mt-0.5 flex items-center gap-1">
+              <span className="opacity-75">👤 {item.name}:</span>
+              <span className="bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 font-medium">{item.val}</span>
             </div>
           ))}
 
           {/* Query Sub-status Toggle */}
           {edited.status === "Query" && (
             <div className="flex items-center gap-2 pt-1">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest shrink-0">Query:</span>
+              <span className="text-xs font-medium text-slate-600 uppercase tracking-wider shrink-0">Query:</span>
               <div className="flex gap-1.5">
                 {["Pending", "Solved"].map(qs => (
                   <button
                     key={qs}
                     type="button"
                     onClick={() => handleChange("queryStatus", qs)}
-                    className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all ${
+                    className={`px-2.5 py-0.5 rounded text-xs font-medium border transition-all cursor-pointer ${
                       (edited.queryStatus || "Pending") === qs
                         ? qs === "Pending"
-                          ? "bg-amber-500 text-white border-amber-500 shadow shadow-amber-500/20 scale-105"
-                          : "bg-emerald-500 text-white border-emerald-500 shadow shadow-emerald-500/20 scale-105"
-                        : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
+                          ? "bg-amber-500 text-white border-amber-500 shadow-2xs"
+                          : "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
                     }`}
                   >
-                    {qs === "Pending" ? "⏳ Pending" : "✅ Solved"}
+                    {qs === "Pending" ? "⏳ Pending" : "✓ Solved"}
                   </button>
                 ))}
               </div>
@@ -177,19 +177,19 @@ export const CallEntryTab = ({
 
         {/* Objection Tracker */}
         {(edited.status === "Not interested" || edited.status === "Not possible") && (
-          <div className="space-y-3 p-4 bg-red-50/50 border border-red-100 rounded-2xl animate-slide-up">
-            <label className="text-[10px] font-black text-red-500 uppercase tracking-widest flex items-center gap-2">
-              <AlertCircle size={13} /> Why are they {edited.status.toLowerCase()}?
+          <div className="space-y-1.5 p-3 bg-rose-50/60 border border-rose-200 rounded-lg animate-slide-up">
+            <label className="text-xs font-semibold text-rose-700 flex items-center gap-1">
+              <AlertCircle size={12} /> Reason for {edited.status.toLowerCase()}:
             </label>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1">
               {OBJECTION_REASONS.map(reason => (
                 <button
                   key={reason}
                   type="button"
                   onClick={() => handleChange("objectionReason", edited.objectionReason === reason ? "" : reason)}
-                  className={`px-3 py-2 rounded-xl text-[11px] font-black border transition-all ${edited.objectionReason === reason
-                      ? "bg-red-500 text-white border-red-500 shadow-lg shadow-red-500/20 scale-105"
-                      : "bg-white text-red-600 border-red-200 hover:bg-red-100"
+                  className={`px-2 py-0.5 rounded text-xs font-medium border transition-all cursor-pointer ${edited.objectionReason === reason
+                      ? "bg-rose-600 text-white border-rose-600 shadow-2xs"
+                      : "bg-white text-rose-700 border-rose-200 hover:bg-rose-100/50"
                     }`}
                 >
                   {reason}
@@ -201,12 +201,12 @@ export const CallEntryTab = ({
       </div>
 
       {/* Call Notes & History */}
-      <div className="space-y-6">
-        <div className="space-y-3">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-            <MessageSquare size={13} className="text-indigo-500" /> Call Notes
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+            <MessageSquare size={12} className="text-slate-400" /> Call Notes
             {mergedHistory && mergedHistory.length > 0 && (
-              <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-600 rounded text-[9px] font-black">{mergedHistory.length} past</span>
+              <span className="ml-1 px-1.5 py-0.2 bg-slate-100 text-slate-600 border border-slate-200 rounded text-[10px] font-semibold">{mergedHistory.length} past</span>
             )}
           </label>
 
@@ -240,19 +240,18 @@ export const CallEntryTab = ({
                 }
               }}
               rows={2}
-              className="w-full px-4 py-3 bg-white border-2 border-indigo-200 rounded-2xl text-sm font-medium resize-none overflow-hidden focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition leading-relaxed"
+              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-normal resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition leading-relaxed text-slate-800"
               placeholder="✏️ Add note for today's call..."
             />
-            <span className="absolute bottom-3 right-3 text-[9px] text-indigo-300 font-black uppercase tracking-wider pointer-events-none">New Note</span>
           </div>
         </div>
 
         {/* Follow-up / Callback scheduling */}
-        <div className="space-y-2">
-          <label className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-2 ${edited.callbackDate ? "text-amber-500" : "text-slate-400"}`}>
-            <CalendarDays size={13} /> {edited.callbackDate ? "Follow-up Scheduled" : "Schedule Follow-up"}
+        <div className="space-y-1">
+          <label className={`text-xs font-semibold uppercase tracking-wider flex items-center gap-1 ${edited.callbackDate ? "text-amber-700" : "text-slate-700"}`}>
+            <CalendarDays size={12} /> {edited.callbackDate ? "Follow-up Scheduled" : "Schedule Follow-up"}
           </label>
-          <div className="flex gap-3">
+          <div className="flex gap-2">
             <input
               type="date"
               value={getCallbackDateStr()}
@@ -260,28 +259,28 @@ export const CallEntryTab = ({
                 handleChange("callbackDate", e.target.value);
                 if (e.target.value && !edited.callbackStatus) handleChange("callbackStatus", "pending");
               }}
-              className={`flex-1 px-4 py-3 border rounded-2xl text-sm font-bold focus:outline-none transition ${edited.callbackDate ? "bg-amber-50 border-amber-200 text-amber-700 ring-4 ring-amber-500/10" : "bg-gray-50 border-gray-100 text-gray-700"}`}
+              className={`flex-1 px-3 py-1.5 border rounded-lg text-xs font-medium focus:outline-none transition ${edited.callbackDate ? "bg-amber-50/80 border-amber-300 text-amber-900 ring-2 ring-amber-500/10" : "bg-slate-50 border-slate-200 text-slate-800"}`}
             />
             {edited.callbackDate && (
-              <button type="button" onClick={() => { handleChange("callbackDate", null); handleChange("callbackStatus", null); }} className="px-4 py-2 bg-red-50 text-red-500 font-bold rounded-xl text-xs hover:bg-red-100 transition">Remove</button>
+              <button type="button" onClick={() => { handleChange("callbackDate", null); handleChange("callbackStatus", null); }} className="px-2.5 py-1 bg-rose-50 border border-rose-200 text-rose-700 font-medium rounded-lg text-xs hover:bg-rose-100 transition cursor-pointer">Remove</button>
             )}
           </div>
 
           {edited.callbackDate && (
-            <div className="flex gap-2 flex-wrap pt-1">
+            <div className="flex gap-1 flex-wrap pt-0.5">
               {[
-                { value: "pending", label: "⏳ Pending", activeClass: "bg-amber-500 text-white border-amber-500 shadow-lg shadow-amber-400/20", inactiveClass: "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100" },
-                { value: "done", label: "✅ Done", activeClass: "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-400/20", inactiveClass: "bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100" },
-                { value: "rescheduled", label: "🔄 Rescheduled", activeClass: "bg-blue-500 text-white border-blue-500 shadow-lg shadow-blue-400/20", inactiveClass: "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100" },
-                { value: "cancelled", label: "❌ Cancelled", activeClass: "bg-red-500 text-white border-red-500 shadow-lg shadow-red-400/20", inactiveClass: "bg-red-50 text-red-500 border-red-200 hover:bg-red-100" },
+                { value: "pending", label: "⏳ Pending", activeClass: "bg-amber-500 text-white border-amber-500 shadow-2xs", inactiveClass: "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100" },
+                { value: "done", label: "✓ Done", activeClass: "bg-emerald-600 text-white border-emerald-600 shadow-2xs", inactiveClass: "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100" },
+                { value: "rescheduled", label: "↺ Rescheduled", activeClass: "bg-sky-600 text-white border-sky-600 shadow-2xs", inactiveClass: "bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100" },
+                { value: "cancelled", label: "✕ Cancelled", activeClass: "bg-rose-600 text-white border-rose-600 shadow-2xs", inactiveClass: "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100" },
               ].map(opt => (
                 <button
                   key={opt.value}
                   type="button"
                   onClick={() => handleChange("callbackStatus", opt.value)}
-                  className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all ${(edited.callbackStatus || "pending") === opt.value
-                    ? opt.activeClass + " scale-105"
-                    : opt.inactiveClass + " scale-95 hover:scale-100"
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-all cursor-pointer ${(edited.callbackStatus || "pending") === opt.value
+                    ? opt.activeClass
+                    : opt.inactiveClass
                     }`}
                 >
                   {opt.label}
@@ -292,24 +291,19 @@ export const CallEntryTab = ({
         </div>
 
         {/* Fast Registration */}
-        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col gap-3">
-          <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm uppercase tracking-wider">
-            <Flame size={16} /> Fast Registration
+        <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 text-slate-700 font-semibold text-xs">
+            <Flame size={14} className="text-amber-500" fill="currentColor" /> Abhivyakti Registration
           </div>
           {edited.status === "Reg.Done" ? (
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={true}
-                className="flex-1 py-3 rounded-xl font-bold bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2"
-              >
-                <CheckCircle2 size={18} />
-                Added to Abhivyakti
-              </button>
+            <div className="flex gap-1.5">
+              <span className="px-2.5 py-1 rounded-lg font-medium bg-emerald-600 text-white flex items-center gap-1 text-xs">
+                <CheckCircle2 size={13} /> Registered
+              </span>
               <button
                 type="button"
                 onClick={() => setShowUndoStatusPrompt(true)}
-                className="px-4 py-3 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs transition flex items-center justify-center gap-1 active:scale-95 hover:scale-105"
+                className="px-2 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-medium rounded-lg text-xs transition cursor-pointer"
               >
                 Undo
               </button>
@@ -330,10 +324,10 @@ export const CallEntryTab = ({
                   handleChange("status", "Reg.Done");
                 }
               }}
-              className="w-full py-3 rounded-xl font-bold transition flex items-center justify-center gap-2 bg-white text-emerald-700 border-2 border-emerald-500 hover:bg-emerald-50 active:scale-95"
+              className="px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 text-xs shadow-2xs cursor-pointer"
             >
-              <CheckCircle2 size={18} />
-              Add to Abhivyakti Report
+              <CheckCircle2 size={13} />
+              Mark Registered
             </button>
           )}
         </div>

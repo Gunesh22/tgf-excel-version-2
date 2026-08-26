@@ -8,7 +8,7 @@ export const HistoryTimeline = ({
   if (!mergedHistory || mergedHistory.length === 0) return null;
 
   return (
-    <div className="space-y-2 border border-gray-100 rounded-2xl p-3 bg-gray-50/50">
+    <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1 border border-slate-200 rounded-lg p-2.5 bg-slate-50/50 text-xs">
       {[...mergedHistory].reverse().map((h, revIdx) => {
         const origIdx = h.originalIndex;
         const calledForStr = h.calledFor || h.called_for || h["Called For"] || "";
@@ -16,76 +16,53 @@ export const HistoryTimeline = ({
         const callTypeStr = h.callType || "";
 
         return (
-          <div key={revIdx} className="flex gap-2.5">
-            <div className="shrink-0 flex flex-col items-center pt-2">
-              <div className={`w-2 h-2 rounded-full ${h.isCurrentDoc ? "bg-indigo-500" : "bg-amber-400 animate-pulse"} shrink-0`} />
-              {revIdx < mergedHistory.length - 1 && <div className="w-px flex-1 bg-gray-200 mt-1" />}
-            </div>
-            <div className="flex-1 bg-white rounded-xl p-3 border border-gray-100 shadow-sm mb-1">
-              <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-                <span className="text-[10px] font-black text-gray-500 uppercase tracking-wide">
-                  📅 {(() => {
+          <div key={revIdx} className="bg-white rounded-md p-2 border border-slate-200 text-xs space-y-1">
+            <div className="flex items-center justify-between gap-2 flex-wrap text-[11px] text-slate-500 font-medium">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-semibold text-slate-700">
+                  {(() => {
                     const timestamp = h.timestamp;
                     const d = timestamp ? (timestamp.toDate ? timestamp.toDate() : (timestamp.seconds ? new Date(timestamp.seconds * 1000) : new Date(timestamp))) : null;
-                    return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "Unknown Date";
+                    return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
                   })()}
                 </span>
                 {h.status && (
-                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
-                    h.status === "Interested" ? "bg-blue-100 text-blue-700" :
-                    h.status === "Reg.Done" ? "bg-emerald-100 text-emerald-700" :
-                    "bg-gray-100 text-gray-600"
+                  <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold ${
+                    h.status === "Interested" ? "bg-indigo-50 text-indigo-700 border border-indigo-200" :
+                    h.status === "Reg.Done" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                    "bg-slate-100 text-slate-600 border border-slate-200"
                   }`}>{h.status}</span>
                 )}
                 {calledForStr && (
-                  <span className="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-[9px] font-bold border border-blue-200 truncate max-w-[130px]">
-                    🎯 {calledForStr}
-                  </span>
-                )}
-                {sourceStr && (
-                  <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[9px] font-bold border border-amber-200 truncate max-w-[110px]">
-                    📢 {sourceStr}
+                  <span className="text-slate-500 text-[10px] truncate max-w-[120px]">
+                    • {calledForStr}
                   </span>
                 )}
                 {callTypeStr && (
-                  <span className="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-[9px] font-bold border border-purple-200 uppercase">
-                    {callTypeStr}
+                  <span className="text-[10px] font-medium uppercase text-slate-400">
+                    ({callTypeStr})
                   </span>
                 )}
-                <span className="text-[9px] text-indigo-600 font-extrabold ml-auto truncate max-w-[110px]">
-                  👤 {h.attenderName || "Attender"}
-                </span>
               </div>
-              <textarea
-                value={h.remark || ""}
-                readOnly={!h.isCurrentDoc || origIdx === -1 || !onChangeHistory}
-                onChange={e => {
-                  if (!h.isCurrentDoc || origIdx === -1 || !onChangeHistory) return;
-                  const updatedHistory = [...(historyList || [])];
-                  updatedHistory[origIdx] = { ...updatedHistory[origIdx], remark: e.target.value };
-                  onChangeHistory(updatedHistory);
-                  e.target.style.height = 'inherit';
-                  e.target.style.height = `${e.target.scrollHeight}px`;
-                }}
-                onFocus={e => {
-                  e.target.style.height = 'inherit';
-                  e.target.style.height = `${e.target.scrollHeight}px`;
-                }}
-                ref={el => {
-                  if (el) {
-                    setTimeout(() => {
-                      el.style.height = 'inherit';
-                      el.style.height = `${el.scrollHeight}px`;
-                    }, 0);
-                  }
-                }}
-                rows={1}
-                className={`w-full bg-transparent text-sm text-gray-700 resize-none overflow-hidden focus:outline-none rounded-lg px-1 py-0.5 transition leading-relaxed placeholder:text-gray-300 ${
-                  h.isCurrentDoc && origIdx !== -1 && onChangeHistory ? "focus:bg-slate-50 focus:ring-2 focus:ring-indigo-100" : "text-gray-600 italic"
-                }`}
-                placeholder="No note for this call..."
-              />
+              <span className="text-slate-500 text-[10px] font-medium ml-auto">
+                {h.attenderName || "Attender"}
+              </span>
             </div>
+            <textarea
+              value={h.remark || ""}
+              readOnly={!h.isCurrentDoc || origIdx === -1 || !onChangeHistory}
+              onChange={e => {
+                if (!h.isCurrentDoc || origIdx === -1 || !onChangeHistory) return;
+                const updatedHistory = [...(historyList || [])];
+                updatedHistory[origIdx] = { ...updatedHistory[origIdx], remark: e.target.value };
+                onChangeHistory(updatedHistory);
+              }}
+              rows={1}
+              className={`w-full bg-transparent text-xs text-slate-800 resize-none focus:outline-none leading-tight ${
+                h.isCurrentDoc && origIdx !== -1 && onChangeHistory ? "focus:bg-slate-50 rounded px-1" : "text-slate-600"
+              }`}
+              placeholder="No note logged..."
+            />
           </div>
         );
       })}

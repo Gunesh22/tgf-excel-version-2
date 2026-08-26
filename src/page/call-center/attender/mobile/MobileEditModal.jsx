@@ -3,7 +3,7 @@ import { toast } from "react-hot-toast";
 import {
   Phone, Plus, X, Tag, User, MapPin, MessageSquare,
   Hash, Clock, CheckCircle2, AlertCircle, Trash2,
-  CalendarDays, Loader, Flame, Edit3, ArrowLeft, Users
+  CalendarDays, Loader, Flame, Edit3, ArrowLeft, Users, RotateCw
 } from "lucide-react";
 import {
   addIncomingCallLog, updateCallLog, checkGlobalDuplicate, findMatchingAttenderState
@@ -82,6 +82,8 @@ export default function MobileEditModal({
     if (row._isNew && !normalized.Khoji) {
       normalized.Khoji = "No";
     }
+
+    normalized.remark = "";
 
     return normalized;
   };
@@ -167,6 +169,56 @@ export default function MobileEditModal({
       delete updates.assignedName;
 
       updates.lastEditedBy = attenderName || "Unknown";
+
+      // Isolate history to this attender only
+      const attState = findMatchingAttenderState(row.attenderStates, attenderId, attenderName);
+      let baseHistory = Array.isArray(targetEdited.history) 
+        ? targetEdited.history 
+        : (Array.isArray(attState?.history) ? attState.history : []);
+      
+      baseHistory = baseHistory.filter(h => {
+        if (!h) return false;
+        const hName = String(h.attenderName || "").toLowerCase().trim();
+        const hId = String(h.attenderId || "").toLowerCase().trim();
+        const myName = String(attenderName || "").toLowerCase().trim();
+        const myId = String(attenderId || "").toLowerCase().trim();
+        if (myId && hId && hId === myId) return true;
+        if (myName && hName && hName === myName) return true;
+        return !hId && !hName;
+      });
+
+      const oldStatus = String(savedRow.status || "").trim();
+      const newStatus = String(targetEdited.status || "").trim();
+      const statusChanged = oldStatus !== newStatus;
+
+      const oldRemark = String(savedRow.remark || "").trim();
+      const newRemark = String(targetEdited.remark || "").trim();
+      const remarkChanged = oldRemark !== newRemark;
+
+      const isCallAttemptUpdated = statusChanged || remarkChanged;
+      if (isCallAttemptUpdated) {
+        const newHist = {
+          status: targetEdited.status || "Call Log Added",
+          remark: targetEdited.remark || "",
+          attenderName: attenderName || "Unknown",
+          timestamp: new Date().toISOString(),
+          calledFor: targetEdited[calledForField] || targetEdited["Called For"] || targetEdited.calledFor || "",
+          source: targetEdited[sourceField] || targetEdited.Source || targetEdited.source || "",
+          callType: targetEdited.callType || "outgoing"
+        };
+        updates.history = [...baseHistory, newHist];
+      } else {
+        updates.history = baseHistory;
+      }
+
+      console.log(`[MOBILE ATTENDER ISOLATED SAVE] Attender: "${attenderName}" (${attenderId})`, {
+        contactId: targetDocId,
+        leadName: targetEdited.Name || savedRow.Name,
+        previousIsolatedHistoryCount: baseHistory.length,
+        isCallAttemptUpdated,
+        finalHistoryCount: updates.history ? updates.history.length : baseHistory.length,
+        savedHistoryEntries: updates.history || baseHistory
+      });
 
       const targetDocId = targetEdited.contactId || targetEdited.id || row.id;
       const isNewWithoutDoc = row._isNew && !targetEdited.contactId && !targetEdited.id;
@@ -373,14 +425,29 @@ export default function MobileEditModal({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-9 h-9 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition shrink-0 active:scale-95"
-              title="Close modal"
-            >
-              <X size={20} />
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof onRefreshLead === "function") {
+                    onRefreshLead(edited || row);
+                  }
+                }}
+                disabled={isFetchingShared}
+                className="w-9 h-9 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-95 disabled:opacity-50"
+                title="Force fetch fresh lead from database & update local cache"
+              >
+                <RotateCw size={17} className={isFetchingShared ? "animate-spin text-amber-300" : ""} />
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-9 h-9 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-95"
+                title="Close modal"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
 
           {/* Action Buttons Row: Call & WhatsApp */}

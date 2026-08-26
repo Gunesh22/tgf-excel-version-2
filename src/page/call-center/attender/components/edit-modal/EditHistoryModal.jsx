@@ -37,13 +37,15 @@ export default function EditHistoryModal({
   attenderId,
   onParentClose,
   onSaveAll,
+  mergedHistory
 }) {
   if (!isOpen) return null;
 
-  
-
   const [historyList, setHistoryList] = useState(() => {
-    return (edited.history || []).map((h, index) => ({
+    const sourceArr = Array.isArray(mergedHistory) && mergedHistory.length > 0
+      ? mergedHistory
+      : (edited.history || []);
+    return sourceArr.map((h, index) => ({
       id: index,
       timestamp: h.timestamp || new Date().toISOString(),
       status: h.status || "",

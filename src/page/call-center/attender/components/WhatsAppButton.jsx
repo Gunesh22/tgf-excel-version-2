@@ -99,11 +99,11 @@ export const WhatsAppButton = ({ phone, name = "", variant = "default" }) => {
   if (variant === "header") {
     return (
       <div className="relative inline-flex items-center" ref={dropdownRef}>
-        <div className="inline-flex items-center bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-bold transition-all shadow-sm hover:shadow-md border border-white/15 overflow-hidden">
+        <div className="inline-flex items-center bg-white/20 hover:bg-white/30 text-white rounded-lg text-xs font-semibold transition-all duration-150 border border-white/15 overflow-hidden shadow-2xs">
           <button
             type="button"
             onClick={() => handleOpenWA()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 hover:bg-emerald-500/30 active:scale-95 transition-all text-white cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 hover:bg-emerald-500/30 active:scale-[0.97] transition-all duration-150 text-white cursor-pointer"
             title={`WhatsApp ${waPhone}`}
           >
             <WhatsAppIcon className="w-3.5 h-3.5 fill-emerald-300" />
@@ -112,7 +112,7 @@ export const WhatsAppButton = ({ phone, name = "", variant = "default" }) => {
           <button
             type="button"
             onClick={() => setOpen(!open)}
-            className="px-2 py-1.5 hover:bg-white/20 text-white/80 hover:text-white transition-all border-l border-white/15 cursor-pointer"
+            className="px-2 py-1.5 hover:bg-white/20 text-white/80 hover:text-white active:scale-[0.97] transition-all duration-150 border-l border-white/15 cursor-pointer"
             title="Message Templates"
           >
             <ChevronDown size={12} className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
@@ -120,22 +120,22 @@ export const WhatsAppButton = ({ phone, name = "", variant = "default" }) => {
         </div>
 
         {open && (
-          <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-gray-100 p-2.5 z-50 animate-fade-in text-gray-800">
-            <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-2.5 py-1 mb-1 border-b border-gray-100 flex items-center justify-between">
+          <div className="absolute top-full left-0 mt-1.5 w-72 bg-white rounded-lg shadow-xl border border-slate-200 p-2 z-50 animate-fade-in text-slate-800">
+            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-1 mb-1 border-b border-slate-100 flex items-center justify-between">
               <span>Send WhatsApp Message</span>
-              <span className="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded-full font-extrabold">{waPhone}</span>
+              <span className="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.2 rounded font-semibold">{waPhone}</span>
             </div>
             <div className="space-y-1">
               <button
                 type="button"
                 onClick={() => handleOpenWA()}
-                className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold bg-emerald-50/60 hover:bg-emerald-100/70 text-emerald-800 transition flex items-center justify-between group"
+                className="w-full text-left px-2.5 py-1.5 rounded-md text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 active:scale-[0.98] text-emerald-800 transition flex items-center justify-between group cursor-pointer"
               >
                 <div className="flex items-center gap-2">
                   <WhatsAppIcon className="w-3.5 h-3.5 fill-emerald-600" />
                   <span>Direct Chat (No Message)</span>
                 </div>
-                <Send size={12} className="text-emerald-600 group-hover:translate-x-0.5 transition-transform" />
+                <Send size={11} className="text-emerald-600 group-hover:translate-x-0.5 transition-transform" />
               </button>
               {dbTemplates.map((tpl, i) => {
                 const previewText = processTemplateText(tpl.text, name);
@@ -144,9 +144,9 @@ export const WhatsAppButton = ({ phone, name = "", variant = "default" }) => {
                     key={tpl.id || i}
                     type="button"
                     onClick={() => handleOpenWA(tpl.text)}
-                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-gray-50 transition border border-transparent hover:border-gray-100"
+                    className="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-50 active:scale-[0.98] transition border border-transparent hover:border-slate-100 cursor-pointer"
                   >
-                    <div className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                    <div className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
                       {tpl.emoji ? (
                         <span className="text-sm leading-none">{tpl.emoji}</span>
                       ) : (
@@ -154,7 +154,7 @@ export const WhatsAppButton = ({ phone, name = "", variant = "default" }) => {
                       )}
                       <span>{tpl.title}</span>
                     </div>
-                    <div className="text-[11px] text-gray-500 mt-0.5 line-clamp-2 leading-relaxed">{previewText}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">{previewText}</div>
                   </button>
                 );
               })}
@@ -171,7 +171,7 @@ export const WhatsAppButton = ({ phone, name = "", variant = "default" }) => {
       <button
         type="button"
         onClick={() => handleOpenWA()}
-        className="inline-flex items-center justify-center px-2.5 py-2 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white rounded-l-xl text-xs font-black transition-all border border-emerald-500 shadow-sm hover:shadow-md cursor-pointer"
+        className="inline-flex items-center justify-center px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 active:scale-[0.97] text-white rounded-l-lg text-xs font-semibold transition-all duration-150 border border-emerald-600 shadow-2xs cursor-pointer"
         title={`WhatsApp ${waPhone}`}
       >
         <WhatsAppIcon className="w-3.5 h-3.5 fill-white mr-1" />
@@ -180,22 +180,22 @@ export const WhatsAppButton = ({ phone, name = "", variant = "default" }) => {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="px-1.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-r-xl border-l border-emerald-400 text-xs font-bold transition cursor-pointer"
+        className="px-1.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.97] text-white rounded-r-lg border-l border-emerald-500 text-xs font-semibold transition-all duration-150 cursor-pointer"
         title="Choose message template"
       >
         <ChevronDown size={12} />
       </button>
 
       {open && (
-        <div className="absolute top-full right-0 mt-1.5 w-64 bg-white rounded-2xl shadow-2xl border border-gray-100 p-2 z-50 animate-fade-in text-gray-800">
-          <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-2.5 py-1">
+        <div className="absolute top-full right-0 mt-1.5 w-64 bg-white rounded-lg shadow-xl border border-slate-200 p-2 z-50 animate-fade-in text-slate-800">
+          <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-1">
             Send WhatsApp Message
           </div>
           <div className="space-y-1">
             <button
               type="button"
               onClick={() => handleOpenWA()}
-              className="w-full text-left px-2.5 py-1.5 rounded-xl text-xs font-bold hover:bg-emerald-50 text-emerald-700 transition flex items-center justify-between"
+              className="w-full text-left px-2 py-1.5 rounded-md text-xs font-semibold hover:bg-emerald-50 active:scale-[0.98] text-emerald-700 transition flex items-center justify-between cursor-pointer"
             >
               <span>Direct Chat (No Message)</span>
               <Send size={11} />
@@ -207,9 +207,9 @@ export const WhatsAppButton = ({ phone, name = "", variant = "default" }) => {
                   key={tpl.id || i}
                   type="button"
                   onClick={() => handleOpenWA(tpl.text)}
-                  className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-gray-50 transition"
+                  className="w-full text-left px-2 py-1.5 rounded-md hover:bg-slate-50 active:scale-[0.98] transition cursor-pointer"
                 >
-                  <div className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                  <div className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
                     {tpl.emoji ? (
                       <span>{tpl.emoji}</span>
                     ) : (
@@ -217,7 +217,7 @@ export const WhatsAppButton = ({ phone, name = "", variant = "default" }) => {
                     )}
                     <span>{tpl.title}</span>
                   </div>
-                  <div className="text-[11px] text-gray-500 truncate">{previewText}</div>
+                  <div className="text-[11px] text-slate-500 truncate">{previewText}</div>
                 </button>
               );
             })}

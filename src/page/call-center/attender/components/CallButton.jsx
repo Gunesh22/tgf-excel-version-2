@@ -46,7 +46,7 @@ export const CallButton = ({ phone, variant = "default" }) => {
     return (
       <a
         href={`tel:${formattedPhone}`}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-black transition-all shadow-sm hover:shadow-md cursor-pointer border border-white/10"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 active:scale-[0.97] text-white rounded-lg text-xs font-semibold transition-all duration-150 ease-out cursor-pointer border border-white/10 shadow-2xs"
         title={`Call ${formattedPhone}`}
       >
         <Phone size={12} className="stroke-[2.5]" />
@@ -59,7 +59,7 @@ export const CallButton = ({ phone, variant = "default" }) => {
   return (
     <a
       href={`tel:${formattedPhone}`}
-      className="inline-flex items-center justify-center px-2.5 py-2 shrink-0 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 text-emerald-700 rounded-xl text-xs font-black transition-all border border-emerald-200 shadow-sm hover:shadow-md cursor-pointer"
+      className="inline-flex items-center justify-center px-2.5 py-1.5 shrink-0 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 active:scale-[0.97] text-emerald-700 rounded-lg text-xs font-semibold transition-all duration-150 ease-out border border-emerald-200 shadow-2xs cursor-pointer"
       title={`Call ${formattedPhone}`}
     >
       <Phone size={13} className="stroke-[2.5] mr-1" />

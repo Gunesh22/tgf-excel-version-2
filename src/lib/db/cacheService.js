@@ -89,6 +89,21 @@ export const clearAllIDBCache = async () => {
   }
 };
 
+export const getAllIDBKeys = async () => {
+  try {
+    const dbInstance = await openIDB();
+    return new Promise((resolve) => {
+      const tx = dbInstance.transaction(IDB_STORE, "readonly");
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.getAllKeys();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+  } catch (e) {
+    return [];
+  }
+};
+
 // ─────────────────────────────────────────────
 // IN-MEMORY DUPLICATE CHECK CACHE MAP (0 Reads)
 // ─────────────────────────────────────────────
@@ -179,16 +194,22 @@ export const fetchPartitionCacheForColdBoot = async (attenderId, attenderName, m
       if (matchedStateObj && matchedStateObj._deleted) return;
 
       let isAssigned = false;
-      if (matchedStateObj) {
+      if (matchedStateObj && !matchedStateObj._deleted && !matchedStateObj.isDeleted) {
         isAssigned = true;
-      } else if (Array.isArray(rawData.assignedTo)) {
-        isAssigned = rawData.assignedTo.some(a => {
-          const aLower = String(a).toLowerCase().trim();
-          return (idLower && aLower === idLower) || (nameLower && aLower === nameLower);
-        });
-      } else if (rawData.assignedTo) {
-        const aLower = String(rawData.assignedTo).toLowerCase().trim();
-        isAssigned = (idLower && aLower === idLower) || (nameLower && aLower === nameLower);
+      } else {
+        const topIdLower = rawData.attenderId ? String(rawData.attenderId).toLowerCase().trim() : "";
+        const topNameLower = rawData.attenderName ? String(rawData.attenderName).toLowerCase().trim() : "";
+        if ((idLower && topIdLower === idLower) || (nameLower && topNameLower === nameLower)) {
+          isAssigned = true;
+        } else if (Array.isArray(rawData.assignedTo)) {
+          isAssigned = rawData.assignedTo.some(a => {
+            const aLower = String(a).toLowerCase().trim();
+            return (idLower && aLower === idLower) || (nameLower && aLower === nameLower);
+          });
+        } else if (rawData.assignedTo) {
+          const aLower = String(rawData.assignedTo).toLowerCase().trim();
+          isAssigned = (idLower && aLower === idLower) || (nameLower && aLower === nameLower);
+        }
       }
 
       if (!isAssigned) return;
@@ -205,7 +226,9 @@ export const fetchPartitionCacheForColdBoot = async (attenderId, attenderName, m
       const source = attState.Source || attState.source || rawData.Source || rawData.source || "";
       const callType = attState.callType || rawData.callType || "outgoing";
 
-      const history = attState.history || rawData.history || [];
+      const history = Array.isArray(rawData.history) && rawData.history.length > 0 
+        ? rawData.history 
+        : (Array.isArray(attState.history) ? attState.history : []);
       const remark = attState.remark || rawData.remark || "";
       const callbackDate = attState.callbackDate || rawData.callbackDate || attState.callback_date || rawData.callback_date || null;
       const callbackTime = attState.callbackTime || rawData.callbackTime || attState.callback_time || rawData.callback_time || null;
@@ -288,13 +311,18 @@ export const updateLocalAttenderCache = async (attenderId, updatedDoc) => {
   try {
     const existing = await getIDBCache(cacheKey);
     if (Array.isArray(existing)) {
-      const idx = existing.findIndex(item => item.id === updatedDoc.id);
+      const isDeleted = updatedDoc._deleted || updatedDoc.isDeleted;
       let newArray = [];
-      if (idx >= 0) {
-        newArray = [...existing];
-        newArray[idx] = { ...newArray[idx], ...updatedDoc };
+      if (isDeleted) {
+        newArray = existing.filter(item => item.id !== updatedDoc.id);
       } else {
-        newArray = [updatedDoc, ...existing];
+        const idx = existing.findIndex(item => item.id === updatedDoc.id);
+        if (idx >= 0) {
+          newArray = [...existing];
+          newArray[idx] = { ...newArray[idx], ...updatedDoc };
+        } else {
+          newArray = [updatedDoc, ...existing];
+        }
       }
       await setIDBCache(cacheKey, newArray);
     }
@@ -336,4 +364,27 @@ export const clearLocalRegistrationsCache = async () => {
       await deleteIDBCache(key).catch(() => {});
     }
   } catch (e) {}
+};
+
+export const clearAdminIDBCache = async () => {
+  try {
+    const dbInstance = await openIDB();
+    return new Promise((resolve) => {
+      const tx = dbInstance.transaction(IDB_STORE, "readwrite");
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.getAllKeys();
+      req.onsuccess = () => {
+        const keys = req.result || [];
+        keys.forEach(k => {
+          if (typeof k === "string" && (k.startsWith("tgf_admin_") || k.startsWith("tgf_locked_"))) {
+            store.delete(k);
+          }
+        });
+        resolve(true);
+      };
+      req.onerror = () => resolve(false);
+    });
+  } catch (e) {
+    return false;
+  }
 };

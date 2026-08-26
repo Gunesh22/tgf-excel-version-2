@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "react-hot-toast";
 import * as XLSX from "xlsx";
-import { BarChart3, Download, Search, X, ChevronDown, Check } from "lucide-react";
-import { subscribeToAllCallLogs } from "../../../../lib/db";
+import { BarChart3, Download, Search, X, ChevronDown, Check, Database } from "lucide-react";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from "recharts";
 import { COLORS, cleanExportRow, CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, parseTimestamp, getCanonicalStatus } from "../utils.jsx";
 import { isKhojiAffirmative, isKhojiNegative } from "../../attender/utils.js";
+import ExportCacheModal from "./ExportCacheModal.jsx";
 
 // ── Multi-select dropdown ──────────────────────────────────────────────────
 function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All" }) {
@@ -107,10 +107,19 @@ function MultiSelect({ options, selected, onChange, placeholder, allLabel = "All
   );
 }
 
-// ── Main Dashboard ─────────────────────────────────────────────────────────
-export default function DashboardTab({ programs, attenders, settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] }, callLogs = [] }) {
-  const todayStr = new Date().toISOString().split("T")[0];
+// ── Helper to format local YYYY-MM-DD date ──────────────────────────────────
+const getLocalDateStr = (d = new Date()) => {
+  const yr = d.getFullYear();
+  const mn = String(d.getMonth() + 1).padStart(2, "0");
+  const dy = String(d.getDate()).padStart(2, "0");
+  return `${yr}-${mn}-${dy}`;
+};
 
+// ── Main Dashboard ─────────────────────────────────────────────────────────
+export default function DashboardTab({ programs, attenders, settingsOptions = { statusOptions: [], sourceOptions: [], calledForOptions: [] }, callLogs = [], registrations = [], secondsAgo = 0, nextFetchIn = 45, lastSyncedAt }) {
+  const todayStr = getLocalDateStr();
+
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [selectedProgramIds, setSelectedProgramIds] = useState([]); // empty = ALL
   const [selectedAttenderIds, setSelectedAttenderIds] = useState([]); // empty = ALL
   const [selectedSources, setSelectedSources] = useState([]);
@@ -216,15 +225,24 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
         return parseTimestamp(val);
       };
 
-      const processAttempt = (att, attId, state, isHistory, index) => {
-        const status = getCanonicalStatus(att.status || "Pending");
+      const hasAttenderStates = log.attenderStates && typeof log.attenderStates === "object" && Object.keys(log.attenderStates).length > 0;
+      const hasTopHistory = Array.isArray(log.history) && log.history.length > 0;
 
-        const dateVal = att.timestamp || state.lastCalledAt;
-        const attemptDate = getAttemptDate(dateVal);
+      // Track processed event keys per lead document to prevent double-counting (matching MyPerformanceDashboard)
+      const seenEventKeys = new Set();
 
-        return {
+      const addAttemptIfNew = (status, dateVal, remark, callType, source, calledFor, attId, attName, isHistory, index, stateObj) => {
+        const canonicalStatus = getCanonicalStatus(status || "Pending");
+        const attemptDate = getAttemptDate(dateVal) || parseTimestamp(log.createdAt);
+        if (!attemptDate) return;
+
+        const eventKey = `${log.id}_${attemptDate.getTime()}_${canonicalStatus}`;
+        if (seenEventKeys.has(eventKey)) return;
+        seenEventKeys.add(eventKey);
+
+        const attItem = {
           ...log,
-          id: `${log.id}_${attId}_${isHistory ? `h_${index}` : "latest"}`,
+          id: `${log.id}_${attId}_${isHistory ? `h_${index}` : "latest"}_${attemptDate.getTime()}`,
           contactId: log.id,
           Name: contactName,
           Phone: contactPhone,
@@ -232,157 +250,112 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
           programName: log.programName || "Unknown Program",
           tags: log.tags || [],
           attenderId: attId,
-          attenderName: att.attenderName || state.attenderName || "Unknown",
-          status: status,
-          remark: att.remark || "",
-          callType: att.callType || state.callType || "outgoing",
-          history: state.history || [],
-          callbackDate: state.callbackDate || null,
-          createdAt: log.createdAt,
+          attenderName: attName || stateObj?.attenderName || "Unknown",
+          status: canonicalStatus,
+          remark: remark || "",
+          callType: callType || stateObj?.callType || "outgoing",
+          history: stateObj?.history || [],
+          callbackDate: stateObj?.callbackDate || null,
+          createdAt: parseTimestamp(log.createdAt) || attemptDate,
+          timestamp: attemptDate, // Canonical event timestamp
           updatedAt: attemptDate,
-          lastCalledAt: state.lastCalledAt || null,
-          source: att.source || state.Source || state.source || sourceVal,
-          calledFor: att.calledFor || state["Called For"] || state.calledFor || calledForVal,
+          lastCalledAt: stateObj?.lastCalledAt || null,
+          source: source || stateObj?.Source || stateObj?.source || sourceVal,
+          calledFor: calledFor || stateObj?.["Called For"] || stateObj?.calledFor || calledForVal,
           feedback: feedbackVal,
           Khoji: khojiVal
         };
+
+        if (attItem && attItem.timestamp) list.push(attItem);
       };
 
-      const logAttempts = [];
-
-      if (log.attenderStates && Object.keys(log.attenderStates).length > 0) {
+      // Tier 1: Extract from matching attenderStates
+      if (hasAttenderStates) {
         Object.entries(log.attenderStates).forEach(([attId, state]) => {
-          if (state.history && Array.isArray(state.history) && state.history.length > 0) {
-            state.history.forEach((h, index) => {
-              // Skip uncalled placeholder history entries (e.g. initial upload/assignment)
-              if ((!h.status || h.status === "Pending") && !h.timestamp) return;
+          if (!state) return;
+          const stateAttName = state.attenderName || "Unknown";
 
-              const att = processAttempt(
-                {
-                  timestamp: h.timestamp,
-                  status: h.status,
-                  remark: h.remark,
-                  callType: h.callType,
-                  source: h.source,
-                  calledFor: h.calledFor,
-                  attenderName: h.attenderName
-                },
+          const hasStateHistory = Array.isArray(state.history) && state.history.length > 0;
+          if (hasStateHistory) {
+            state.history.forEach((h, index) => {
+              const dateVal = h.timestamp || h.date || h.createdAt || h.updatedAt || state.lastCalledAt;
+              addAttemptIfNew(
+                h.status,
+                dateVal,
+                h.remark,
+                h.callType || state.callType,
+                h.source || state.Source || state.source,
+                h.calledFor || state["Called For"] || state.calledFor,
                 attId,
-                state,
+                h.attenderName || stateAttName,
                 true,
-                index
+                index,
+                state
               );
-              if (att) {
-                logAttempts.push(att);
-              }
             });
           }
           if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
-            const dateVal = state.lastCalledAt;
-            const ts = parseTimestamp(dateVal) || parseTimestamp(log.createdAt);
-            const existsInHistory = Array.isArray(state.history) && state.history.some(h => {
-              const hTs = parseTimestamp(h.timestamp);
-              const sameTime = hTs && ts && Math.abs(hTs.getTime() - ts.getTime()) < 5000;
-              const sameStatus = getCanonicalStatus(h.status) === getCanonicalStatus(state.status);
-              const sameRemark = (h.remark || "").trim().toLowerCase() === (state.remark || "").trim().toLowerCase();
-              return sameTime && (sameStatus || sameRemark);
-            });
-            if (!existsInHistory) {
-              const att = processAttempt(
-                {
-                  timestamp: state.lastCalledAt,
-                  status: state.status,
-                  remark: state.remark,
-                  callType: state.callType,
-                  source: state.Source || state.source,
-                  calledFor: state["Called For"] || state.calledFor
-                },
-                attId,
-                state,
-                false
-              );
-              if (att) {
-                logAttempts.push(att);
-              }
-            }
-          }
-        });
-      }
-
-      // Collect from top-level log.history
-      if (log.history && Array.isArray(log.history) && log.history.length > 0) {
-        log.history.forEach((h, index) => {
-          // Skip uncalled placeholder history entries
-          if ((!h.status || h.status === "Pending") && !h.timestamp) return;
-
-          const dateVal = h.timestamp || h.date || h.createdAt;
-          const ts = parseTimestamp(dateVal);
-          const alreadyAdded = logAttempts.some(ra => {
-            const sameTime = ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 5000;
-            const sameStatus = getCanonicalStatus(ra.status) === getCanonicalStatus(h.status);
-            const sameRemark = (ra.remark || "").trim().toLowerCase() === (h.remark || "").trim().toLowerCase();
-            return sameTime && (sameStatus || sameRemark);
-          });
-
-          if (!alreadyAdded) {
-            const att = processAttempt(
-              {
-                timestamp: ts,
-                status: h.status,
-                remark: h.remark,
-                callType: h.callType,
-                source: h.source,
-                calledFor: h.calledFor,
-                attenderName: h.attenderName || log.attenderName,
-                attenderId: h.attenderId || log.attenderId
-              },
-              h.attenderId || log.attenderId || "legacy",
-              { attenderName: h.attenderName || log.attenderName || "Legacy Attender" },
-              true,
-              index
+            const dateVal = state.lastCalledAt || state.updatedAt || state.createdAt;
+            addAttemptIfNew(
+              state.status,
+              dateVal,
+              state.remark,
+              state.callType,
+              state.Source || state.source,
+              state["Called For"] || state.calledFor,
+              attId,
+              stateAttName,
+              false,
+              0,
+              state
             );
-            if (att) {
-              logAttempts.push(att);
-            }
           }
         });
       }
 
-      // Collect from top-level log.lastCalledAt / status ONLY if no attenderStates/history attempts were found
-      if (logAttempts.length === 0 && (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark)) {
-        const dateVal = log.lastCalledAt || log.createdAt;
-        const ts = parseTimestamp(dateVal);
-        const alreadyAdded = logAttempts.some(ra => {
-          const sameTime = ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 5000;
-          const sameStatus = getCanonicalStatus(ra.status) === getCanonicalStatus(log.status);
-          const sameRemark = (ra.remark || "").trim().toLowerCase() === (log.remark || "").trim().toLowerCase();
-          return sameTime && (sameStatus || sameRemark);
-        });
-        if (!alreadyAdded) {
-          const att = processAttempt(
-            {
-              timestamp: dateVal,
-              status: log.status,
-              remark: log.remark,
-              callType: log.callType,
-              source: log.Source || log.source,
-              calledFor: log["Called For"] || log.calledFor,
-              attenderName: log.attenderName,
-              attenderId: log.attenderId
-            },
-            log.attenderId || "legacy",
-            { attenderName: log.attenderName || "Legacy Attender" },
-            false,
-            0
+      // Tier 2: Extract from top-level log.history
+      if (hasTopHistory) {
+        log.history.forEach((h, index) => {
+          const itemAttId = h.attenderId || log.attenderId || "legacy";
+          const itemAttName = h.attenderName || log.attenderName || "Legacy Attender";
+          const dateVal = h.timestamp || h.date || h.createdAt || h.updatedAt;
+          addAttemptIfNew(
+            h.status,
+            dateVal,
+            h.remark,
+            h.callType || log.callType,
+            h.source || log.Source || log.source,
+            h.calledFor || log["Called For"] || log.calledFor,
+            itemAttId,
+            itemAttName,
+            true,
+            index,
+            { attenderName: itemAttName }
           );
-          if (att) {
-            logAttempts.push(att);
-          }
+        });
+      }
+
+      // Tier 3: Extract from top-level document fields (if legacy without attenderStates & without history)
+      if (!hasAttenderStates && !hasTopHistory) {
+        if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
+          const dateVal = log.lastCalledAt || log.createdAt;
+          addAttemptIfNew(
+            log.status,
+            dateVal,
+            log.remark,
+            log.callType,
+            log.Source || log.source,
+            log["Called For"] || log.calledFor,
+            log.attenderId || "legacy",
+            log.attenderName || "Legacy Attender",
+            false,
+            0,
+            { attenderName: log.attenderName || "Legacy Attender" }
+          );
         }
       }
-
-      list.push(...logAttempts);
     });
+
     return list;
   }, [callLogs]);
 
@@ -452,8 +425,8 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
         if (!match) return false;
       }
 
-      // Date range based on actual call action timestamp (updatedAt from processAttempt or lastCalledAt)
-      const logDate = parseTimestamp(log.updatedAt) || parseTimestamp(log.lastCalledAt);
+      // Date range based on canonical event timestamp with fallbacks
+      const logDate = parseTimestamp(log.timestamp) || parseTimestamp(log.updatedAt) || parseTimestamp(log.lastCalledAt);
       if (!logDate || isNaN(logDate.getTime())) return false;
       if (dateFrom && logDate < new Date(dateFrom + "T00:00:00")) return false;
       if (dateTo && logDate > new Date(dateTo + "T23:59:59")) return false;
@@ -465,22 +438,40 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
 
   const attenderStats = useMemo(() => {
     const map = {};
+    const seenRegsPerAttender = new Set();
+
     filteredLogs.forEach(log => {
-      const attId = log.attenderId || "unknown";
-      const attName = log.attenderName || "Unknown Attender";
-      const key = `${attId}___${attName}`;
+      const rawName = (log.attenderName || "").trim() || "Unknown Attender";
+      const normName = rawName.toLowerCase();
+      // Match with official attenders list if available
+      const foundAttender = (attenders || []).find(a => (a.name || "").toLowerCase().trim() === normName);
+      const canonicalName = foundAttender ? foundAttender.name : rawName;
+      const canonicalId = foundAttender ? foundAttender.id : (log.attenderId && log.attenderId !== "unknown" && log.attenderId !== "legacy" ? log.attenderId : normName);
+
+      const key = canonicalName.toLowerCase();
       if (!map[key]) {
-        map[key] = { id: attId, name: attName, total: 0, outgoing: 0, incoming: 0, interested: 0, regDone: 0, pending: 0 };
+        map[key] = { id: canonicalId, name: canonicalName, total: 0, outgoing: 0, incoming: 0, interested: 0, regDone: 0, pending: 0 };
       }
       const s = map[key];
       s.total++;
-      if (log.callType === "incoming") s.incoming++; else s.outgoing++;
-      if (log.status === "Interested") s.interested++;
-      if (log.status === "Reg.Done") s.regDone++;
-      if (!log.status || log.status === "Pending") s.pending++;
+      const cType = (log.callType || "").toLowerCase();
+      if (cType.startsWith("in")) s.incoming++; else s.outgoing++;
+
+      const normStatus = getCanonicalStatus(log.status);
+      if (normStatus === "Interested") s.interested++;
+      if (normStatus === "Reg.Done") {
+        const leadId = log.contactId || log.Phone || log.Name;
+        const cf = (log.calledFor || log.programName || "").toLowerCase().trim();
+        const regKey = `${key}_${leadId}_${cf}`;
+        if (!seenRegsPerAttender.has(regKey)) {
+          seenRegsPerAttender.add(regKey);
+          s.regDone++;
+        }
+      }
+      if (!normStatus || normStatus === "Pending") s.pending++;
     });
     return Object.values(map).sort((a, b) => b.total - a.total);
-  }, [filteredLogs]);
+  }, [filteredLogs, attenders]);
 
   const attenderModalLeads = useMemo(() => {
     if (!selectedAttenderDetails) return [];
@@ -489,15 +480,27 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
     const targetName = (targetObj.name || "").toLowerCase().trim();
 
     const leads = filteredLogs.filter(log => {
-      if (targetId && targetId !== "unknown" && log.attenderId) {
-        return log.attenderId === targetId;
-      }
       const logAttender = (log.attenderName || "").toLowerCase().trim();
-      return logAttender === targetName;
+      if (logAttender === targetName) return true;
+      if (targetId && targetId !== "unknown" && targetId !== "legacy" && log.attenderId === targetId) return true;
+      return false;
     });
-    if (!attenderModalSearch.trim()) return leads;
+
+    const seenRegs = new Set();
+    const deduplicatedLeads = leads.filter(l => {
+      if (getCanonicalStatus(l.status) === "Reg.Done") {
+        const leadId = l.contactId || l.Phone || l.Name;
+        const cf = (l.calledFor || l.programName || "").toLowerCase().trim();
+        const regKey = `${leadId}_${cf}`;
+        if (seenRegs.has(regKey)) return false;
+        seenRegs.add(regKey);
+      }
+      return true;
+    });
+
+    if (!attenderModalSearch.trim()) return deduplicatedLeads;
     const q = attenderModalSearch.toLowerCase();
-    return leads.filter(l =>
+    return deduplicatedLeads.filter(l =>
       (l.Name || "").toLowerCase().includes(q) ||
       (l.Phone || "").toLowerCase().includes(q) ||
       (l.status || "").toLowerCase().includes(q) ||
@@ -507,19 +510,44 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
 
   const outcomeData = useMemo(() => {
     const map = {};
+    const seenRegs = new Set();
     filteredLogs.forEach(l => {
-      const s = !l.status || l.status === "Pending" ? "Pending" : l.status;
-      map[s] = (map[s] || 0) + 1;
+      const canonical = getCanonicalStatus(l.status);
+      if (canonical === "Reg.Done") {
+        const leadId = l.contactId || l.Phone || l.Name;
+        const cf = (l.calledFor || l.programName || "").toLowerCase().trim();
+        const regKey = `${leadId}_${cf}`;
+        if (!seenRegs.has(regKey)) {
+          seenRegs.add(regKey);
+          map["Reg.Done"] = (map["Reg.Done"] || 0) + 1;
+        }
+      } else {
+        const s = !l.status || l.status === "Pending" ? "Pending" : l.status;
+        map[s] = (map[s] || 0) + 1;
+      }
     });
     return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   }, [filteredLogs]);
 
-  const totalRegDone = filteredLogs.filter(l => l.status === "Reg.Done").length;
-  const totalInterested = filteredLogs.filter(l => l.status === "Interested").length;
-
   const conversionsList = useMemo(() => {
-    return filteredLogs.filter(l => l.status === "Reg.Done");
+    const seen = new Set();
+    const result = [];
+    filteredLogs.forEach(l => {
+      if (getCanonicalStatus(l.status) === "Reg.Done") {
+        const leadId = l.contactId || l.Phone || l.Name;
+        const cf = (l.calledFor || l.programName || "").toLowerCase().trim();
+        const regKey = `${leadId}_${cf}`;
+        if (!seen.has(regKey)) {
+          seen.add(regKey);
+          result.push(l);
+        }
+      }
+    });
+    return result;
   }, [filteredLogs]);
+
+  const totalRegDone = conversionsList.length;
+  const totalInterested = filteredLogs.filter(l => getCanonicalStatus(l.status) === "Interested").length;
 
   const searchedConversions = useMemo(() => {
     if (!conversionSearch.trim()) return conversionsList;
@@ -576,16 +604,42 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
       <div className="flex flex-col gap-4">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
-            <h2 className="text-3xl font-black text-slate-800">Analytics Dashboard</h2>
-            <p className="text-slate-500 mt-1">Real-time call performance across all attenders.</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="text-3xl font-black text-slate-800">Analytics Dashboard</h2>
+              
+              {/* Dynamic Live Real-Time Cache Sync Status Pill */}
+              <div className="flex items-center gap-2.5 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-2xl shadow-sm text-xs font-semibold">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                </span>
+                <span className="text-slate-300">
+                  Cache Updated: <strong className="text-emerald-400 font-mono">{secondsAgo === 0 ? "Just now" : `${secondsAgo}s ago`}</strong>
+                </span>
+                <span className="text-slate-700">|</span>
+                <span className="text-slate-300">
+                  Next Fetch: <strong className="text-indigo-400 font-mono">in {nextFetchIn}s</strong>
+                </span>
+              </div>
+            </div>
+            <p className="text-slate-500 mt-1">Real-time call performance across all attenders (Auto-syncs every 45s).</p>
           </div>
-          <button
-            onClick={handleExport}
-            disabled={filteredLogs.length === 0}
-            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 transition disabled:opacity-50 shrink-0"
-          >
-            <Download size={16} /> Export Report
-          </button>
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              onClick={() => setIsExportModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white font-bold text-xs rounded-2xl hover:bg-slate-900 transition shadow-sm cursor-pointer"
+              title="Export Call Center Cache partition JSON by duration"
+            >
+              <Database size={16} /> Export Cache JSON
+            </button>
+            <button
+              onClick={handleExport}
+              disabled={filteredLogs.length === 0}
+              className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white font-bold text-xs rounded-2xl hover:bg-emerald-700 transition disabled:opacity-50 cursor-pointer shadow-sm"
+            >
+              <Download size={16} /> Export Report
+            </button>
+          </div>
         </div>
 
         {/* Filter Bar */}
@@ -910,14 +964,14 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
             </thead>
             <tbody className="divide-y divide-gray-50">
               {paginatedConversions.map((c, idx) => {
-                const dateVal = parseTimestamp(c.timestamp);
+                const dateVal = parseTimestamp(c.timestamp || c.updatedAt);
                 const dateStr = dateVal ? dateVal.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "N/A";
                 return (
                   <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
                     {/* Name & Contact */}
                     <td className="px-6 py-4">
-                      <div className="font-bold text-gray-900 text-sm">{c.contactName}</div>
-                      <div className="text-xs text-indigo-600 font-mono font-medium">{c.contactPhone}</div>
+                      <div className="font-bold text-gray-900 text-sm">{c.contactName || c.Name || c.name || "Unknown"}</div>
+                      <div className="text-xs text-indigo-600 font-mono font-medium">{c.contactPhone || c.Phone || c.phone || c.Mobile || c.mobile || "N/A"}</div>
                       {c.contactCity && <div className="text-[10px] text-gray-400">{c.contactCity}</div>}
                     </td>
                     {/* Attender */}
@@ -1064,6 +1118,7 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
                         <th className="px-4 py-3">#</th>
                         <th className="px-4 py-3">Lead Name</th>
                         <th className="px-4 py-3">Phone</th>
+                        <th className="px-4 py-3 text-center">Calls Done</th>
                         <th className="px-4 py-3">Status</th>
                         <th className="px-4 py-3">Call Time (IST)</th>
                         <th className="px-4 py-3">Call Type</th>
@@ -1080,12 +1135,40 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
                         const isInterested = st === "Interested";
                         const isReg = st === "Reg.Done";
                         const isPending = st === "Pending";
+                        const targetObj = typeof selectedAttenderDetails === "object" ? selectedAttenderDetails : { id: null, name: selectedAttenderDetails };
+                        const targetId = targetObj.id;
+                        const targetName = (targetObj.name || "").toLowerCase().trim();
+                        let callsDoneCount = 0;
+
+                        if (targetId && log.attenderStates && log.attenderStates[targetId]) {
+                          const st = log.attenderStates[targetId];
+                          if (Array.isArray(st.history) && st.history.length > 0) {
+                            callsDoneCount = st.history.length;
+                          } else if (st.lastCalledAt || st.status || st.remark) {
+                            callsDoneCount = 1;
+                          }
+                        } else if (Array.isArray(log.history) && log.history.length > 0) {
+                          const attenderHistory = log.history.filter(h => {
+                            if (targetId && (h.attenderId === targetId || h.assignedTo === targetId)) return true;
+                            const hName = (h.attenderName || h.name || "").toLowerCase().trim();
+                            if (targetName && hName === targetName) return true;
+                            return false;
+                          });
+                          callsDoneCount = attenderHistory.length > 0 ? attenderHistory.length : 1;
+                        } else if (log.status || log.remark || log.Remark || log.callbackDate) {
+                          callsDoneCount = 1;
+                        }
 
                         return (
                           <tr key={log.id + "_" + i} className="hover:bg-indigo-50/30 transition-colors">
                             <td className="px-4 py-3 text-gray-400 font-mono font-bold">{i + 1}</td>
                             <td className="px-4 py-3 font-extrabold text-gray-900">{log.Name || "Unknown"}</td>
                             <td className="px-4 py-3 font-mono font-medium text-gray-600">{log.Phone || "—"}</td>
+                            <td className="px-4 py-3 text-center font-bold">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono text-[11px] border border-indigo-100">
+                                📞 {callsDoneCount}
+                              </span>
+                            </td>
                             <td className="px-4 py-3">
                               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                                 isReg ? "bg-emerald-100 text-emerald-800" :
@@ -1120,6 +1203,12 @@ export default function DashboardTab({ programs, attenders, settingsOptions = { 
           </div>
         </div>
       )}
+
+      {/* Export Call Center Cache Duration Modal */}
+      <ExportCacheModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+      />
     </div>
   );
 }

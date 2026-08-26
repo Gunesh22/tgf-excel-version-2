@@ -53,14 +53,8 @@ export const subscribeToCallLogs = (...args) => {
   if (args.length === 1) {
     attenderId = args[0];
   } else if (args.length === 2) {
-    const firstArgStr = String(args[0] || "");
-    if (firstArgStr === "ALL" || firstArgStr === "null" || firstArgStr === "undefined" || firstArgStr.includes("Calls")) {
-      tag = args[0];
-      attenderId = args[1];
-    } else {
-      attenderId = args[0];
-      attenderName = args[1];
-    }
+    attenderId = args[0];
+    attenderName = args[1];
   } else if (args.length >= 3) {
     tag = args[0];
     attenderId = args[1];
@@ -83,18 +77,24 @@ export const subscribeToCallLogs = (...args) => {
         const cleanLogs = logsToProcess.filter(doc => {
           if (!doc) return false;
           const matchedStateObj = findMatchingAttenderState(doc.attenderStates, attenderId, attenderName);
-          if (matchedStateObj && !matchedStateObj._deleted) return true;
+          if (matchedStateObj && !matchedStateObj._deleted && !matchedStateObj.isDeleted) return true;
 
+          // Check top-level attender fields
+          const topIdLower = doc.attenderId ? String(doc.attenderId).toLowerCase().trim() : "";
+          const topNameLower = doc.attenderName ? String(doc.attenderName).toLowerCase().trim() : "";
+          if ((idLower && topIdLower === idLower) || (nameLower && topNameLower === nameLower)) return true;
+
+          // Check assignedTo
           if (Array.isArray(doc.assignedTo)) {
-            return doc.assignedTo.some(a => {
+            if (doc.assignedTo.some(a => {
               const aLower = String(a).toLowerCase().trim();
               return (idLower && aLower === idLower) || (nameLower && aLower === nameLower);
-            });
-          }
-          if (doc.assignedTo) {
+            })) return true;
+          } else if (doc.assignedTo) {
             const aLower = String(doc.assignedTo).toLowerCase().trim();
-            return (idLower && aLower === idLower) || (nameLower && aLower === nameLower);
+            if ((idLower && aLower === idLower) || (nameLower && aLower === nameLower)) return true;
           }
+
           return false;
         });
 
@@ -108,14 +108,34 @@ export const subscribeToCallLogs = (...args) => {
       }
 
       if (Array.isArray(logsToProcess)) {
-        logsToProcess.forEach(doc => {
-          if (doc && doc.id && doc._isNew) delete doc._isNew;
+        logsToProcess = logsToProcess.map(doc => {
+          if (!doc) return doc;
+          const matchedStateObj = findMatchingAttenderState(doc.attenderStates, attenderId, attenderName);
+          const attState = matchedStateObj || {};
+          if (doc._isNew) delete doc._isNew;
+
+          return {
+            ...doc,
+            status: attState.status || doc.status || "Pending",
+            remark: attState.remark || doc.remark || "",
+            history: Array.isArray(doc.history) && doc.history.length > 0 ? doc.history : (Array.isArray(attState.history) ? attState.history : []),
+            attenderState: attState
+          };
         });
       }
 
       let filtered = logsToProcess;
       if (tag && tag !== "ALL") {
-        filtered = logsToProcess.filter(log => Array.isArray(log.tags) && log.tags.includes(tag));
+        const tagLower = String(tag).toLowerCase().trim();
+        filtered = logsToProcess.filter(log => {
+          if (!log) return false;
+          if (log.programId && String(log.programId).toLowerCase().trim() === tagLower) return true;
+          if (log.programName && String(log.programName).toLowerCase().trim() === tagLower) return true;
+          if (log.calledFor && String(log.calledFor).toLowerCase().trim() === tagLower) return true;
+          if (log["Called For"] && String(log["Called For"]).toLowerCase().trim() === tagLower) return true;
+          if (Array.isArray(log.tags) && log.tags.some(t => String(t).toLowerCase().trim() === tagLower)) return true;
+          return false;
+        });
       }
       if (callback) callback(filtered);
     }).catch(err => {
@@ -133,21 +153,28 @@ export const fetchFreshSharedLead = async (lead, attenderId, attenderName, force
   if (!lead || !lead.id || lead._isNew) return lead;
 
   const isShared = isLeadShared(lead, attenderName);
-  const alreadyFetched = !!lead._lastFetchedAt;
+  const lastFetched = lead._lastFetchedAt || 0;
+  const isFresh = (Date.now() - lastFetched) < 15000; // 15 seconds freshness window
 
   console.log("[SHARED LEAD FETCH DECISION]", {
     leadId: lead.id,
     shared: isShared,
-    localCacheHit: alreadyFetched,
-    alreadyFetched: alreadyFetched,
-    firestoreFetchRequired: forceRefresh || !alreadyFetched
+    isFresh: isFresh,
+    lastFetchedAgo: lastFetched ? `${Math.round((Date.now() - lastFetched)/1000)}s` : "never",
+    firestoreFetchRequired: forceRefresh || (isShared && !isFresh)
   });
 
-  // If already fetched locally in this session and not force-refreshed: 0 Reads
-  if (alreadyFetched && !forceRefresh) {
-    console.log("[SHARED LEAD IDB HIT]", {
+  // If lead is NOT shared and not force-refreshed: 0 Reads
+  if (!isShared && !forceRefresh) {
+    console.log("[SOLO LEAD NO FETCH]", { leadId: lead.id });
+    return lead;
+  }
+
+  // If shared lead was fetched within the last 15 seconds and not force-refreshed: 0 Reads
+  if (isShared && isFresh && !forceRefresh) {
+    console.log("[SHARED LEAD FRESH HIT]", {
       leadId: lead.id,
-      reason: "Lead already fetched locally in this session"
+      reason: "Fetched less than 15s ago"
     });
     return lead;
   }
@@ -187,24 +214,96 @@ export const fetchFreshSharedLead = async (lead, attenderId, attenderName, force
       const rawData = docSnap.data();
       const attState = findMatchingAttenderState(rawData.attenderStates, attenderId, attenderName) || {};
 
+      const calledForVal = attState["Called For"] || attState.calledFor || rawData["Called For"] || rawData.calledFor || lead["Called For"] || lead.calledFor || "";
+      const sourceVal = attState.Source || attState.source || rawData.Source || rawData.source || lead.Source || lead.source || "";
+
+      // CRITICAL FIX: Isolate status and remark to viewing attender's attState first, falling back to local lead state
+      const statusVal = attState.status !== undefined && attState.status !== null && attState.status !== "" 
+        ? attState.status 
+        : (lead.status || "Pending");
+
+      const remarkVal = attState.remark !== undefined && attState.remark !== null && attState.remark !== "" 
+        ? attState.remark 
+        : (lead.remark || "");
+
+      const programIdVal = lead.programId || rawData.programId || calledForVal || rawData.programName || "";
+      const subProgramVal = attState["Sub Program"] || attState.subProgram || rawData["Sub Program"] || rawData.subProgram || lead["Sub Program"] || lead.subProgram || calledForVal || "";
+
+      // Comprehensive Tag Reconstruction: Merge all tags from lead, rawData, and attState
+      const tagsSet = new Set();
+      const addTag = (t) => {
+        if (!t) return;
+        if (Array.isArray(t)) {
+          t.forEach(addTag);
+        } else if (typeof t === "string") {
+          t.split(",").map(s => s.trim()).filter(Boolean).forEach(s => tagsSet.add(s));
+        }
+      };
+
+      addTag(lead.tags);
+      addTag(lead.Tags);
+      addTag(lead["Sub Program"] || lead.subProgram);
+      addTag(lead["Called For"] || lead.calledFor);
+      addTag(lead.programId);
+      addTag(lead.programName);
+
+      addTag(rawData.tags);
+      addTag(rawData.Tags);
+      addTag(rawData["Sub Program"] || rawData.subProgram);
+      addTag(rawData["Called For"] || rawData.calledFor);
+      addTag(rawData.programId);
+      addTag(rawData.programName);
+
+      addTag(attState.tags);
+      addTag(attState.Tags);
+      addTag(attState["Sub Program"] || attState.subProgram);
+      addTag(attState["Called For"] || attState.calledFor);
+      addTag(attState.programId);
+      addTag(attState.programName);
+
+      if (calledForVal) addTag(calledForVal);
+      if (subProgramVal) addTag(subProgramVal);
+      if (programIdVal) addTag(programIdVal);
+
+      const tagsArr = Array.from(tagsSet);
+      const tagsStr = tagsArr.join(", ");
+
+      const historyArr = Array.isArray(rawData.history) && rawData.history.length > 0 
+        ? rawData.history 
+        : (Array.isArray(attState.history) && attState.history.length > 0 ? attState.history : (lead.history || []));
+
       const freshLead = {
         ...rawData,
+        ...lead, // Preserve local lead context FIRST
         id: lead.id,
-        status: attState.status || rawData.status || "Pending",
-        remark: attState.remark || rawData.remark || "",
-        "Called For": attState["Called For"] || attState.calledFor || rawData["Called For"] || rawData.calledFor || "",
-        calledFor: attState["Called For"] || attState.calledFor || rawData["Called For"] || rawData.calledFor || "",
-        Source: attState.Source || attState.source || rawData.Source || rawData.source || "",
-        source: attState.Source || attState.source || rawData.Source || rawData.source || "",
-        history: Array.isArray(rawData.history) && rawData.history.length > 0 ? rawData.history : (attState.history || []),
+        programId: programIdVal,
+        "Sub Program": subProgramVal,
+        subProgram: subProgramVal,
+        tags: tagsArr,
+        Tags: tagsStr,
+        // CRITICAL FIX: Preserve viewing attender identity so leads remain visible in filtering
+        attenderId: attenderId || lead.attenderId || rawData.attenderId,
+        attenderName: attenderName || lead.attenderName || rawData.attenderName,
+        assignedName: attenderName || lead.assignedName || rawData.assignedName,
+        assignedTo: rawData.assignedTo || lead.assignedTo,
+        _partitionKey: lead._partitionKey,
+        _monthKey: lead._monthKey,
+        status: statusVal,
+        remark: remarkVal,
+        "Called For": calledForVal,
+        calledFor: calledForVal,
+        Source: sourceVal,
+        source: sourceVal,
+        history: historyArr,
         attenderState: attState,
+        attenderStates: rawData.attenderStates || lead.attenderStates,
         _lastFetchedAt: Date.now() // Local freshness marker
       };
 
       delete freshLead._isNew;
 
       try {
-        await idbSet(`tgf_contact_${lead.id}`, freshLead);
+        await setIDBCache(`tgf_contact_${lead.id}`, freshLead);
       } catch (cacheErr) {
         console.warn("Failed to cache fresh lead in IndexedDB:", cacheErr);
       }

@@ -9,6 +9,7 @@ import { OptionsManagerCard } from "./OptionsManagerCard";
 import { WhatsAppTemplatesCard } from "./WhatsAppTemplatesCard";
 import CompulsoryFieldBypassCard from "./CompulsoryFieldBypassCard";
 import { AdminPasswordCard } from "./AdminPasswordCard";
+import ExportCacheModal from "./ExportCacheModal";
 
 import { 
   getSettingsOptions, 
@@ -343,6 +344,7 @@ export default function SettingsTab() {
   };
 
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [partitionsList, setPartitionsList] = useState([]);
   const [isLoadingPartitions, setIsLoadingPartitions] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
@@ -381,17 +383,8 @@ export default function SettingsTab() {
     }
   };
 
-  const handleExportJson = async () => {
-    setIsExporting(true);
-    try {
-      const res = await exportCallCenterCacheToJson();
-      toast.success(`Exported ${res.docCount} cache partitions (${Math.round(res.byteSize / 1024)} KB) to JSON!`);
-    } catch (err) {
-      console.error(err);
-      toast.error("Export failed: " + err.message);
-    } finally {
-      setIsExporting(false);
-    }
+  const handleExportJson = () => {
+    setIsExportModalOpen(true);
   };
 
   const handleRebuildCache = async () => {
@@ -1172,6 +1165,12 @@ export default function SettingsTab() {
           </div>
         </div>
       )}
+
+      {/* Export Call Center Cache Duration Modal */}
+      <ExportCacheModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+      />
     </div>
   );
 }

@@ -20,109 +20,109 @@ export const ProfileDetailsTab = ({
   const iconFor = (f) => {
     const k = f.toLowerCase();
     if (k.includes("name") || k.includes("lead") || k.includes("khoji") || k.includes("caller")) {
-      return <User size={11} className="text-emerald-500" />;
+      return <User size={12} className="text-slate-400" />;
     }
     if (k.includes("phone") || k.includes("mobile")) {
-      return <Phone size={11} className="text-blue-500" />;
+      return <Phone size={12} className="text-slate-400" />;
     }
-    if (k.includes("city") || k.includes("location")) {
-      return <MapPin size={11} className="text-red-500" />;
+    if (k.includes("city") || k.includes("location") || k.includes("state")) {
+      return <MapPin size={12} className="text-slate-400" />;
     }
     if (k.includes("email")) {
-      return <Hash size={11} className="text-purple-500" />;
+      return <Hash size={12} className="text-slate-400" />;
     }
     if (k.includes("when") || k.includes("suitable")) {
-      return <Clock size={11} className="text-amber-500" />;
+      return <Clock size={12} className="text-slate-400" />;
     }
     if (k.includes("asmani") || k.includes("aasmani") || k.includes("आसमानी")) {
-      return <CheckCircle2 size={11} className="text-pink-500" />;
+      return <CheckCircle2 size={12} className="text-slate-400" />;
     }
-    return <Tag size={11} className="text-indigo-500" />;
+    return <Tag size={12} className="text-slate-400" />;
   };
 
   const labelFor = (f) => f.replace(/_/g, " ").replace(/\?/g, "").trim();
 
   return (
-    <div className="space-y-6 p-6 rounded-3xl border border-gray-100 bg-gray-50/30">
+    <div className="space-y-4 p-4 text-xs bg-white rounded-lg">
       {/* Primary Contact Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {/* Name */}
         <div className="space-y-1 min-w-0">
-          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-            <User size={11} className="text-emerald-500" /> Name
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1">
+            <User size={12} className="text-slate-400" /> Name
           </label>
           <input
             value={edited.Name || ""}
             onChange={e => handleChange("Name", e.target.value)}
             onBlur={e => handleChange("Name", formatContactName(e.target.value))}
             readOnly={!getEditable("Name")}
-            className={`w-full px-3 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+            className={`w-full px-3 py-1.5 border rounded-lg text-xs font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 transition ${
               !getEditable("Name")
-                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                ? "bg-slate-50 border-slate-200 text-slate-500 cursor-not-allowed"
+                : "bg-white border-slate-200 text-slate-800 focus:ring-indigo-500/20 focus:border-indigo-500"
             }`}
           />
         </div>
 
         {/* Phone */}
         <div className="space-y-1 min-w-0">
-          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1 truncate">
-            <Phone size={11} className="text-blue-500 shrink-0" /> Phone <span className="text-red-500 font-bold ml-0.5">*</span>
-            {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1 shrink-0" />}
-            {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1 shrink-0" />}
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1 truncate">
+            <Phone size={12} className="text-slate-400 shrink-0" /> Phone <span className="text-rose-500 font-bold ml-0.5">*</span>
+            {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-600 ml-1 shrink-0" />}
+            {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-600 ml-1 shrink-0" />}
           </label>
           <input
             value={edited.Phone || ""}
             onChange={e => handleChange("Phone", e.target.value)}
             readOnly={!getEditable("Phone")}
-            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+            className={`w-full px-3 py-1.5 border rounded-lg text-xs font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 transition ${
               !getEditable("Phone")
-                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                ? "bg-slate-50 border-slate-200 text-slate-500 cursor-not-allowed"
+                : "bg-white border-slate-200 text-slate-800 focus:ring-indigo-500/20 focus:border-indigo-500"
             }`}
           />
         </div>
 
         {/* Mobile */}
         <div className="space-y-1 min-w-0">
-          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1 truncate">
-            <Phone size={11} className="text-cyan-500 shrink-0" /> Mobile
-            {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-500 ml-1 shrink-0" />}
-            {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-500 ml-1 shrink-0" />}
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1 truncate">
+            <Phone size={12} className="text-slate-400 shrink-0" /> Mobile
+            {isCheckingDuplicate && <Loader size={10} className="animate-spin text-indigo-600 ml-1 shrink-0" />}
+            {isSearchingCRM && <Loader size={10} className="animate-spin text-emerald-600 ml-1 shrink-0" />}
           </label>
           <input
             value={edited.Mobile || ""}
             onChange={e => handleChange("Mobile", e.target.value)}
             readOnly={!getEditable("Mobile")}
-            className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+            className={`w-full px-3 py-1.5 border rounded-lg text-xs font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 transition ${
               !getEditable("Mobile")
-                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                ? "bg-slate-50 border-slate-200 text-slate-500 cursor-not-allowed"
+                : "bg-white border-slate-200 text-slate-800 focus:ring-indigo-500/20 focus:border-indigo-500"
             }`}
           />
         </div>
 
         {/* Email */}
         <div className="space-y-1 min-w-0">
-          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-            <Hash size={11} className="text-purple-500" /> Email
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1">
+            <Hash size={12} className="text-slate-400" /> Email
           </label>
           <input
             value={edited.Email || ""}
             onChange={e => handleChange("Email", e.target.value)}
             readOnly={!getEditable("Email")}
-            className={`w-full px-3 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+            className={`w-full px-3 py-1.5 border rounded-lg text-xs font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 transition ${
               !getEditable("Email")
-                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                ? "bg-slate-50 border-slate-200 text-slate-500 cursor-not-allowed"
+                : "bg-white border-slate-200 text-slate-800 focus:ring-indigo-500/20 focus:border-indigo-500"
             }`}
           />
         </div>
 
         {/* City */}
         <div className="space-y-1 min-w-0">
-          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-            <MapPin size={11} className="text-red-500" /> City <span className="text-red-500 font-bold ml-0.5">*</span>
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1">
+            <MapPin size={12} className="text-slate-400" /> City <span className="text-rose-500 font-bold ml-0.5">*</span>
           </label>
           <CityAutofillInput
             cityValue={edited.City || ""}
@@ -130,37 +130,37 @@ export const ProfileDetailsTab = ({
             onChangeCity={val => handleChange("City", val)}
             onChangeState={val => handleChange("State", val)}
             readOnly={!getEditable("City")}
-            className={`w-full px-3 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+            className={`w-full px-3 py-1.5 border rounded-lg text-xs font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 transition ${
               !getEditable("City")
-                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                ? "bg-slate-50 border-slate-200 text-slate-500 cursor-not-allowed"
+                : "bg-white border-slate-200 text-slate-800 focus:ring-indigo-500/20 focus:border-indigo-500"
             }`}
           />
         </div>
 
         {/* State */}
         <div className="space-y-1 min-w-0">
-          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-            <MapPin size={11} className="text-orange-500" /> State
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1">
+            <MapPin size={12} className="text-slate-400" /> State
           </label>
           <input
             value={edited.State || ""}
             onChange={e => handleChange("State", e.target.value)}
             readOnly={!getEditable("State")}
-            className={`w-full px-3 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+            className={`w-full px-3 py-1.5 border rounded-lg text-xs font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 transition ${
               !getEditable("State")
-                ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0 focus:border-gray-150"
-                : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                ? "bg-slate-50 border-slate-200 text-slate-500 cursor-not-allowed"
+                : "bg-white border-slate-200 text-slate-800 focus:ring-indigo-500/20 focus:border-indigo-500"
             }`}
           />
         </div>
 
         {/* Khoji */}
         <div className="space-y-1 col-span-1 md:col-span-2">
-          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-            <CheckCircle2 size={11} className="text-pink-500" /> Khoji <span className="text-red-500 font-bold ml-0.5">*</span>
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1">
+            <CheckCircle2 size={12} className="text-slate-400" /> Khoji <span className="text-rose-500 font-bold ml-0.5">*</span>
           </label>
-          <div className="flex items-center gap-2 h-[38px]">
+          <div className="flex items-center gap-2 h-[34px]">
             {(() => {
               const kVal = String(edited.Khoji || "").toLowerCase().trim();
               const isDew = kVal === "dew drop khoji";
@@ -173,10 +173,10 @@ export const ProfileDetailsTab = ({
                     type="button"
                     disabled={!editable}
                     onClick={() => handleChange("Khoji", isYes ? "" : "Yes")}
-                    className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition ${
+                    className={`px-3 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
                       isYes
-                        ? "bg-emerald-500 border-emerald-500 text-white shadow-sm"
-                        : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                        ? "bg-emerald-600 border-emerald-600 text-white shadow-2xs"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                     }`}
                   >
                     Yes
@@ -185,15 +185,15 @@ export const ProfileDetailsTab = ({
                     type="button"
                     disabled={!editable}
                     onClick={() => handleChange("Khoji", isNo ? "" : "No")}
-                    className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition ${
+                    className={`px-3 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
                       isNo
-                        ? "bg-red-500 border-red-500 text-white shadow-sm"
-                        : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                        ? "bg-rose-600 border-rose-600 text-white shadow-2xs"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                     }`}
                   >
                     No
                   </button>
-                  <label className="flex items-center gap-2 cursor-pointer ml-4 select-none">
+                  <label className="flex items-center gap-1.5 cursor-pointer ml-2 select-none">
                     <input
                       type="checkbox"
                       checked={isDew}
@@ -205,9 +205,9 @@ export const ProfileDetailsTab = ({
                           handleChange("Khoji", "Yes");
                         }
                       }}
-                      className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                      className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer border-slate-300"
                     />
-                    <span className="text-xs font-semibold text-gray-700">Dew drop khoji</span>
+                    <span className="text-xs font-medium text-slate-700">Dew drop khoji</span>
                   </label>
                 </>
               );
@@ -217,20 +217,32 @@ export const ProfileDetailsTab = ({
 
         {/* Tags */}
         <div className="space-y-1 col-span-1 md:col-span-4">
-          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1">
-            <Tag size={11} className="text-indigo-500" /> Tags
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1">
+            <Tag size={12} className="text-slate-400" /> Tags
           </label>
-          <div className="flex flex-wrap gap-1.5 p-2 bg-gray-50 border border-gray-150 rounded-xl min-h-[38px] items-center">
+          <div className="flex flex-wrap gap-1.5 p-1.5 bg-slate-50 border border-slate-200 rounded-lg min-h-[34px] items-center">
             {(() => {
-              const tagsVal = edited.Tags || "";
-              const tagsArr = tagsVal.split(",").map(t => t.trim()).filter(Boolean);
-              if (tagsArr.length === 0) {
-                return <span className="text-xs text-gray-400 px-2 font-medium">No tags mapped</span>;
+              const rawTags = edited.Tags || edited.tags || "";
+              let tagsArr = [];
+              if (Array.isArray(rawTags)) {
+                tagsArr = rawTags.map(t => typeof t === "object" ? (t?.name || t?.label || t?.tag || "") : String(t));
+              } else if (typeof rawTags === "string") {
+                tagsArr = rawTags.split(",");
+              } else if (typeof rawTags === "object" && rawTags !== null) {
+                tagsArr = [rawTags.name || rawTags.label || rawTags.tag || ""];
               }
-              return tagsArr.map((tag, idx) => (
+              const cleanTags = Array.from(new Set(
+                tagsArr
+                  .map(t => String(t || "").trim().replace(/^#+/, ""))
+                  .filter(t => t.length > 0 && t !== "[object Object]")
+              ));
+              if (cleanTags.length === 0) {
+                return <span className="text-xs text-slate-400 px-2 font-medium">No tags mapped</span>;
+              }
+              return cleanTags.map((tag, idx) => (
                 <span
                   key={idx}
-                  className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 shadow-sm"
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-200/60 text-slate-700 border border-slate-300/50"
                 >
                   {tag}
                 </span>
@@ -242,11 +254,11 @@ export const ProfileDetailsTab = ({
 
       {/* Custom Fields section */}
       {basicFields.length > 0 && (
-        <div className="space-y-4">
-          <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-            <Plus size={13} className="text-indigo-500" /> Custom Fields
+        <div className="space-y-3 pt-3 border-t border-slate-100">
+          <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+            <Plus size={13} className="text-slate-400" /> Custom Fields
           </h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {basicFields.map(field => {
               const editable = getEditable(field);
               return (
@@ -273,7 +285,7 @@ export const ProfileDetailsTab = ({
                       : "col-span-1"
                   }`}
                 >
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none flex items-center gap-1 mb-1 truncate" title={labelFor(field)}>
+                  <label className="text-xs font-semibold text-slate-700 leading-none flex items-center gap-1 mb-1 truncate" title={labelFor(field)}>
                     {iconFor(field)} {labelFor(field)}
                   </label>
                   {String(field).toLowerCase().includes("note") || String(field).toLowerCase().includes("remark") || field.length > 30 ? (
@@ -281,10 +293,10 @@ export const ProfileDetailsTab = ({
                       value={edited[field] || ""}
                       onChange={e => handleChange(field, e.target.value)}
                       readOnly={!editable}
-                      className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                      className={`w-full px-3 py-1.5 border rounded-lg text-xs font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 transition ${
                         !editable
-                          ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0"
-                          : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                          ? "bg-slate-50 border-slate-200 text-slate-500 cursor-not-allowed"
+                          : "bg-white border-slate-200 text-slate-800 focus:ring-indigo-500/20 focus:border-indigo-500"
                       }`}
                       rows={2}
                     />
@@ -293,10 +305,10 @@ export const ProfileDetailsTab = ({
                       value={edited[field] || ""}
                       onChange={e => handleChange(field, e.target.value)}
                       readOnly={!editable}
-                      className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold placeholder:text-gray-300 focus:outline-none focus:ring-4 transition ${
+                      className={`w-full px-3 py-1.5 border rounded-lg text-xs font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 transition ${
                         !editable
-                          ? "bg-gray-100/60 border-gray-150 text-gray-500 cursor-not-allowed focus:ring-0"
-                          : "bg-white border-gray-200 text-gray-800 focus:ring-indigo-500/10 focus:border-indigo-500"
+                          ? "bg-slate-50 border-slate-200 text-slate-500 cursor-not-allowed"
+                          : "bg-white border-slate-200 text-slate-800 focus:ring-indigo-500/20 focus:border-indigo-500"
                       }`}
                     />
                   )}
@@ -308,36 +320,28 @@ export const ProfileDetailsTab = ({
       )}
 
       {/* Add Custom Field button */}
-      <div className="flex justify-end">
+      <div className="flex justify-end pt-1">
         <button
           type="button"
           onClick={handleAddField}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-700 rounded-xl text-xs font-black transition-all border border-indigo-100/80 shadow-sm hover:shadow-md cursor-pointer"
+          className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium border border-slate-200 transition cursor-pointer"
         >
-          <Plus size={14} className="stroke-[3]" /> Add Custom Field
+          <Plus size={12} /> Add Custom Field
         </button>
       </div>
 
       {/* Lead form question responses */}
       {questionFields.length > 0 && (
-        <div className="space-y-3">
-          <p className="text-[10px] font-black text-purple-400 uppercase tracking-widest flex items-center gap-1.5"><MessageSquare size={11} /> Lead Form Responses</p>
+        <div className="space-y-2 pt-3 border-t border-slate-100">
+          <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider flex items-center gap-1.5"><MessageSquare size={12} /> Lead Form Responses</p>
           {questionFields.map(field => (
-            <div key={field} className="bg-purple-50/40 border border-purple-100 rounded-xl p-3 space-y-1.5">
-              <label className="text-[10px] font-semibold text-purple-700 leading-snug block">{labelFor(field)}</label>
+            <div key={field} className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 space-y-1">
+              <label className="text-xs font-medium text-slate-700 block">{labelFor(field)}</label>
               <textarea
                 value={edited[field] || ""}
                 readOnly={true}
-                ref={el => {
-                  if (el) {
-                    setTimeout(() => {
-                      el.style.height = 'inherit';
-                      el.style.height = `${el.scrollHeight}px`;
-                    }, 0);
-                  }
-                }}
                 rows={1}
-                className="w-full bg-gray-100/60 border border-purple-100/80 rounded-lg px-3 py-2 text-sm text-gray-500 cursor-not-allowed resize-none overflow-hidden focus:outline-none transition leading-relaxed placeholder:text-gray-300"
+                className="w-full bg-white border border-slate-200 rounded px-2.5 py-1 text-xs text-slate-600 cursor-not-allowed resize-none focus:outline-none leading-normal placeholder:text-slate-400"
                 placeholder="No response..."
               />
             </div>
@@ -347,16 +351,16 @@ export const ProfileDetailsTab = ({
 
       {/* Campaign & Ads metadata */}
       {campaignFields.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5"><Tag size={10} /> Campaign / Ads Data</p>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-3 bg-gray-50/50 border border-gray-100 rounded-xl">
+        <div className="space-y-2 pt-3 border-t border-slate-100">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5"><Tag size={11} /> Campaign / Ads Data</p>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
             {campaignFields.map(field => (
               <div key={field} className="space-y-1">
-                <label className="text-[9px] font-black text-gray-300 uppercase tracking-widest block">{labelFor(field)}</label>
+                <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider block">{labelFor(field)}</label>
                 <input
                   value={edited[field] || ""}
                   readOnly={true}
-                  className="w-full px-2 py-1.5 bg-gray-100/60 border border-gray-150 rounded-lg text-xs font-mono text-gray-400 cursor-not-allowed focus:outline-none transition"
+                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs font-mono text-slate-600 cursor-not-allowed focus:outline-none transition"
                   placeholder="—"
                 />
               </div>

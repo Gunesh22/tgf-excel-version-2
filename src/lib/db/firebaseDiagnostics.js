@@ -884,5 +884,209 @@ if (!IS_PROD && typeof window !== "undefined") {
   window.startFirebaseDiagnosticAction = startFirebaseDiagnosticAction;
   window.endFirebaseDiagnosticAction = endFirebaseDiagnosticAction;
   window.getActiveFirebaseListeners = () => Array.from(activeListenersMap.values());
+  window.auditAttenderCounts = async (targetAttender = "Test 2", range = "today") => {
+    console.log(`%c🔍 AUDITING ATTENDER COUNTS (${range.toUpperCase()}) FOR: "${targetAttender}"...`, "background: #1e1b4b; color: #818cf8; font-weight: bold; padding: 6px 12px; border-radius: 6px;");
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    const parseTs = (t) => {
+      if (!t) return null;
+      if (t instanceof Date) return t;
+      if (typeof t.toDate === "function") return t.toDate();
+      if (typeof t === "object" && t.seconds !== undefined) return new Date(t.seconds * 1000);
+      const d = new Date(t);
+      return !isNaN(d.getTime()) ? d : null;
+    };
+
+    return new Promise((resolve) => {
+      const dbReq = indexedDB.open("TGF_CallCenter_Cache");
+      dbReq.onerror = () => resolve([]);
+      dbReq.onsuccess = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains("kv_store")) {
+          console.warn("No 'kv_store' found in IndexedDB");
+          return resolve([]);
+        }
+        const tx = db.transaction("kv_store", "readonly");
+        const store = tx.objectStore("kv_store");
+        const getAllReq = store.getAll();
+
+        getAllReq.onsuccess = () => {
+          const rawEntries = getAllReq.result || [];
+          let contacts = [];
+
+          rawEntries.forEach(item => {
+            if (Array.isArray(item)) contacts.push(...item);
+            else if (item && typeof item === "object") {
+              if (item.id && (item.name || item.history || item.attenderStates)) contacts.push(item);
+              else if (Array.isArray(item.contacts)) contacts.push(...item.contacts);
+            }
+          });
+
+          // Deduplicate contacts by ID
+          const contactMap = new Map();
+          contacts.forEach(c => { if (c && c.id) contactMap.set(c.id, c); });
+          contacts = Array.from(contactMap.values());
+
+          console.log(`📦 Analyzed ${contacts.length} cached contacts for attender filtering.`);
+
+          const targetLower = targetAttender.toLowerCase().trim();
+          const isMatch = (attName, attId) => {
+            if (!targetAttender || targetAttender === "all") return true;
+            const n = (attName || "").toLowerCase().trim();
+            const id = (attId || "").toLowerCase().trim();
+            return n.includes(targetLower) || id.includes(targetLower);
+          };
+
+          const stats = {
+            targetAttender,
+            totalCallsToday: 0,
+            regDoneToday: 0,
+            leadsHandledToday: new Set(),
+            callDetailsToday: []
+          };
+
+          const seenCalls = new Set();
+
+          const recordAttempt = (attName, attId, leadName, leadId, status, timestamp, remark) => {
+            const d = parseTs(timestamp);
+            if (range === "today" && (!d || d < todayStart || d > todayEnd)) return;
+            if (!isMatch(attName, attId)) return;
+
+            const callKey = `${leadId}_${d ? d.getTime() : 0}_${status}_${remark}`;
+            if (!seenCalls.has(callKey)) {
+              seenCalls.add(callKey);
+              stats.leadsHandledToday.add(leadId);
+
+              if (status && status !== "Pending") {
+                stats.totalCallsToday++;
+              }
+              if (status === "Reg.Done") {
+                stats.regDoneToday++;
+              }
+
+              stats.callDetailsToday.push({
+                "Lead Name": leadName || leadId,
+                "Attender": attName || attId,
+                "Status": status || "N/A",
+                "Remark": remark || "",
+                "Time": d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "N/A"
+              });
+            }
+          };
+
+          contacts.forEach(log => {
+            const leadName = log.name || log.Name || log.id;
+            if (log.attenderStates && typeof log.attenderStates === "object") {
+              Object.entries(log.attenderStates).forEach(([aId, st]) => {
+                const aName = st.attenderName || aId;
+                if (Array.isArray(st.history) && st.history.length > 0) {
+                  st.history.forEach(h => recordAttempt(h.attenderName || aName, aId, leadName, log.id, h.status, h.timestamp, h.remark));
+                } else if (st.status || st.lastCalledAt || st.remark) {
+                  recordAttempt(aName, aId, leadName, log.id, st.status, st.lastCalledAt || log.createdAt, st.remark);
+                }
+              });
+            }
+            if (Array.isArray(log.history) && log.history.length > 0) {
+              log.history.forEach(h => recordAttempt(h.attenderName || log.attenderName || "Unknown", h.attenderId || log.attenderId, leadName, log.id, h.status, h.timestamp, h.remark));
+            }
+          });
+
+          console.log(`%c📊 TODAY'S AUDIT SUMMARY FOR: "${targetAttender}"`, "color: #38bdf8; font-weight: bold; font-size: 14px;");
+          console.table([{
+            "Attender Target": targetAttender,
+            "Total Calls Made Today": stats.totalCallsToday,
+            "Registrations (Reg.Done) Today": stats.regDoneToday,
+            "Unique Leads Handled Today": stats.leadsHandledToday.size
+          }]);
+
+          if (stats.callDetailsToday.length > 0) {
+            console.log(`%c📋 DETAILED CALL LOGS TODAY (${stats.callDetailsToday.length} calls):`, "color: #a7f3d0; font-weight: bold;");
+            console.table(stats.callDetailsToday);
+          } else {
+            console.log("%c⚠️ No call logs recorded today for this attender in local cache.", "color: #fbbf24;");
+          }
+
+          resolve(stats);
+        };
+      };
+    });
+  };
+
+  window.auditAugustPartition = async () => {
+    try {
+      const { collection, query, where, documentId, getDocs } = await import("firebase/firestore");
+      const { db } = await import("../firebase.js");
+
+      console.log("%c🔥 FETCHING AUGUST 2026 PARTITION DOCS FROM FIRESTORE...", "color: #38bdf8; font-weight: bold;");
+      const q = query(
+        collection(db, "callCenterCache"),
+        where(documentId(), ">=", "2026-08"),
+        where(documentId(), "<=", "2026-08\uf8ff")
+      );
+
+      const snap = await getDocs(q);
+      console.log(`%c✅ FIRESTORE READ COMPLETE: ${snap.docs.length} doc(s) fetched (${snap.docs.length} Firestore read(s) consumed).`, "color: #4ade80; font-weight: bold;");
+
+      const contacts = {};
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if (data && data.contacts) Object.assign(contacts, data.contacts);
+      });
+
+      const targets = ["Jean Grey", "Punisher", "Hulk", "Test Gunesh 2", "Test Gunesh"];
+      targets.forEach(n => {
+        const c = Object.values(contacts).find(x => (x.name || x.Name || "").toLowerCase().includes(n.toLowerCase()));
+        if (c) {
+          console.log(`%c\n📋 LEAD: "${c.name || c.Name || n}" (${c.id})`, "color: #facc15; font-weight: bold;");
+          console.log("Top-Level status:", c.status, "| remark:", c.remark);
+          
+          const breakdown = [];
+          if (c.attenderStates) {
+            Object.entries(c.attenderStates).forEach(([attId, state]) => {
+              const name = state.attenderName || (attId === "hbMzjgMkmYa0D6ysM9RA" ? "Test 2" : attId === "JW20HztSjMfwNbVaCpxz" ? "Test" : attId);
+              if (Array.isArray(state.history)) {
+                state.history.forEach(h => {
+                  breakdown.push({
+                    "Attender": name,
+                    "Status": h.status || state.status || "N/A",
+                    "Remark": h.remark || "",
+                    "Timestamp": h.timestamp ? new Date(h.timestamp).toLocaleString() : "N/A"
+                  });
+                });
+              } else {
+                breakdown.push({
+                  "Attender": name,
+                  "Status": state.status || "N/A",
+                  "Remark": state.remark || "",
+                  "Timestamp": state.lastCalledAt ? new Date(state.lastCalledAt).toLocaleString() : "N/A"
+                });
+              }
+            });
+          }
+
+          if (Array.isArray(c.history)) {
+            c.history.forEach(h => {
+              breakdown.push({
+                "Attender": h.attenderName || c.attenderName || "Global History",
+                "Status": h.status || "N/A",
+                "Remark": h.remark || "",
+                "Timestamp": h.timestamp ? new Date(h.timestamp).toLocaleString() : "N/A"
+              });
+            });
+          }
+
+          console.table(breakdown);
+        } else {
+          console.log(`❌ '${n}' not found in August cache.`);
+        }
+      });
+      return contacts;
+    } catch (e) {
+      console.error("Failed to audit August partition:", e);
+    }
+  };
+
   console.log(`%c[FIREBASE DIAGNOSTICS INITIALIZED] Diagnostic functions attached to window.`, "color: #00BCD4; font-weight: bold;");
 }

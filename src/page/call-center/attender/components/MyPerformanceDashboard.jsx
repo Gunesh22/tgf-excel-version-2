@@ -1,12 +1,28 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { User, PhoneCall, CheckCircle2, TrendingUp, Clock, Sun, AlertCircle, ChevronDown, Info, X } from "lucide-react";
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
+import {
+  PhoneCall, CheckCircle2, TrendingUp, Clock, Calendar,
+  Search, Filter, Sparkles, User, Award, CheckCircle,
+  XCircle, AlertCircle, ArrowUpRight, Copy, Check, MessageSquare,
+  BarChart3, PieChart as PieIcon, RefreshCw, ChevronRight, Layers, FileText
+} from "lucide-react";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
 import { CONNECTED_STATUSES, NOT_CONNECTED_STATUSES, getCanonicalStatus } from "../utils";
 
-// ─── Colour palette for pie ───────────────────────────────────────────────────
-const PIE_COLORS = ["#4f46e5", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6", "#64748b"];
+// ─── Status Color Token System ────────────────────────────────────────────────
+const STATUS_THEMES = {
+  "Reg.Done": { bg: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500", iconClass: "text-emerald-600" },
+  "Interested": { bg: "bg-blue-50 text-blue-700 border-blue-200", dot: "bg-blue-500", iconClass: "text-blue-600" },
+  "Info Given": { bg: "bg-indigo-50 text-indigo-700 border-indigo-200", dot: "bg-indigo-500", iconClass: "text-indigo-600" },
+  "Next Time": { bg: "bg-sky-50 text-sky-700 border-sky-200", dot: "bg-sky-500", iconClass: "text-sky-600" },
+  "Busy": { bg: "bg-amber-50 text-amber-700 border-amber-200", dot: "bg-amber-500", iconClass: "text-amber-600" },
+  "No Answer": { bg: "bg-rose-50 text-rose-700 border-rose-200", dot: "bg-rose-500", iconClass: "text-rose-600" },
+  "Not Interested": { bg: "bg-slate-100 text-slate-700 border-slate-200", dot: "bg-slate-500", iconClass: "text-slate-600" },
+  "Pending": { bg: "bg-gray-100 text-gray-600 border-gray-200", dot: "bg-gray-400", iconClass: "text-gray-500" }
+};
 
-// ─── Date range helpers ───────────────────────────────────────────────────────
+const PIE_COLORS = ["#10b981", "#3b82f6", "#6366f1", "#0284c7", "#f59e0b", "#f43f5e", "#64748b", "#8b5cf6"];
+
+// ─── Date Filter Options ──────────────────────────────────────────────────────
 const DATE_FILTERS = [
   { label: "Today",      key: "today" },
   { label: "This Week",  key: "week" },
@@ -15,255 +31,203 @@ const DATE_FILTERS = [
   { label: "All Time",   key: "all" },
 ];
 
+// ─── Date & Timestamp Parser ─────────────────────────────────────────────────
 function parseTimestamp(t) {
   if (!t) return null;
-  if (t instanceof Date) return t;
+  if (t instanceof Date) return isNaN(t.getTime()) ? null : t;
   if (typeof t.toDate === "function") return t.toDate();
   if (typeof t === "object" && t.seconds !== undefined) {
     return new Date(t.seconds * 1000 + Math.round((t.nanoseconds || 0) / 1000000));
   }
-  return new Date(t);
+  const parsed = new Date(t);
+  return isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function getTimestampFromLog(log) {
-  if (log.lastCalledAt) {
-    return parseTimestamp(log.lastCalledAt);
-  }
-  if (log.createdAt) {
-    return parseTimestamp(log.createdAt);
-  }
-  return null;
-}
-
-function filterLogsByDate(logs, range, customStart, customEnd) {
-  if (range === "all") return logs.filter(log => !log._deleted);
-  let start = null;
-  let end = null;
-  const now = new Date();
-
-  if (range === "today") {
-    start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-  } else if (range === "week") {
-    start = new Date(now);
-    start.setDate(now.getDate() - now.getDay()); // Sunday
-    start.setHours(0, 0, 0, 0);
-    end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-  } else if (range === "month") {
-    start = new Date(now);
-    start.setDate(1);
-    start.setHours(0, 0, 0, 0);
-    end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-  } else if (range === "custom") {
-    if (customStart) {
-      start = new Date(customStart + "T00:00:00");
-    }
-    if (customEnd) {
-      end = new Date(customEnd + "T23:59:59.999");
-    }
-  }
-
-  return logs.filter(log => {
-    if (log._deleted) return false;
-
-    const timestamps = [];
-
-    if (log.attenderStates && typeof log.attenderStates === "object") {
-      Object.values(log.attenderStates).forEach(state => {
-        if (!state) return;
-        if (Array.isArray(state.history)) {
-          state.history.forEach(h => {
-            const d = parseTimestamp(h.timestamp);
-            if (d) timestamps.push(d);
-          });
-        }
-        if (state.lastCalledAt) {
-          const d = parseTimestamp(state.lastCalledAt);
-          if (d) timestamps.push(d);
-        }
-      });
-    }
-
-    if (Array.isArray(log.history)) {
-      log.history.forEach(h => {
-        const d = parseTimestamp(h.timestamp);
-        if (d) timestamps.push(d);
-      });
-    }
-
-    const ts = getTimestampFromLog(log);
-    if (ts) timestamps.push(ts);
-
-    if (timestamps.length === 0) return false;
-
-    return timestamps.some(d => {
-      if (start && d < start) return false;
-      if (end && d > end) return false;
-      return true;
-    });
-  });
-}
-
+// ─── Extract Attender Call Attempts (Strict Isolation Logic) ──────────────────
 function getAttenderAttempts(logs, attenderName, attenderId) {
-  const attempts = [];
   const attNameLower = attenderName ? String(attenderName).toLowerCase().trim() : "";
   const attIdLower = attenderId ? String(attenderId).toLowerCase().trim() : "";
 
+  // Strict identity matching helper
+  const isOurAttender = (name, id) => {
+    const nLower = name ? String(name).toLowerCase().trim() : "";
+    const iLower = id ? String(id).toLowerCase().trim() : "";
+    if (!nLower && !iLower) return false;
+    if (attIdLower && iLower && iLower === attIdLower) return true;
+    if (attNameLower && nLower && nLower === attNameLower) return true;
+    if (attNameLower && iLower && iLower === attNameLower) return true;
+    if (attIdLower && nLower && nLower === attIdLower) return true;
+    return false;
+  };
+
+  const list = [];
+
   logs.forEach(log => {
-    if (log._deleted) return;
+    if (!log || log._deleted) return;
 
     const nameKey = Object.keys(log).find(k => ["name", "lead name", "caller name", "lead"].includes(k.toLowerCase()));
-    const contactName = nameKey ? log[nameKey] : "Unknown";
+    const contactName = nameKey ? log[nameKey] : "Unknown Lead";
     const phoneKey = Object.keys(log).find(k => ["phone", "mobile", "whatsapp", "phone number", "whatsapp number", "whatsappno"].includes(k.toLowerCase()))
       || Object.keys(log).find(k => k.toLowerCase().includes("phone") || k.toLowerCase().includes("mobile") || k.toLowerCase().includes("whatsapp"));
     const contactPhone = phoneKey ? log[phoneKey] : "";
 
-    const processAttemptObj = (att, isHistory, index, state) => {
-      const status = att.status || "Pending";
-      const dateVal = att.timestamp || state?.lastCalledAt;
+    const sourceKey = Object.keys(log).find(k => ["source", "sourse", "source of information", "source of informiton"].includes(k.toLowerCase()));
+    const sourceVal = sourceKey ? String(log[sourceKey] || "").trim() : "";
+
+    const calledForKey = Object.keys(log).find(k => ["called for", "called_for", "calledfor"].includes(k.toLowerCase()));
+    const calledForVal = calledForKey ? String(log[calledForKey] || "").trim() : "";
+
+    const createAttemptObj = (status, dateVal, remark, callType, source, calledFor, attId, attName, isHistory, index) => {
+      const canonicalStatus = getCanonicalStatus(status || "Pending");
       const attemptDate = parseTimestamp(dateVal) || parseTimestamp(log.createdAt);
+      if (!attemptDate) return null;
 
       return {
         ...log,
-        id: `${log.id}_${isHistory ? `h_${index}` : "latest"}`,
+        id: `${log.id}_${attId || "att"}_${isHistory ? `h_${index}` : "latest"}_${attemptDate.getTime()}`,
         contactId: log.id,
         Name: contactName,
         Phone: contactPhone,
-        status: status,
-        remark: att.remark || "",
-        callType: att.callType || "outgoing",
+        programId: log.programId,
+        programName: log.programName || "Unknown Program",
+        tags: log.tags || [],
+        attenderId: attId,
+        attenderName: attName,
+        status: canonicalStatus,
+        remark: remark || "",
+        callType: callType || "outgoing",
+        createdAt: parseTimestamp(log.createdAt) || attemptDate,
+        timestamp: attemptDate,
         updatedAt: attemptDate,
+        source: source || sourceVal,
+        calledFor: calledFor || calledForVal
       };
     };
 
-    // Helper to determine if an attender matches
-    const isOurAttender = (name, id) => {
-      if (attIdLower && id && String(id).toLowerCase().trim() === attIdLower) return true;
-      if (attNameLower && name && String(name).toLowerCase().trim() === attNameLower) return true;
-      if (attNameLower && id && String(id).toLowerCase().trim() === attNameLower) return true;
-      if (attIdLower && name && String(name).toLowerCase().trim() === attIdLower) return true;
-      return !id && !name;
+    const hasAttenderStates = log.attenderStates && Object.keys(log.attenderStates).length > 0;
+    const hasTopHistory = Array.isArray(log.history) && log.history.length > 0;
+
+    // Track processed event keys per lead document to prevent double-counting
+    const seenEventKeys = new Set();
+
+    const addAttemptIfNew = (status, dateVal, remark, callType, source, calledFor, attId, attName, isHistory, index) => {
+      const canonicalStatus = getCanonicalStatus(status || "Pending");
+      const attemptDate = parseTimestamp(dateVal) || parseTimestamp(log.createdAt);
+      if (!attemptDate) return;
+
+      const eventKey = `${log.id}_${attemptDate.getTime()}_${canonicalStatus}`;
+      if (seenEventKeys.has(eventKey)) return;
+      seenEventKeys.add(eventKey);
+
+      const att = createAttemptObj(
+        canonicalStatus,
+        attemptDate,
+        remark,
+        callType,
+        source,
+        calledFor,
+        attId,
+        attName,
+        isHistory,
+        index
+      );
+      if (att) list.push(att);
     };
 
-    const logAttempts = [];
-
-    // 1. Collect from attenderStates
-    if (log.attenderStates && typeof log.attenderStates === "object") {
+    // Tier 1: Extract from matching attenderStates
+    if (hasAttenderStates) {
       Object.entries(log.attenderStates).forEach(([attId, state]) => {
-        const stateAttName = state.attenderName || "";
+        if (!state) return;
+        const stateAttName = state.attenderName;
+
         if (!isOurAttender(stateAttName, attId)) return;
 
-        if (state.history && Array.isArray(state.history) && state.history.length > 0) {
+        const hasStateHistory = Array.isArray(state.history) && state.history.length > 0;
+        if (hasStateHistory) {
           state.history.forEach((h, index) => {
-            const att = processAttemptObj(
-              {
-                timestamp: h.timestamp,
-                status: h.status,
-                remark: h.remark,
-                callType: h.callType,
-                attenderName: h.attenderName || stateAttName
-              },
+            const dateVal = h.timestamp || h.date || h.createdAt || h.updatedAt || state.lastCalledAt;
+            addAttemptIfNew(
+              h.status,
+              dateVal,
+              h.remark,
+              h.callType || state.callType,
+              h.source || state.Source || state.source,
+              h.calledFor || state["Called For"] || state.calledFor,
+              attId,
+              h.attenderName || stateAttName,
               true,
-              index,
-              state
+              index
             );
-            if (att) logAttempts.push(att);
           });
         }
         if (state.lastCalledAt || (state.status && state.status !== "Pending") || state.remark) {
-          const dateVal = state.lastCalledAt;
-          const ts = parseTimestamp(dateVal) || parseTimestamp(log.createdAt);
-          const existsInStateHistory = Array.isArray(state.history) && state.history.some(h => {
-            const hTs = parseTimestamp(h.timestamp);
-            return hTs && ts && Math.abs(hTs.getTime() - ts.getTime()) < 1000 && (h.status === state.status || h.remark === state.remark);
-          });
-          if (!existsInStateHistory) {
-            const att = processAttemptObj(
-              {
-                timestamp: state.lastCalledAt,
-                status: state.status,
-                remark: state.remark,
-                callType: state.callType,
-                attenderName: stateAttName
-              },
-              false,
-              0,
-              state
-            );
-            if (att) logAttempts.push(att);
-          }
-        }
-      });
-    }
-
-    // 2. Collect from top-level log.history
-    if (log.history && Array.isArray(log.history) && log.history.length > 0) {
-      log.history.forEach((h, index) => {
-        const histAttName = h.attenderName || log.attenderName || "";
-        const histAttId = h.attenderId || log.attenderId || "";
-        if (!isOurAttender(histAttName, histAttId)) return;
-
-        const dateVal = h.timestamp || h.date || h.createdAt;
-        const ts = parseTimestamp(dateVal);
-        const alreadyAdded = logAttempts.some(ra => {
-          return ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 1000 && ra.status === (h.status || "Pending") && ra.remark === (h.remark || "");
-        });
-
-        if (!alreadyAdded) {
-          const att = processAttemptObj(
-            {
-              timestamp: ts,
-              status: h.status,
-              remark: h.remark,
-              callType: h.callType,
-              attenderName: histAttName || attenderName
-            },
-            true,
-            index
-          );
-          if (att) logAttempts.push(att);
-        }
-      });
-    }
-
-    // 3. Collect from top-level log.lastCalledAt / status
-    const stateAttName = log.attenderName || "";
-    const stateAttId = log.attenderId || "";
-    if (isOurAttender(stateAttName, stateAttId)) {
-      if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
-        const dateVal = log.lastCalledAt || log.createdAt;
-        const ts = parseTimestamp(dateVal);
-        const alreadyAdded = logAttempts.some(ra => {
-          return ra.updatedAt && ts && Math.abs(ra.updatedAt.getTime() - ts.getTime()) < 1000 && ra.status === (log.status || "Pending") && ra.remark === (log.remark || "");
-        });
-
-        if (!alreadyAdded) {
-          const att = processAttemptObj(
-            {
-              timestamp: dateVal,
-              status: log.status,
-              remark: log.remark,
-              callType: log.callType,
-              attenderName: stateAttName || attenderName
-            },
+          const dateVal = state.lastCalledAt || state.updatedAt || state.createdAt;
+          addAttemptIfNew(
+            state.status,
+            dateVal,
+            state.remark,
+            state.callType,
+            state.Source || state.source,
+            state["Called For"] || state.calledFor,
+            attId,
+            stateAttName,
             false,
             0
           );
-          if (att) logAttempts.push(att);
+        }
+      });
+    }
+
+    // Tier 2: Extract from top-level log.history (scanning for events owned by our attender)
+    if (hasTopHistory) {
+      log.history.forEach((h, index) => {
+        const itemAttId = h.attenderId || log.attenderId;
+        const itemAttName = h.attenderName || log.attenderName;
+
+        if (isOurAttender(itemAttName, itemAttId)) {
+          const dateVal = h.timestamp || h.date || h.createdAt || h.updatedAt;
+          addAttemptIfNew(
+            h.status,
+            dateVal,
+            h.remark,
+            h.callType,
+            h.source,
+            h.calledFor,
+            itemAttId || "legacy",
+            itemAttName || "Legacy Attender",
+            true,
+            index
+          );
+        }
+      });
+    }
+
+    // Tier 3: Extract from top-level document fields (if legacy without attenderStates & without history)
+    if (!hasAttenderStates && !hasTopHistory) {
+      if (isOurAttender(log.attenderName, log.attenderId)) {
+        if (log.lastCalledAt || (log.status && log.status !== "Pending") || log.remark) {
+          const dateVal = log.lastCalledAt || log.createdAt;
+          addAttemptIfNew(
+            log.status,
+            dateVal,
+            log.remark,
+            log.callType,
+            log.Source || log.source,
+            log["Called For"] || log.calledFor,
+            log.attenderId || "legacy",
+            log.attenderName || "Legacy Attender",
+            false,
+            0
+          );
         }
       }
     }
-
-    attempts.push(...logAttempts);
   });
 
-  return attempts;
+  return list;
 }
 
+// ─── Filter Attempts by Date Range ───────────────────────────────────────────
 function filterAttemptsByDate(attempts, range, customStart, customEnd) {
   if (range === "all") return attempts;
   let start = null;
@@ -288,16 +252,12 @@ function filterAttemptsByDate(attempts, range, customStart, customEnd) {
     end = new Date(now);
     end.setHours(23, 59, 59, 999);
   } else if (range === "custom") {
-    if (customStart) {
-      start = new Date(customStart + "T00:00:00");
-    }
-    if (customEnd) {
-      end = new Date(customEnd + "T23:59:59.999");
-    }
+    if (customStart) start = new Date(customStart + "T00:00:00");
+    if (customEnd) end = new Date(customEnd + "T23:59:59.999");
   }
 
   return attempts.filter(att => {
-    const d = att.updatedAt;
+    const d = att.timestamp || att.updatedAt;
     if (!d || isNaN(d.getTime())) return false;
     if (start && d < start) return false;
     if (end && d > end) return false;
@@ -305,112 +265,157 @@ function filterAttemptsByDate(attempts, range, customStart, customEnd) {
   });
 }
 
-function FormulaInfoPopover({ title = "Formula Info", formulas = [], iconOnly = false }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const popoverRef = useRef(null);
+// ─── Filter Lead Documents by Date Range ─────────────────────────────────────
+function filterLogsByDate(logs, range, customStart, customEnd, attenderName, attenderId) {
+  if (range === "all") return logs.filter(log => !log._deleted);
+  let start = null;
+  let end = null;
+  const now = new Date();
 
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  if (range === "today") {
+    start = new Date(now); start.setHours(0, 0, 0, 0);
+    end = new Date(now); end.setHours(23, 59, 59, 999);
+  } else if (range === "week") {
+    start = new Date(now); start.setDate(now.getDate() - now.getDay()); start.setHours(0, 0, 0, 0);
+    end = new Date(now); end.setHours(23, 59, 59, 999);
+  } else if (range === "month") {
+    start = new Date(now); start.setDate(1); start.setHours(0, 0, 0, 0);
+    end = new Date(now); end.setHours(23, 59, 59, 999);
+  } else if (range === "custom") {
+    if (customStart) start = new Date(customStart + "T00:00:00");
+    if (customEnd) end = new Date(customEnd + "T23:59:59.999");
+  }
 
-  return (
-    <div className="relative inline-block text-left font-normal normal-case" ref={popoverRef}>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setIsOpen(!isOpen);
-        }}
-        className={
-          iconOnly
-            ? "p-1 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-full transition-all inline-flex items-center justify-center cursor-pointer shadow-2xs"
-            : "px-2.5 py-1 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-full transition-all inline-flex items-center gap-1.5 text-xs font-bold shadow-xs cursor-pointer"
+  const attNameLower = attenderName ? String(attenderName).toLowerCase().trim() : "";
+  const attIdLower = attenderId ? String(attenderId).toLowerCase().trim() : "";
+
+  const isOurAttender = (name, id) => {
+    const nLower = name ? String(name).toLowerCase().trim() : "";
+    const iLower = id ? String(id).toLowerCase().trim() : "";
+    if (!nLower && !iLower) return false;
+    if (attIdLower && iLower && iLower === attIdLower) return true;
+    if (attNameLower && nLower && nLower === attNameLower) return true;
+    if (attNameLower && iLower && iLower === attNameLower) return true;
+    if (attIdLower && nLower && nLower === attIdLower) return true;
+    return false;
+  };
+
+  return logs.filter(log => {
+    if (log._deleted) return false;
+    const timestamps = [];
+
+    if (log.attenderStates && typeof log.attenderStates === "object") {
+      Object.entries(log.attenderStates).forEach(([attId, state]) => {
+        if (!state) return;
+        const stateAttName = state.attenderName;
+        if (Array.isArray(state.history)) {
+          state.history.forEach(h => {
+            const hAttId = h.attenderId || (attId !== "legacy" ? attId : null);
+            const hAttName = h.attenderName || stateAttName;
+            if (isOurAttender(hAttName, hAttId)) {
+              const d = parseTimestamp(h.timestamp || h.date || h.createdAt || h.updatedAt);
+              if (d) timestamps.push(d);
+            }
+          });
         }
-        title={iconOnly ? `View ${title}` : "View Formula Information"}
-      >
-        <Info size={iconOnly ? 13 : 14} className="text-indigo-600" />
-        {!iconOnly && <span>Formula Info</span>}
-      </button>
+        if (isOurAttender(stateAttName, attId) && state.lastCalledAt) {
+          const d = parseTimestamp(state.lastCalledAt);
+          if (d) timestamps.push(d);
+        }
+      });
+    }
 
-      {isOpen && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="absolute right-0 mt-2 w-80 p-4 bg-slate-900 text-white rounded-2xl shadow-xl z-50 border border-slate-700 text-xs normal-case font-normal"
-        >
-          <div className="flex justify-between items-center mb-3 pb-2 border-b border-slate-800">
-            <span className="font-extrabold text-indigo-300 text-sm flex items-center gap-1.5">
-              <Info size={16} className="text-indigo-400" /> {title}
-            </span>
-            <button
-              type="button"
-              onClick={() => setIsOpen(false)}
-              className="text-slate-400 hover:text-white p-1 rounded cursor-pointer"
-            >
-              <X size={14} />
-            </button>
-          </div>
-          <div className="space-y-3">
-            {formulas.map((item, idx) => (
-              <div key={idx}>
-                {item.label && <div className="text-indigo-300 font-bold mb-1">{item.label}</div>}
-                <div className="bg-slate-800/90 p-2 rounded-xl text-slate-200 font-mono text-[11px] border border-slate-700/60 leading-relaxed">
-                  {item.formula}
-                </div>
-                {item.note && <div className="text-[10px] text-slate-400 mt-1 italic">{item.note}</div>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    if (Array.isArray(log.history)) {
+      log.history.forEach(h => {
+        if (isOurAttender(h.attenderName, h.attenderId)) {
+          const d = parseTimestamp(h.timestamp || h.date);
+          if (d) timestamps.push(d);
+        }
+      });
+    }
+
+    if (timestamps.length === 0) return false;
+    return timestamps.some(d => {
+      if (start && d < start) return false;
+      if (end && d > end) return false;
+      return true;
+    });
+  });
 }
 
-// ─── Small stat number block ──────────────────────────────────────────────────
-const Stat = ({ label, value, accent = "text-slate-800", sub }) => (
-  <div className="flex flex-col">
-    <span className={`text-2xl font-black ${accent}`}>{value}</span>
-    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-0.5">{label}</span>
-    {sub && <span className="text-[10px] text-gray-300 font-semibold">{sub}</span>}
-  </div>
-);
+// ─── Main MyPerformanceDashboard Component ─────────────────────────────────────
+export function MyPerformanceDashboard({
+  logs = [],
+  attenderName = "",
+  attenderId = "",
+  tag = "ALL"
+}) {
+  const [dateRange, setDateRange] = useState("month");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [copiedId, setCopiedId] = useState(null);
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
-export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) => {
-  const [dateRange, setDateRange] = useState("all");
-  const todayStrISO = new Date().toISOString().split("T")[0];
-  const [customStart, setCustomStart] = useState(todayStrISO);
-  const [customEnd, setCustomEnd] = useState(todayStrISO);
-
-  // Extract all attempts all-time
+  // Extract all-time attempts strictly for THIS attender
   const allAttempts = useMemo(() => {
     return getAttenderAttempts(logs, attenderName, attenderId);
   }, [logs, attenderName, attenderId]);
 
+  // Filtered attempts by date range
+  const filteredAttempts = useMemo(() => {
+    return filterAttemptsByDate(allAttempts, dateRange, customStart, customEnd);
+  }, [allAttempts, dateRange, customStart, customEnd]);
+
+  // Filtered assigned lead documents by date range
+  const filteredLogs = useMemo(() => {
+    return filterLogsByDate(logs, dateRange, customStart, customEnd, attenderName, attenderId);
+  }, [logs, dateRange, customStart, customEnd, attenderName, attenderId]);
+
+  useEffect(() => {
+    const now = new Date();
+    const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(now); todayEnd.setHours(23, 59, 59, 999);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const todayAttempts = allAttempts.filter(a => a.timestamp >= todayStart && a.timestamp <= todayEnd);
+    const monthAttempts = allAttempts.filter(a => a.timestamp >= monthStart && a.timestamp <= todayEnd);
+
+    const todayRegs = todayAttempts.filter(a => a.status === "Reg.Done").length;
+    const monthRegs = monthAttempts.filter(a => a.status === "Reg.Done").length;
+
+    console.log(
+      `%c📊 [PERFORMANCE AUDIT] ${attenderName} (${attenderId}) | Active: "${dateRange}" (${filteredAttempts.length} calls) | Today: ${todayAttempts.length} calls (${todayRegs} Reg) | This Month: ${monthAttempts.length} calls (${monthRegs} Reg) | All-Time: ${allAttempts.length} calls`,
+      "background: #1e1b4b; color: #818cf8; font-weight: bold; padding: 6px 12px; border-radius: 6px; font-size: 12px;",
+      {
+        Attender: attenderName,
+        AttenderId: attenderId,
+        ActiveFilter: dateRange,
+        IndexedDBLeads: logs.length,
+        DisplayedCalls: filteredAttempts.length,
+        TodayCalls: todayAttempts.length,
+        TodayRegs: todayRegs,
+        ThisMonthCalls: monthAttempts.length,
+        ThisMonthRegs: monthRegs,
+        AllTimeCalls: allAttempts.length,
+        DisplayedAttemptsSample: filteredAttempts
+      }
+    );
+  }, [logs, attenderName, attenderId, allAttempts, filteredAttempts, dateRange]);
+
   // Today's calls count
-  const todayCallCount = useMemo(() => {
-    const today = new Date();
-    const start = new Date(today); start.setHours(0, 0, 0, 0);
-    const end = new Date(today); end.setHours(23, 59, 59, 999);
-    const todayAttempts = allAttempts.filter(att => {
-      const d = att.updatedAt;
-      return d && d >= start && d <= end;
-    });
-    return todayAttempts.length;
+  const todayCallsCount = useMemo(() => {
+    const now = new Date();
+    const start = new Date(now); start.setHours(0, 0, 0, 0);
+    const end = new Date(now); end.setHours(23, 59, 59, 999);
+    return allAttempts.filter(att => att.timestamp >= start && att.timestamp <= end).length;
   }, [allAttempts]);
 
   // Callbacks Due (all time)
-  const callbacksDue = useMemo(() => {
+  const callbacksDueCount = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     return logs.filter(l => {
       if (l._deleted) return false;
-
       let callbackDate = l.callbackDate;
       let callbackStatus = l.callbackStatus;
 
@@ -423,54 +428,53 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
       if (!callbackDate) return false;
       const d = parseTimestamp(callbackDate);
       if (!d || isNaN(d.getTime())) return false;
-      const cbDay = new Date(d);
-      cbDay.setHours(0, 0, 0, 0);
+      const cbDay = new Date(d); cbDay.setHours(0, 0, 0, 0);
       return cbDay <= today && callbackStatus !== "done";
     }).length;
   }, [logs, attenderId]);
 
-  // Date-filtered logs (leads) - used for the "Assigned" lead count
-  const filteredLogs = useMemo(() => filterLogsByDate(logs, dateRange, customStart, customEnd), [logs, dateRange, customStart, customEnd]);
-
-  // Date-filtered call attempts
-  const filteredAttempts = useMemo(() => {
-    return filterAttemptsByDate(allAttempts, dateRange, customStart, customEnd);
-  }, [allAttempts, dateRange, customStart, customEnd]);
-
+  // Key KPI Statistics
   const stats = useMemo(() => {
-    let connected = 0, notConnected = 0, registrations = 0, interested = 0, infoGiven = 0, nextTime = 0, notInterested = 0;
+    let connected = 0;
+    let notConnected = 0;
+    let interested = 0;
+    let infoGiven = 0;
+    let nextTime = 0;
+    let notInterested = 0;
+
     const statusCounts = {};
+    const uniqueRegKeys = new Set();
 
     filteredAttempts.forEach(att => {
       const s = getCanonicalStatus(att.status || "Pending");
       statusCounts[s] = (statusCounts[s] || 0) + 1;
-      
-      // Exclude "Pending" from counting as connected or notConnected
+
       if (s !== "Pending") {
         if (NOT_CONNECTED_STATUSES.includes(s)) {
           notConnected++;
         } else {
           connected++;
           const sLower = s.toLowerCase().trim();
-          if (s === "Reg.Done") registrations++;
-          else if (sLower === "interested" || sLower === "intersted") interested++;
-          else if (sLower === "info given") infoGiven++;
-          else if (sLower === "next time") nextTime++;
-          else if (sLower === "not interested" || sLower === "not intrested") notInterested++;
+          if (s === "Reg.Done") {
+            const prog = att.programId || att.calledFor || att["Called For"] || "default";
+            uniqueRegKeys.add(`${att.contactId || att.id}_${String(prog).toLowerCase().trim()}`);
+          } else if (sLower === "interested" || sLower === "intersted") {
+            interested++;
+          } else if (sLower === "info given") {
+            infoGiven++;
+          } else if (sLower === "next time") {
+            nextTime++;
+          } else if (sLower === "not interested" || sLower === "not intrested") {
+            notInterested++;
+          }
         }
       }
     });
 
-    const total = filteredLogs.length; // Number of unique active/assigned leads in the range
-    const called = filteredAttempts.length; // Number of call attempts made in the range
-
-    // Uncalled leads are unique leads in filteredLogs that have 0 attempts in the range
-    const uniqueCalledContactIds = new Set(filteredAttempts.map(att => att.contactId));
-    const uncalledLeads = filteredLogs.filter(log => !uniqueCalledContactIds.has(log.id));
-    const uncalled = uncalledLeads.length;
-
-    const connectionRate = called > 0 ? Math.round((connected / called) * 100) : 0;
-    
+    const totalLeads = filteredLogs.length;
+    const totalCalls = filteredAttempts.length;
+    const registrations = uniqueRegKeys.size;
+    const connectionRate = totalCalls > 0 ? Math.round((connected / totalCalls) * 100) : 0;
     const conversionDenominator = registrations + infoGiven + interested + nextTime + notInterested;
     const conversionRate = conversionDenominator > 0 ? Math.round((registrations / conversionDenominator) * 100) : 0;
 
@@ -478,202 +482,484 @@ export const MyPerformanceDashboard = ({ logs = [], attenderName, attenderId }) 
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
-    return { total, called, uncalled, connected, notConnected, registrations, interested, infoGiven, connectionRate, conversionRate, statusChartData };
+    return {
+      totalLeads,
+      totalCalls,
+      connected,
+      notConnected,
+      registrations,
+      interested,
+      infoGiven,
+      nextTime,
+      notInterested,
+      connectionRate,
+      conversionRate,
+      statusCounts,
+      statusChartData
+    };
   }, [filteredLogs, filteredAttempts]);
 
-  return (
-    <div className="flex-1 overflow-y-auto bg-[#f7f8fa] p-6 space-y-4">
+  // Search & Filter Call Log Items for Table Display
+  const displayedAttempts = useMemo(() => {
+    return filteredAttempts.filter(att => {
+      if (statusFilter !== "ALL" && getCanonicalStatus(att.status) !== statusFilter) {
+        return false;
+      }
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase().trim();
+        const matchName = String(att.Name || "").toLowerCase().includes(q);
+        const matchPhone = String(att.Phone || "").toLowerCase().includes(q);
+        const matchRemark = String(att.remark || "").toLowerCase().includes(q);
+        const matchProg = String(att.calledFor || att.programName || "").toLowerCase().includes(q);
+        return matchName || matchPhone || matchRemark || matchProg;
+      }
+      return true;
+    });
+  }, [filteredAttempts, statusFilter, searchTerm]);
 
-      {/* ── Header + Date Filter ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h2 className="text-base font-black text-slate-800">My Performance</h2>
-          <p className="text-xs text-gray-400 font-semibold mt-0.5">{attenderName}</p>
+  // Copy phone helper
+  const handleCopyPhone = (phone, id) => {
+    if (!phone) return;
+    navigator.clipboard.writeText(phone);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  return (
+    <div className="min-h-full bg-slate-50/60 p-4 sm:p-6 lg:p-8 space-y-6 font-sans text-slate-800">
+      
+      {/* ─── Header & Date Filter Bar ────────────────────────────────────────── */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white/80 backdrop-blur-md p-5 rounded-3xl border border-slate-200/80 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white">
+            <Sparkles size={22} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">My Performance</h1>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                0-Read IndexedDB Active
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Attender: <span className="font-semibold text-slate-700">{attenderName || "Personal Dashboard"}</span>
+            </p>
+          </div>
         </div>
-        
-        <div className="flex flex-col items-end gap-2">
-          {/* Pill filter */}
-          <div className="flex items-center bg-white border border-gray-200 rounded-xl p-0.5 gap-0.5 shadow-sm">
-            {DATE_FILTERS.map(f => {
-              const isActive = dateRange === f.key;
-              let activeStyle = "";
-              if (isActive) {
-                if (f.key === "today") {
-                  activeStyle = "bg-emerald-600 text-white shadow-md shadow-emerald-600/10 scale-[1.03]";
-                } else if (f.key === "week") {
-                  activeStyle = "bg-teal-600 text-white shadow-md shadow-teal-600/10 scale-[1.03]";
-                } else if (f.key === "month") {
-                  activeStyle = "bg-indigo-600 text-white shadow-md shadow-indigo-600/10 scale-[1.03]";
-                } else if (f.key === "custom") {
-                  activeStyle = "bg-blue-600 text-white shadow-md shadow-blue-600/10 scale-[1.03]";
-                } else {
-                  activeStyle = "bg-slate-700 text-white shadow-md scale-[1.03]";
-                }
-              } else {
-                activeStyle = "text-gray-400 hover:text-gray-700 hover:bg-gray-50/50";
-              }
+
+        {/* Date Filter Pills */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center bg-slate-100/80 p-1 rounded-2xl border border-slate-200/80">
+            {DATE_FILTERS.map(filter => {
+              const isActive = dateRange === filter.key;
               return (
                 <button
-                  key={f.key}
-                  onClick={() => setDateRange(f.key)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all duration-200 ${activeStyle}`}
+                  key={filter.key}
+                  onClick={() => setDateRange(filter.key)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-200 ${
+                    isActive
+                      ? "bg-white text-indigo-600 shadow-sm scale-[1.02]"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-white/50"
+                  }`}
                 >
-                  {f.label}
+                  {filter.label}
                 </button>
               );
             })}
           </div>
 
-          {/* Custom Date Pickers */}
+          {/* Custom Date Range Pickers */}
           {dateRange === "custom" && (
-            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl p-1.5 px-2.5 shadow-sm animate-fadeIn">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Range:</span>
+            <div className="flex items-center gap-2 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm animate-fadeIn">
               <input
                 type="date"
                 value={customStart}
                 onChange={e => setCustomStart(e.target.value)}
-                className="px-2 py-1 border border-gray-200 rounded-lg text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-gray-50/50"
+                className="px-2.5 py-1 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-slate-700"
               />
-              <span className="text-gray-400 text-xs font-semibold">to</span>
+              <span className="text-slate-400 text-xs font-bold">to</span>
               <input
                 type="date"
                 value={customEnd}
                 onChange={e => setCustomEnd(e.target.value)}
-                className="px-2 py-1 border border-gray-200 rounded-lg text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-gray-50/50"
+                className="px-2.5 py-1 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-slate-700"
               />
             </div>
           )}
         </div>
       </div>
 
-      {/* ── Row 1: 6 key numbers ── */}
-      <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
-        {[
-          { label: "Assigned",    value: stats.total,          accent: "text-indigo-600" },
-          { label: "Called",      value: stats.called,         accent: "text-blue-600" },
-          { label: "Connected",   value: stats.connected,      accent: "text-emerald-600" },
-          { label: "Reg. Done",   value: stats.registrations,  accent: "text-green-600" },
-          { label: "Interested",  value: stats.interested,     accent: "text-purple-600" },
-          { label: "Not Reached", value: stats.notConnected,   accent: "text-red-500" },
-        ].map((item, i) => (
-          <div key={i} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm">
-            <Stat label={item.label} value={item.value} accent={item.accent} />
+      {/* ─── Top 4 KPI Gradient Cards Grid ─────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        {/* Card 1: Total Calls / Pulses */}
+        <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600 to-indigo-700 rounded-3xl p-5 text-white shadow-xl shadow-indigo-600/15 group hover:scale-[1.01] transition-all">
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold tracking-wider uppercase text-indigo-100/80">Total Call Pulses</span>
+            <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur-md flex items-center justify-center text-white">
+              <PhoneCall size={18} />
+            </div>
           </div>
-        ))}
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-3xl font-black tracking-tight">{stats.totalCalls}</span>
+            <span className="text-xs font-medium text-indigo-200">attempts</span>
+          </div>
+          <div className="mt-3 pt-3 border-t border-white/15 flex items-center justify-between text-xs text-indigo-100">
+            <span>Today's Calls:</span>
+            <span className="font-bold text-white bg-white/20 px-2 py-0.5 rounded-full">{todayCallsCount}</span>
+          </div>
+        </div>
+
+        {/* Card 2: Registrations */}
+        <div className="relative overflow-hidden bg-gradient-to-br from-emerald-600 to-teal-700 rounded-3xl p-5 text-white shadow-xl shadow-emerald-600/15 group hover:scale-[1.01] transition-all">
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold tracking-wider uppercase text-emerald-100/80">Registrations (Reg.Done)</span>
+            <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur-md flex items-center justify-center text-white">
+              <Award size={18} />
+            </div>
+          </div>
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-3xl font-black tracking-tight">{stats.registrations}</span>
+            <span className="text-xs font-medium text-emerald-200">unique leads</span>
+          </div>
+          <div className="mt-3 pt-3 border-t border-white/15 flex items-center justify-between text-xs text-emerald-100">
+            <span>Conversion Rate:</span>
+            <span className="font-bold text-white bg-white/20 px-2 py-0.5 rounded-full">{stats.conversionRate}%</span>
+          </div>
+        </div>
+
+        {/* Card 3: Connection Rate */}
+        <div className="relative overflow-hidden bg-gradient-to-br from-blue-600 to-cyan-700 rounded-3xl p-5 text-white shadow-xl shadow-blue-600/15 group hover:scale-[1.01] transition-all">
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold tracking-wider uppercase text-blue-100/80">Connected Calls</span>
+            <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur-md flex items-center justify-center text-white">
+              <TrendingUp size={18} />
+            </div>
+          </div>
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-3xl font-black tracking-tight">{stats.connected}</span>
+            <span className="text-xs font-medium text-blue-200">/ {stats.totalCalls} calls</span>
+          </div>
+          <div className="mt-3 pt-3 border-t border-white/15 flex items-center justify-between text-xs text-blue-100">
+            <span>Connection Rate:</span>
+            <span className="font-bold text-white bg-white/20 px-2 py-0.5 rounded-full">{stats.connectionRate}%</span>
+          </div>
+        </div>
+
+        {/* Card 4: Callbacks Due */}
+        <div className="relative overflow-hidden bg-gradient-to-br from-amber-500 to-orange-600 rounded-3xl p-5 text-white shadow-xl shadow-amber-500/15 group hover:scale-[1.01] transition-all">
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold tracking-wider uppercase text-amber-100/80">Callbacks Due</span>
+            <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur-md flex items-center justify-center text-white">
+              <Clock size={18} />
+            </div>
+          </div>
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-3xl font-black tracking-tight">{callbacksDueCount}</span>
+            <span className="text-xs font-medium text-amber-100">pending</span>
+          </div>
+          <div className="mt-3 pt-3 border-t border-white/15 flex items-center justify-between text-xs text-amber-100">
+            <span>Assigned Leads:</span>
+            <span className="font-bold text-white bg-white/20 px-2 py-0.5 rounded-full">{stats.totalLeads}</span>
+          </div>
+        </div>
+
       </div>
 
-      {/* ── Row 2: Rates + Today + Callbacks ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col gap-0.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Connection Rate</span>
-            <FormulaInfoPopover
-              title="Connection Rate Formula"
-              formulas={[{ label: "Connection Rate (%)", formula: "(Total Connected Calls ÷ Total Called Attempts) × 100" }]}
-              iconOnly={true}
-            />
-          </div>
-          <span className="text-3xl font-black text-slate-800">{stats.connectionRate}%</span>
-          <div className="w-full bg-gray-100 h-1.5 rounded-full mt-2">
-            <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: `${stats.connectionRate}%` }} />
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col gap-0.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Conversion Rate</span>
-            <FormulaInfoPopover
-              title="Conversion Rate Formula"
-              formulas={[
-                {
-                  label: "Conversion Rate (%)",
-                  formula: "(Reg.Done Conversions ÷ Valid Responded Attempts*) × 100",
-                  note: "*Valid Responded Attempts = Reg.Done + Info Given + Interested + Next Time + Not Interested"
-                }
-              ]}
-              iconOnly={true}
-            />
-          </div>
-          <span className="text-3xl font-black text-slate-800">{stats.conversionRate}%</span>
-          <div className="w-full bg-gray-100 h-1.5 rounded-full mt-2">
-            <div className="bg-indigo-500 h-full rounded-full transition-all" style={{ width: `${stats.conversionRate}%` }} />
-          </div>
-        </div>
-
-        <div className={`rounded-2xl p-4 border shadow-sm flex flex-col gap-0.5 ${
-          todayCallCount > 0 ? "bg-amber-50 border-amber-100" : "bg-white border-gray-100"
-        }`}>
-          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1">
-            <Sun size={11} className="text-amber-400" /> Today's Calls
-          </span>
-          <span className="text-3xl font-black text-slate-800">{todayCallCount}</span>
-          <span className="text-[10px] text-gray-400 font-semibold">
-            {todayCallCount === 0 ? "None yet today" : `call${todayCallCount !== 1 ? "s" : ""} so far`}
-          </span>
-        </div>
-
-        <div className={`rounded-2xl p-4 border shadow-sm flex flex-col gap-0.5 ${
-          callbacksDue > 0 ? "bg-red-50 border-red-200" : "bg-white border-gray-100"
-        }`}>
-          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1">
-            <Clock size={11} className={callbacksDue > 0 ? "text-red-400" : "text-gray-400"} /> Callbacks Due
-          </span>
-          <span className={`text-3xl font-black ${callbacksDue > 0 ? "text-red-600" : "text-slate-800"}`}>{callbacksDue}</span>
-          <span className="text-[10px] text-gray-400 font-semibold">
-            {callbacksDue === 0 ? "All on track" : "overdue callbacks"}
-          </span>
-        </div>
-      </div>
-
-      {/* ── Row 3: Status Breakdown ── */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">
-          Status Breakdown
-          {dateRange !== "all" && (
-            <span className="ml-2 normal-case text-indigo-400">
-              ({DATE_FILTERS.find(f => f.key === dateRange)?.label})
-            </span>
-          )}
-        </h3>
-
-        {stats.statusChartData.length === 0 ? (
-          <p className="text-sm text-gray-400 font-semibold text-center py-8">No calls logged for this period.</p>
-        ) : (
-          <div className="flex items-center gap-8">
-            {/* Pie */}
-            <div className="relative w-32 h-32 shrink-0">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={128}>
-                <PieChart>
-                  <Pie data={stats.statusChartData} cx="50%" cy="50%" innerRadius={38} outerRadius={52} paddingAngle={2} dataKey="value">
-                    {stats.statusChartData.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(v) => [`${v}`, ""]} contentStyle={{ fontSize: 11, borderRadius: 8 }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <span className="text-base font-black text-slate-800">{stats.called}</span>
-                <span className="text-[8px] text-gray-400 uppercase font-black">called</span>
+      {/* ─── Middle Section: Analytics & Status Distribution ──────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Call Result Breakdown Progress List (2 Columns Wide) */}
+        <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
+                <BarChart3 size={18} />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900">Call Outcome Analytics</h3>
+                <p className="text-[11px] text-slate-400 font-medium">Distribution of call attempt results for this attender</p>
               </div>
             </div>
+            <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
+              {stats.totalCalls} Total Events
+            </span>
+          </div>
 
-            {/* Legend grid */}
-            <div className="flex-1 grid grid-cols-2 gap-x-6 gap-y-2">
-              {stats.statusChartData.map((entry, i) => (
-                <div key={i} className="flex items-center justify-between text-xs min-w-0">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                    <span className="text-slate-500 font-semibold truncate">{entry.name}</span>
+          {stats.statusChartData.length === 0 ? (
+            <div className="py-12 flex flex-col items-center justify-center text-slate-400 text-xs">
+              <FileText size={32} className="stroke-[1.5] mb-2 opacity-50" />
+              <span>No call attempts found for the selected date range.</span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+              {stats.statusChartData.map((item, index) => {
+                const theme = STATUS_THEMES[item.name] || STATUS_THEMES["Pending"];
+                const percentage = stats.totalCalls > 0 ? Math.round((item.value / stats.totalCalls) * 100) : 0;
+                
+                return (
+                  <div key={item.name} className="p-3.5 rounded-2xl bg-slate-50/70 border border-slate-100 hover:border-slate-200 transition-all">
+                    <div className="flex items-center justify-between text-xs mb-2">
+                      <div className="flex items-center gap-2 font-bold text-slate-800">
+                        <span className={`w-2.5 h-2.5 rounded-full ${theme.dot}`}></span>
+                        <span>{item.name}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-extrabold text-slate-900">{item.value}</span>
+                        <span className="text-[10px] text-slate-400 font-medium">({percentage}%)</span>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="w-full h-2 rounded-full bg-slate-200/80 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${theme.dot}`}
+                        style={{ width: `${percentage}%` }}
+                      ></div>
+                    </div>
                   </div>
-                  <span className="font-black text-slate-800 ml-3 shrink-0">{entry.value}</span>
-                </div>
-              ))}
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Status Distribution Donut Chart */}
+        <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col justify-between space-y-4">
+          <div className="flex items-center gap-2.5 border-b border-slate-100 pb-4">
+            <div className="p-2 rounded-xl bg-violet-50 text-violet-600">
+              <PieIcon size={18} />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-slate-900">Outcome Share</h3>
+              <p className="text-[11px] text-slate-400 font-medium">Visual proportion of call statuses</p>
             </div>
           </div>
-        )}
+
+          <div className="w-full h-[220px] flex items-center justify-center">
+            {stats.statusChartData.length === 0 ? (
+              <span className="text-xs text-slate-400 font-medium">No data to display</span>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie
+                    data={stats.statusChartData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={55}
+                    outerRadius={80}
+                    paddingAngle={4}
+                    dataKey="value"
+                  >
+                    {stats.statusChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)", fontSize: "12px" }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>Connection Efficiency:</span>
+            <span className="font-bold text-slate-800">{stats.connectionRate}%</span>
+          </div>
+        </div>
+
+      </div>
+
+      {/* ─── Bottom Section: Searchable Call History Log Table ───────────────── */}
+      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden space-y-4">
+        
+        {/* Table Filter & Search Header */}
+        <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-2xl bg-indigo-50 text-indigo-600">
+              <Layers size={20} />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-slate-900">Call History & Activity Log</h3>
+              <p className="text-xs text-slate-400 font-medium">Showing personal call attempts logged for {attenderName || "this attender"}</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            {/* Search Input */}
+            <div className="relative w-full sm:w-64">
+              <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search lead, phone, note..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+              />
+              {searchTerm && (
+                <button onClick={() => setSearchTerm("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                  <XCircle size={14} />
+                </button>
+              )}
+            </div>
+
+            {/* Status Filter Dropdown */}
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value)}
+              className="w-full sm:w-40 px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="Reg.Done">Reg.Done</option>
+              <option value="Interested">Interested</option>
+              <option value="Info Given">Info Given</option>
+              <option value="Next Time">Next Time</option>
+              <option value="Busy">Busy</option>
+              <option value="No Answer">No Answer</option>
+              <option value="Not Interested">Not Interested</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Call Logs Table */}
+        <div className="overflow-x-auto">
+          {displayedAttempts.length === 0 ? (
+            <div className="py-16 text-center text-slate-400 text-xs flex flex-col items-center justify-center space-y-2">
+              <FileText size={36} className="stroke-[1.5] text-slate-300" />
+              <span className="font-semibold text-slate-600">No call records found matching criteria</span>
+              <span className="text-[11px] text-slate-400">Try adjusting your date range, search query, or status filter.</span>
+            </div>
+          ) : (
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-50/80 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                  <th className="py-3.5 px-5">Contact Lead</th>
+                  <th className="py-3.5 px-4 text-center">Calls Done</th>
+                  <th className="py-3.5 px-4">Status</th>
+                  <th className="py-3.5 px-4">Called For / Program</th>
+                  <th className="py-3.5 px-4">Call Type</th>
+                  <th className="py-3.5 px-5">Call Note / Remark</th>
+                  <th className="py-3.5 px-5 text-right">Event Timestamp</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                {displayedAttempts.map((att, idx) => {
+                  const theme = STATUS_THEMES[att.status] || STATUS_THEMES["Pending"];
+                  const dateFormatted = att.timestamp
+                    ? att.timestamp.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                    : "Unknown";
+                  const targetId = attenderId || att.attenderId;
+                  const targetName = (attenderName || att.attenderName || "").toLowerCase().trim();
+                  let callsDoneCount = 0;
+
+                  if (targetId && att.attenderStates && att.attenderStates[targetId]) {
+                    const st = att.attenderStates[targetId];
+                    if (Array.isArray(st.history) && st.history.length > 0) {
+                      callsDoneCount = st.history.length;
+                    } else if (st.lastCalledAt || st.status || st.remark) {
+                      callsDoneCount = 1;
+                    }
+                  } else if (Array.isArray(att.history) && att.history.length > 0) {
+                    const attenderHistory = att.history.filter(h => {
+                      if (targetId && (h.attenderId === targetId || h.assignedTo === targetId)) return true;
+                      const hName = (h.attenderName || h.name || "").toLowerCase().trim();
+                      if (targetName && hName === targetName) return true;
+                      return false;
+                    });
+                    callsDoneCount = attenderHistory.length > 0 ? attenderHistory.length : 1;
+                  } else if (att.status || att.remark || att.lastCalledAt) {
+                    callsDoneCount = 1;
+                  }
+
+                  return (
+                    <tr key={`${att.id || 'att'}_${idx}`} className="hover:bg-slate-50/60 transition-colors group">
+                      
+                      {/* Contact Lead */}
+                      <td className="py-3.5 px-5">
+                        <div className="flex flex-col">
+                          <span className="font-extrabold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                            {att.Name || "Unknown Lead"}
+                          </span>
+                          {att.Phone && (
+                            <div className="flex items-center gap-1 mt-0.5 text-[11px] text-slate-500 font-medium">
+                              <span>{att.Phone}</span>
+                              <button
+                                onClick={() => handleCopyPhone(att.Phone, att.id)}
+                                className="text-slate-300 hover:text-indigo-600 transition"
+                                title="Copy Phone Number"
+                              >
+                                {copiedId === att.id ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Calls Done */}
+                      <td className="py-3.5 px-4 text-center font-bold">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-mono text-[11px] border border-slate-200">
+                          📞 {callsDoneCount}
+                        </span>
+                      </td>
+
+                      {/* Status */}
+                      <td className="py-3.5 px-4">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${theme.bg}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${theme.dot}`}></span>
+                          {att.status}
+                        </span>
+                      </td>
+
+                      {/* Program */}
+                      <td className="py-3.5 px-4">
+                        <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 font-semibold text-[11px]">
+                          {att.calledFor || att.programName || "General"}
+                        </span>
+                      </td>
+
+                      {/* Call Type */}
+                      <td className="py-3.5 px-4 capitalize">
+                        <span className="text-slate-500 font-semibold">
+                          {att.callType || "outgoing"}
+                        </span>
+                      </td>
+
+                      {/* Remark */}
+                      <td className="py-3.5 px-5 max-w-xs">
+                        <p className="text-slate-600 font-normal line-clamp-2 italic" title={att.remark}>
+                          {att.remark ? `"${att.remark}"` : <span className="text-slate-300 font-sans not-italic">No note recorded</span>}
+                        </p>
+                      </td>
+
+                      {/* Timestamp */}
+                      <td className="py-3.5 px-5 text-right font-medium text-slate-400 text-[11px]">
+                        {dateFormatted}
+                      </td>
+
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer info */}
+        <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between text-xs text-slate-400">
+          <span>Showing {displayedAttempts.length} of {filteredAttempts.length} call events</span>
+          <span className="font-semibold text-slate-500">IndexedDB Zero-Read Dataset</span>
+        </div>
+
       </div>
 
     </div>
   );
-};
+}
+
+export default MyPerformanceDashboard;

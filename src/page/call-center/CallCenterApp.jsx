@@ -189,10 +189,10 @@ export default function CallCenterApp() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-medium text-sm">Loading Call Center...</p>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-slate-600 font-medium text-xs tracking-wide">Loading Call Center Workspace...</p>
         </div>
       </div>
     );
@@ -233,62 +233,65 @@ export default function CallCenterApp() {
     );
   }
 
-  // Unified Portal View
+  // Unified Portal View - V2 Professional SaaS Light Mode
   return (
     <>
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-        {/* Ambient Glows */}
-        <div className="absolute top-[-180px] left-[-180px] w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[140px] pointer-events-none" />
-        <div className="absolute bottom-[-180px] right-[-180px] w-[500px] h-[500px] bg-indigo-600/10 rounded-full blur-[140px] pointer-events-none" />
-
-        <div className="w-full max-w-md space-y-6 relative z-10">
+      <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col items-center justify-center p-4 relative font-sans">
+        
+        <div className="w-full max-w-md space-y-5 relative z-10">
           
-          {/* Logo & Header */}
-          <div className="flex flex-col items-center text-center space-y-2">
-            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-xl shadow-blue-500/20 mb-1 p-3">
-              <Phone size={28} fill="white" className="text-white" />
+          {/* Brand Header */}
+          <div className="flex flex-col items-center text-center space-y-1.5">
+            <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center shadow-sm text-white mb-0.5">
+              <Phone size={24} fill="currentColor" />
             </div>
-            <h1 className="text-2xl font-black text-white tracking-tight">TGF Call Center</h1>
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">TGF Call Center</h1>
+            <p className="text-xs text-slate-500 font-medium">Internal Operations & Lead Management V2</p>
           </div>
 
-
           {/* Segmented Tab Switcher */}
-          <div className="bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl grid grid-cols-2 gap-1.5 shadow-lg">
+          <div className="bg-slate-200/70 p-1 rounded-xl grid grid-cols-2 gap-1 border border-slate-200/80">
             <button
               type="button"
               onClick={() => setActiveTab("attender")}
-              className={`flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-xs transition-all ${
+              className={`flex items-center justify-center gap-2 py-2 rounded-lg font-semibold text-xs transition-all ${
                 activeTab === "attender"
-                  ? "bg-blue-600 text-white shadow-md shadow-blue-600/25"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                  ? "bg-white text-blue-700 shadow-xs border border-slate-200/60"
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
               }`}
             >
-              <UserCheck size={16} /> Attender Portal
+              <UserCheck size={15} /> Attender Portal
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("admin")}
-              className={`flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-xs transition-all ${
+              className={`flex items-center justify-center gap-2 py-2 rounded-lg font-semibold text-xs transition-all ${
                 activeTab === "admin"
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                  ? "bg-white text-indigo-700 shadow-xs border border-slate-200/60"
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
               }`}
             >
-              <ShieldCheck size={16} /> Admin Panel
+              <ShieldCheck size={15} /> Admin Panel
             </button>
           </div>
 
-          {/* Card Content Area */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 shadow-2xl backdrop-blur-xl transition-all">
+          {/* Login Card */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
             
             {/* ATTENDER TAB */}
             {activeTab === "attender" && (
               <form onSubmit={handleAttenderStart} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center justify-between">
-                    <span>1. Select Your Name</span>
-                    {selectedAttenderName && <span className="text-blue-400">{selectedAttenderName}</span>}
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-700 block">
+                      Select Your Name
+                    </label>
+                    {selectedAttenderName && (
+                      <span className="text-[11px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
+                        {selectedAttenderName}
+                      </span>
+                    )}
+                  </div>
                   <div className="relative">
                     <select
                       value={selectedAttenderId}
@@ -298,22 +301,22 @@ export default function CallCenterApp() {
                         setSelectedAttenderName(found?.name || "");
                         setAttenderPassword("");
                       }}
-                      className="w-full px-4 py-3 bg-slate-800/90 border border-slate-700/80 rounded-2xl text-white font-medium text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none cursor-pointer"
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-medium text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all appearance-none cursor-pointer"
                     >
-                      <option value="">-- Choose Name --</option>
+                      <option value="">-- Select Attender Account --</option>
                       {attenders.map(a => (
                         <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
                     </select>
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">
+                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">
                       ▼
                     </div>
                   </div>
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
-                    Enter 6-Digit Password
+                  <label className="text-xs font-semibold text-slate-700 block">
+                    6-Digit Security PIN
                   </label>
                   <div className="relative">
                     <input
@@ -323,26 +326,25 @@ export default function CallCenterApp() {
                       placeholder="••••••"
                       value={attenderPassword}
                       onChange={e => setAttenderPassword(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-800/90 border border-slate-700/80 rounded-2xl text-white font-mono text-center text-lg tracking-[0.3em] font-bold placeholder:tracking-[0.2em] placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-mono text-center text-lg tracking-[0.3em] font-bold placeholder:tracking-[0.2em] placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
                     />
                     <button
                       type="button"
                       onClick={() => setShowAttenderPass(!showAttenderPass)}
                       disabled={!selectedAttenderId}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white disabled:opacity-40 transition-colors"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 disabled:opacity-40 transition-colors p-1"
                     >
-                      {showAttenderPass ? <EyeOff size={18} /> : <Eye size={18} />}
+                      {showAttenderPass ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
                 </div>
 
-
                 <button
                   type="submit"
                   disabled={!selectedAttenderId || !attenderPassword || attenderRemainingLockSecs > 0}
-                  className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold text-sm rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 pt-3.5 pb-3.5"
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold text-sm rounded-lg transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:cursor-not-allowed"
                 >
-                  {attenderRemainingLockSecs > 0 ? `🔒 Locked out (${attenderRemainingLockSecs}s)` : <>Start Calling <ChevronRight size={18} /></>}
+                  {attenderRemainingLockSecs > 0 ? `🔒 Locked out (${attenderRemainingLockSecs}s)` : <>Start Calling Session <ChevronRight size={16} /></>}
                 </button>
               </form>
             )}
@@ -351,8 +353,8 @@ export default function CallCenterApp() {
             {activeTab === "admin" && (
               <form onSubmit={handleAdminAuthSubmit} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
-                    Enter Admin Password
+                  <label className="text-xs font-semibold text-slate-700 block">
+                    Admin Access PIN
                   </label>
                   <div className="relative">
                     <input
@@ -363,42 +365,46 @@ export default function CallCenterApp() {
                       placeholder="••••••"
                       value={adminPasswordInput}
                       onChange={e => setAdminPasswordInput(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-800/90 border border-slate-700/80 rounded-2xl text-white font-mono text-center text-lg tracking-[0.3em] font-bold placeholder:tracking-[0.2em] placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-40 transition-all"
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-mono text-center text-lg tracking-[0.3em] font-bold placeholder:tracking-[0.2em] placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-100 transition-all"
                     />
                     <button
                       type="button"
                       onClick={() => setShowAdminPass(!showAdminPass)}
                       disabled={adminRemainingLockSecs > 0}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white disabled:opacity-40 transition-colors"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 disabled:opacity-40 transition-colors p-1"
                     >
-                      {showAdminPass ? <EyeOff size={18} /> : <Eye size={18} />}
+                      {showAdminPass ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
                 </div>
 
-                {/* Features preview */}
-                <div className="bg-slate-950/60 rounded-2xl p-3.5 border border-slate-800/80 space-y-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Admin Capabilities</span>
-                  <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300 font-medium">
-                    <div className="flex items-center gap-1.5"><FileSpreadsheet size={13} className="text-indigo-400" /> Worksheets</div>
-                    <div className="flex items-center gap-1.5"><Users size={13} className="text-indigo-400" /> Attenders & PINs</div>
-                    <div className="flex items-center gap-1.5"><BarChart3 size={13} className="text-indigo-400" /> Analytics</div>
-                    <div className="flex items-center gap-1.5"><ClipboardCheck size={13} className="text-indigo-400" /> Reports</div>
+                {/* Capabilities preview */}
+                <div className="bg-slate-50 rounded-lg p-3 border border-slate-200 space-y-1.5">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Admin Privileges</span>
+                  <div className="grid grid-cols-2 gap-1.5 text-xs text-slate-700 font-medium">
+                    <div className="flex items-center gap-1.5"><FileSpreadsheet size={13} className="text-indigo-600" /> Lead Worksheets</div>
+                    <div className="flex items-center gap-1.5"><Users size={13} className="text-indigo-600" /> Attender Accounts</div>
+                    <div className="flex items-center gap-1.5"><BarChart3 size={13} className="text-indigo-600" /> Real-time Analytics</div>
+                    <div className="flex items-center gap-1.5"><ClipboardCheck size={13} className="text-indigo-600" /> EOD Reports</div>
                   </div>
                 </div>
 
                 <button
                   type="submit"
                   disabled={isVerifyingAdmin || !adminPasswordInput || adminRemainingLockSecs > 0}
-                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold text-sm rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 pt-3.5 pb-3.5"
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold text-sm rounded-lg transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:cursor-not-allowed"
                 >
                   {adminRemainingLockSecs > 0 
                     ? `🔒 Locked out (${adminRemainingLockSecs}s)` 
-                    : (isVerifyingAdmin ? "Verifying..." : <>Unlock Admin Panel <ChevronRight size={18} /></>)}
+                    : (isVerifyingAdmin ? "Verifying PIN..." : <>Open Admin Panel <ChevronRight size={16} /></>)}
                 </button>
               </form>
             )}
 
+          </div>
+
+          <div className="text-center">
+            <p className="text-[11px] text-slate-400 font-medium">TGF Management System • Modern SaaS V2</p>
           </div>
 
         </div>
@@ -407,3 +413,4 @@ export default function CallCenterApp() {
     </>
   );
 }
+

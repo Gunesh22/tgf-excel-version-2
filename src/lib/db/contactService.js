@@ -32,14 +32,18 @@ import {
 export const parseTags = (tagInput) => {
   if (!tagInput) return [];
   if (Array.isArray(tagInput)) {
-    return tagInput.flatMap(t => parseTags(String(t)));
+    return tagInput.flatMap(t => parseTags(t));
+  }
+  if (typeof tagInput === "object") {
+    const val = tagInput.name || tagInput.label || tagInput.tag || tagInput.value || "";
+    return val ? parseTags(val) : [];
   }
   const str = String(tagInput).trim();
-  if (!str) return [];
+  if (!str || str === "[object Object]") return [];
   return str
     .split(/[,;\n#]+/)
     .map(t => t.trim().replace(/^#+/, ""))
-    .filter(t => t.length > 0);
+    .filter(t => t.length > 0 && t !== "[object Object]");
 };
 
 export const remapProgramContacts = async (programId, columnMappings, skipEmptySettings) => {
@@ -1097,7 +1101,17 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     if (attenderSpecificUpdates.remark !== undefined) finalUpdatePayload.remark = attenderSpecificUpdates.remark;
     if (attenderSpecificUpdates.callbackDate !== undefined) finalUpdatePayload.callbackDate = attenderSpecificUpdates.callbackDate;
     if (attenderSpecificUpdates.callType !== undefined) finalUpdatePayload.callType = attenderSpecificUpdates.callType;
-    if (attenderSpecificUpdates.history !== undefined) finalUpdatePayload.history = attenderSpecificUpdates.history;
+    if (attenderSpecificUpdates.history !== undefined) {
+      const existingRootHist = Array.isArray(logData.history) ? logData.history : [];
+      const newHistEntries = Array.isArray(attenderSpecificUpdates.history) ? attenderSpecificUpdates.history : [];
+      const mergedRootHist = [...existingRootHist];
+      newHistEntries.forEach(item => {
+        if (item && !mergedRootHist.some(h => h.timestamp === item.timestamp && h.remark === item.remark && h.status === item.status)) {
+          mergedRootHist.push(item);
+        }
+      });
+      finalUpdatePayload.history = mergedRootHist;
+    }
 
     const sourceVal = attenderSpecificUpdates.Source ?? attenderSpecificUpdates.source ?? attenderSpecificUpdates.sourse;
     if (sourceVal !== undefined) {
@@ -1119,22 +1133,35 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     finalUpdatePayload.lastEditedBy = attenderSpecificUpdates.attenderName;
     finalUpdatePayload.lastEditedAt = new Date().toISOString();
 
-    // Also ensure this attender is in the assignedTo array so the lead appears in their call sheet
+    // Also ensure this attender and all previous attenders are in assignedTo array so lead is never lost from any attender's sheet
     const prevAssigned = Array.isArray(logData.assignedTo)
       ? [...logData.assignedTo]
       : (logData.assignedTo ? [logData.assignedTo] : []);
     
-    // Include all attenders present in attenderStates so previous attenders are never lost
+    if (logData.attenderId && !prevAssigned.includes(logData.attenderId)) {
+      prevAssigned.push(logData.attenderId);
+    }
+    if (logData.attenderName && !prevAssigned.includes(logData.attenderName)) {
+      prevAssigned.push(logData.attenderName);
+    }
+
     if (logData.attenderStates && typeof logData.attenderStates === "object") {
       Object.keys(logData.attenderStates).forEach(aId => {
         if (aId && !prevAssigned.includes(aId)) {
           prevAssigned.push(aId);
+        }
+        const stName = logData.attenderStates[aId]?.attenderName;
+        if (stName && !prevAssigned.includes(stName)) {
+          prevAssigned.push(stName);
         }
       });
     }
 
     if (attenderId && !prevAssigned.includes(attenderId)) {
       prevAssigned.push(attenderId);
+    }
+    if (attenderName && !prevAssigned.includes(attenderName)) {
+      prevAssigned.push(attenderName);
     }
     finalUpdatePayload.assignedTo = prevAssigned;
     finalUpdatePayload.isAssigned = true;
@@ -1146,6 +1173,17 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     sharedUpdates.isAssigned = true;
   } else {
     Object.assign(finalUpdatePayload, attenderSpecificUpdates);
+  }
+
+  if (attenderId) {
+    console.log(`[ATTENDER ISOLATED UPDATE LOG] Attender: "${attenderName}" (${attenderId})`, {
+      logId,
+      leadName: logData.Name || logId,
+      assignedTo: finalUpdatePayload.assignedTo,
+      attenderStateKey: `attenderStates.${attenderId}`,
+      attenderSpecificUpdates,
+      isolatedHistoryCount: attenderSpecificUpdates.history ? attenderSpecificUpdates.history.length : 0
+    });
   }
 
   // Strip out undefined fields
@@ -1224,7 +1262,11 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     const hasStateReg = logData.attenderStates && Object.values(logData.attenderStates).some(st => 
       st.status === "Reg.Done" && String(st["Called For"] || st.calledFor || "").trim().toLowerCase() === targetProg
     );
-    const isAlreadyRegisteredForProgram = (previousStatus === "Reg.Done" && (hasProgRegInHistory || hasStateReg || String(logData["Called For"] || logData.calledFor || "").trim().toLowerCase() === targetProg)) || logData.registeredAt;
+    const isAlreadyRegisteredForProgram = previousStatus === "Reg.Done" && (
+      hasProgRegInHistory || 
+      hasStateReg || 
+      String(logData["Called For"] || logData.calledFor || "").trim().toLowerCase() === targetProg
+    );
 
     const isNewlyRegistered = previousStatus !== "Reg.Done" || !isAlreadyRegisteredForProgram;
 
@@ -1238,30 +1280,54 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
 
     let targetRegYearMonth = currentMonth;
     let targetRegisteredAt = serverTimestamp();
+    let targetConvertedBy = attenderName || freshData.attenderName || "Unknown";
 
     if (!isNewlyRegistered) {
-      // CASE 2: Already Reg.Done -> Reg.Done edit. Preserve original registration timestamp and partition month
-      const origRegisteredAt = logData.registeredAt || (Array.isArray(logData.history) && logData.history.find(h => h.status === "Reg.Done")?.timestamp) || logData.createdAt || null;
+      // CASE 2: Already Reg.Done -> Reg.Done edit. Strictly preserve original registration timestamp, partition month, and converter
+      let origRegisteredAt = logData.registeredAt || logData.attenderStates?.[attenderId]?.registeredAt;
+      
+      if (!origRegisteredAt && logData.attenderStates && typeof logData.attenderStates === "object") {
+        Object.values(logData.attenderStates).forEach(st => {
+          if (!origRegisteredAt && st && Array.isArray(st.history)) {
+            const match = st.history.find(h => h.status === "Reg.Done");
+            if (match && match.timestamp) origRegisteredAt = match.timestamp;
+          }
+        });
+      }
+
+      if (!origRegisteredAt && Array.isArray(logData.history)) {
+        const match = logData.history.find(h => h.status === "Reg.Done");
+        if (match && match.timestamp) origRegisteredAt = match.timestamp;
+      }
+
       let origYearMonth = logData.registeredYearMonth;
-      if (!origYearMonth && origRegisteredAt) {
+      if (origRegisteredAt) {
         const d = origRegisteredAt.toDate ? origRegisteredAt.toDate() : new Date(origRegisteredAt);
         if (d && !isNaN(d.getTime())) {
           origYearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
         }
       }
-      targetRegYearMonth = origYearMonth || currentMonth;
-      targetRegisteredAt = origRegisteredAt || serverTimestamp();
+
+      if (!origRegisteredAt) {
+        console.warn("[REGISTRATION DATE MISSING] Cannot safely determine original registration date for existing Reg.Done lead. Preserving existing registeredYearMonth without updating timestamp.", { logId, registrationId });
+      }
+
+      targetRegYearMonth = origYearMonth || logData.registeredYearMonth || currentMonth;
+      targetRegisteredAt = origRegisteredAt || logData.registeredAt || null;
+      targetConvertedBy = logData.convertedBy || (Array.isArray(logData.history) && logData.history.find(h => h.status === "Reg.Done")?.attenderName) || attenderName || "Unknown";
 
       console.log("[REGISTRATION PRESERVED]", {
         registrationId,
         originalRegisteredAt: targetRegisteredAt,
         originalRegisteredYearMonth: targetRegYearMonth,
+        originalConvertedBy: targetConvertedBy,
         reason: "existing_reg_done_edit"
       });
     } else {
       console.log("[NEW REGISTRATION]", {
         registrationId,
-        registeredYearMonth: targetRegYearMonth
+        registeredYearMonth: targetRegYearMonth,
+        convertedBy: targetConvertedBy
       });
     }
 
@@ -1276,7 +1342,7 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
       registeredYearMonth: targetRegYearMonth,
       registeredAt: targetRegisteredAt,
       conversionSource: freshData.Source || freshData.sourse || "Direct",
-      convertedBy: attenderName || freshData.attenderName || "Unknown",
+      convertedBy: targetConvertedBy,
       programName: freshData.programName || "Incoming Calls"
     };
 
@@ -1284,10 +1350,14 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
     regPayload = sanitizeForFirestore(rawRegPayload);
 
     console.log("[REGISTRATION BATCH]", {
+      logId,
+      attenderName,
       registrationId,
       payload: regPayload,
       hasUndefinedFields,
-      isNewlyRegistered
+      isNewlyRegistered,
+      convertedBy: regPayload.convertedBy,
+      attenderNameInPayload: regPayload.attenderName
     });
 
     batch.set(regRef, regPayload, { merge: true });
@@ -1301,8 +1371,11 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
 
     if (isRegDone && registrationId) {
       console.log("[REGISTRATION BATCH SUCCESS]", {
+        logId,
+        attenderName,
         registrationId,
-        writes: [`registrations/${registrationId}`, `registrationsCache/${currentMonth}`]
+        convertedBy: regPayload?.convertedBy,
+        writes: [`registrations/${registrationId}`, `registrationsCache/${regPayload?.registeredYearMonth || 'current'}_part1`]
       });
     }
 
@@ -1468,9 +1541,10 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
           continue;
         }
 
-        // Determine registration month (IST)
-        const regDate = rp.timestamp 
-          ? (typeof rp.timestamp.toDate === "function" ? rp.timestamp.toDate() : new Date(rp.timestamp)) 
+        // Determine registration month (IST) - preserve original registeredAt timestamp to prevent date bumping
+        const existingRegTs = freshData.registeredAt || (existingContact && existingContact.registeredAt) || rp.timestamp;
+        const regDate = existingRegTs 
+          ? (typeof existingRegTs.toDate === "function" ? existingRegTs.toDate() : new Date(existingRegTs)) 
           : new Date();
         const utc = regDate.getTime() + (regDate.getTimezoneOffset() * 60000);
         const istDate = new Date(utc + (3600000 * 5.5));
@@ -1480,7 +1554,7 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
           ...freshData,
           status: "Reg.Done",
           registeredYearMonth: yearMonth,
-          registeredAt: rp.timestamp || serverTimestamp(),
+          registeredAt: existingRegTs || serverTimestamp(),
           conversionSource: rp.source || "Direct",
           convertedBy: rp.attenderName || "Unknown",
           calledFor: rp.name,
@@ -1499,20 +1573,6 @@ export const updateCallLogDirectFirebase = async (logId, updates, attenderId = n
           contactId: logId
         });
         updateLocalRegistrationsCache({ ...payload, registrationId: currentRegId }).catch(() => {});
-      }
-
-      // Delete any outdated/orphan registrations for this contact (derived in-memory, 0 reads)
-      for (const candId of candidateRegIds) {
-        if (!activeRegIds.has(candId)) {
-          await deleteDoc(doc(db, "registrations", candId));
-          trackFirestoreWrite({
-            operation: "deleteDoc",
-            paths: [`registrations/${candId}`],
-            writeCount: 1,
-            reason: "syncRegistrationForContact (orphan cleanup)",
-            contactId: logId
-          });
-        }
       }
     }
   } catch (e) {
@@ -2610,13 +2670,13 @@ const getMonthStr = (ts) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 };
 
-const getCutoffMonth = (numMonths = 3) => {
+export const getCutoffMonth = (numMonths = 3) => {
   const d = new Date();
   d.setMonth(d.getMonth() - (numMonths - 1));
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 };
 
-const pruneContactForCacheForMonth = (c, monthStr) => {
+export const pruneContactForCacheForMonth = (c, monthStr) => {
   const pruned = {
     id: c.id,
     Name: c.Name || c.name || "",
@@ -2631,7 +2691,16 @@ const pruneContactForCacheForMonth = (c, monthStr) => {
     State: c.State || c.state || "",
     Email: c.Email || c.email || "",
     Khoji: c.Khoji || "",
-    isAssigned: c.isAssigned === true,
+    isAssigned: c.isAssigned !== false && (
+      c.isAssigned === true || 
+      (Array.isArray(c.assignedTo) && c.assignedTo.length > 0) || 
+      !!c.assignedTo || 
+      !!c.attenderId || 
+      !!c.attenderName || 
+      !!c.assignedName || 
+      (c.attenderStates && Object.keys(c.attenderStates).length > 0) ||
+      (Array.isArray(c.history) && c.history.length > 0)
+    ),
     assignedTo: Array.isArray(c.assignedTo) ? c.assignedTo : (c.assignedTo ? [c.assignedTo] : []),
     assignedName: c.assignedName || "",
     _deleted: c._deleted === true,
@@ -2899,4 +2968,4 @@ const DEFAULT_CALLED_FOR_OPTIONS = [
   "Spine Basic",
   "Spine Avd"
 ];
-
+

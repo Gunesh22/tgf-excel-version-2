@@ -50,7 +50,7 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
       setViewLogs([]);
       return;
     }
-    unsubRef.current = subscribeToCallLogs(viewingProgramId, viewingAttender.id, setViewLogs);
+    unsubRef.current = subscribeToCallLogs(viewingProgramId, viewingAttender.id, viewingAttender.name, setViewLogs);
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [viewingAttender, viewingProgramId]);
 
@@ -426,7 +426,7 @@ export default function AttendersTab({ programs, attenders, onReloadAttenders })
                       const logName = Object.keys(log).find(k => k.toLowerCase().includes("name") || k.toLowerCase().includes("lead"));
                       const contactName = logName ? log[logName] : "Unknown";
                       return (
-                        <tr key={log.id} className="hover:bg-gray-50/50 transition-colors">
+                        <tr key={`${log.id || 'log'}_${idx}`} className="hover:bg-gray-50/50 transition-colors">
                           <td className="px-6 py-4">
                             <p className="font-bold text-sm text-gray-800">{contactName}</p>
                             <p className="text-gray-400 mt-0.5">{log.Phone || log.Mobile || "No Phone"}</p>

@@ -36,7 +36,7 @@ export const SharedBanner = ({
     : sharedList;
 
   const isDuplicateMatch = !!globalDup?.first;
-  const isShared = (sharedList.length > 1 && otherAttenders.length > 0) || isDuplicateMatch || (isLeadShared(baseLead) && otherAttenders.length > 0);
+  const isShared = (sharedList.length > 1 && otherAttenders.length > 0) || isDuplicateMatch || (isLeadShared(baseLead, currentAttenderName) && otherAttenders.length > 0);
 
   if (!isShared || otherAttenders.length === 0) return null;
 
@@ -57,10 +57,10 @@ export const SharedBanner = ({
         <button
           type="button"
           onClick={() => onRefreshLead(baseLead)}
-          className="text-[10px] font-bold text-amber-800 bg-amber-100/80 border border-amber-250 px-2 py-0.5 rounded-md hover:bg-amber-200/80 transition active:scale-95 flex items-center gap-1 shrink-0"
-          title="Sync latest live updates from team members"
+          className="text-[10px] font-bold text-amber-800 bg-amber-100/80 border border-amber-250 px-2 py-0.5 rounded-md hover:bg-amber-200/80 transition active:scale-95 flex items-center gap-1 shrink-0 cursor-pointer"
+          title="Force fetch fresh lead from database and update cache"
         >
-          <RotateCw size={10} /> Sync
+          <RotateCw size={10} /> Force Sync
         </button>
       )}
     </div>

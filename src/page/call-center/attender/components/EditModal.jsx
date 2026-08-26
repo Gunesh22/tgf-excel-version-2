@@ -4,7 +4,7 @@ import {
   Phone, Plus, X, Save, Tag, User, MapPin, MessageSquare,
   Hash, Clock, CheckCircle2, AlertCircle, Trash2,
   PhoneIncoming, PhoneOutgoing, CalendarDays, Loader, Flame,
-  ChevronDown, Check, Search, Users
+  ChevronDown, Check, Search, Users, RotateCw
 } from "lucide-react";
 import {
   addIncomingCallLog, updateCallLog, createProgram, checkGlobalDuplicate, findMatchingAttenderState, combineContactHistories
@@ -131,10 +131,22 @@ export const EditModal = ({
       normalized.Tags = row.tags.join(", ");
     }
     const attState = findMatchingAttenderState(normalized.attenderStates, activeAttenderId || attenderId, activeAttenderName || attenderName);
-    normalized.history = combineContactHistories(normalized, attState, activeAttenderName || attenderName);
+    normalized.history = Array.isArray(attState?.history) ? [...attState.history] : [];
+
+    console.log(`[EDIT MODAL INIT TRACE] Lead: "${normalized.Name || row.id}"`, {
+      contactId: row.id || row.contactId,
+      rootRemark: row.remark,
+      attenderId: activeAttenderId || attenderId,
+      attenderName: activeAttenderName || attenderName,
+      matchedAttState: attState,
+      attStateRemark: attState?.remark,
+      attStateHistoryLength: Array.isArray(attState?.history) ? attState.history.length : 0,
+      attenderStatesKeys: Object.keys(normalized.attenderStates || {})
+    });
+
     return {
       ...normalized,
-      // Always start with empty remark for a new note — previous remarks are shown in the history timeline
+      // Start with clean empty remark for new note entry — past remarks are displayed in CALL NOTES timeline
       remark: "",
       // If status is Query, default queryStatus to Pending for backward compat
       queryStatus: normalized.status === "Query" ? (normalized.queryStatus || "Pending") : normalized.queryStatus,
@@ -162,10 +174,7 @@ export const EditModal = ({
   useEffect(() => {
     const freshNorm = getNormalizedRow();
     setSavedRow(freshNorm);
-    setEdited(prev => ({
-      ...freshNorm,
-      remark: prev?.remark || ""
-    }));
+    setEdited(freshNorm);
   }, [row]);
 
   useEffect(() => {
@@ -829,9 +838,18 @@ export const EditModal = ({
   const mergedHistory = useMemo(() => {
     const list = [];
 
-    // 1. Current contact's history entries
-    const currentHist = Array.isArray(edited.history) ? edited.history : (Array.isArray(savedRow.history) ? savedRow.history : []);
-    currentHist.forEach((h, idx) => {
+    // 1. Current contact's history entries (combine local attender history & top-level document history)
+    const combinedCurrentHist = [];
+    if (Array.isArray(edited.history)) combinedCurrentHist.push(...edited.history);
+    if (Array.isArray(savedRow.history)) {
+      savedRow.history.forEach(h => {
+        if (!combinedCurrentHist.some(ex => ex.timestamp === h.timestamp && ex.remark === h.remark && ex.status === h.status)) {
+          combinedCurrentHist.push(h);
+        }
+      });
+    }
+
+    combinedCurrentHist.forEach((h, idx) => {
       list.push({
         status: h.status || "",
         remark: h.remark || "",
@@ -866,16 +884,22 @@ export const EditModal = ({
       }
     }
 
-    // 2. Iterate over row.attenderStates to collect history of all sessions
+    // 2. Iterate over row.attenderStates to collect history of other sessions
     if (savedRow.attenderStates) {
+      const myAttId = String(activeAttenderId || attenderId || "").toLowerCase().trim();
+      const myAttName = String(activeAttenderName || attenderName || "").toLowerCase().trim();
+
       Object.keys(savedRow.attenderStates).forEach(otherAttenderId => {
         const state = savedRow.attenderStates[otherAttenderId];
-        const isMe = otherAttenderId === attenderId || 
-                     otherAttenderId === attenderName || 
-                     (state && (state.attenderId === attenderId || state.attenderName === attenderName));
-        if (isMe) return; // Already included in currentHist above
         if (state) {
-          const progName = state.programName || "Other Attender";
+          const stateAttId = String(otherAttenderId || state.attenderId || "").toLowerCase().trim();
+          const stateAttName = String(state.attenderName || "").toLowerCase().trim();
+          
+          // Skip active attender because their history entries were already processed in Step 1
+          if (myAttId && stateAttId && stateAttId === myAttId) return;
+          if (myAttName && stateAttName && stateAttName === myAttName) return;
+
+          const progName = state.programName || "Attender Log";
           // Add history entries
           if (Array.isArray(state.history)) {
             state.history.forEach(h => {
@@ -1034,16 +1058,15 @@ export const EditModal = ({
         const exMs = getMs(ex.timestamp);
 
         const timeDiff = (itemMs > 0 && exMs > 0) ? Math.abs(itemMs - exMs) : 0;
-        const isTimeUnknown = itemMs === 0 || exMs === 0;
 
-        // Rule 1: Identical non-empty remarks logged within 30 minutes of each other (or unknown timestamp)
+        // Rule 1: Identical non-empty remarks logged within 15 seconds of each other (including 0ms exact match)
         if (itemRemark && exRemark && itemRemark === exRemark) {
-          if (isTimeUnknown || timeDiff < 1800000) return true;
+          if (timeDiff < 15000) return true;
         }
 
-        // Rule 2: Same status logged within 3 minutes of each other
-        if (itemStatus && exStatus && itemStatus === exStatus && itemMs > 0 && exMs > 0) {
-          if (timeDiff < 180000) return true;
+        // Rule 2: Same status logged within 15 seconds of each other (only if remarks are also identical)
+        if (itemStatus && exStatus && itemStatus === exStatus && itemRemark === exRemark) {
+          if (timeDiff < 15000) return true;
         }
 
         return false;
@@ -1054,8 +1077,38 @@ export const EditModal = ({
       }
     });
 
+    console.log(`[EDIT MODAL MERGED HISTORY TRACE] Lead: "${edited.Name || row.id}"`, {
+      rawListCount: list.length,
+      uniqueCount: uniqueList.length,
+      historyEntries: uniqueList.map(h => ({
+        status: h.status,
+        remark: h.remark,
+        attenderName: h.attenderName,
+        timestamp: h.timestamp,
+        sourceProgram: h.sourceProgram
+      }))
+    });
+
     return uniqueList;
   }, [savedRow.history, savedRow.remark, savedRow.status, savedRow.programName, savedRow.attenderName, savedRow.assignedName, savedRow.updatedAt, savedRow.createdAt, savedRow.attenderStates, globalDup, edited.history, attenderId]);
+
+  // Compute call count for the active attender only (do not combine across attenders)
+  const myAttenderCallCount = useMemo(() => {
+    if (!mergedHistory || !Array.isArray(mergedHistory)) return 0;
+    const myId = String(activeAttenderId || attenderId || "").toLowerCase().trim();
+    const myName = String(activeAttenderName || attenderName || "").toLowerCase().trim();
+
+    const myCalls = mergedHistory.filter(h => {
+      const hAttName = String(h.attenderName || "").toLowerCase().trim();
+      const hAttId = String(h.attenderId || "").toLowerCase().trim();
+      if (myName && hAttName && hAttName === myName) return true;
+      if (myId && hAttId && hAttId === myId) return true;
+      if (h.isCurrentDoc && (!hAttName || hAttName === "unknown") && (!hAttId || hAttId === "unknown")) return true;
+      return false;
+    });
+
+    return myCalls.length > 0 ? myCalls.length : 0;
+  }, [mergedHistory, activeAttenderId, attenderId, activeAttenderName, attenderName]);
 
 
 
@@ -1197,8 +1250,10 @@ export const EditModal = ({
     const newStatus = String(targetEdited.status || "").trim();
     const statusChanged = oldStatus !== newStatus;
 
-    const newRemarkEntered = String(targetEdited.remark || "").trim() !== "";
-    const remarkChanged = newRemarkEntered;
+    const oldRemark = String(savedRow.remark || "").trim();
+    const newRemark = String(targetEdited.remark || "").trim();
+    const remarkChanged = oldRemark !== newRemark;
+    const newRemarkEntered = newRemark !== "";
 
     const oldCallType = String(savedRow.callType || "outgoing").toLowerCase();
     const newCallType = String(targetEdited.callType || "outgoing").toLowerCase();
@@ -1213,6 +1268,22 @@ export const EditModal = ({
     const objectionReasonChanged = oldObjection !== newObjection;
 
     const isCallAttemptUpdated = statusChanged || remarkChanged || callTypeChanged || callbackDateChanged || objectionReasonChanged;
+
+    console.log(`[EDIT MODAL SAVE DIAGNOSTIC] Lead: "${getLogName() || row.id}"`, {
+      savedRowRemark: savedRow.remark,
+      targetEditedRemark: targetEdited.remark,
+      oldRemark,
+      newRemark,
+      remarkChanged,
+      oldStatus,
+      newStatus,
+      statusChanged,
+      isCallAttemptUpdated,
+      activeAttenderId,
+      activeAttenderName,
+      attenderId,
+      attenderName
+    });
 
     if (!isFromHistory && !isNew) {
       const cleanForCompare = (val) => {
@@ -1355,6 +1426,23 @@ export const EditModal = ({
       // Detect if history was altered (e.g., deletion or edit) so we keep it even when not a call attempt.
       const historyChanged = JSON.stringify(targetEdited.history || []) !== JSON.stringify(savedRow.history || []);
 
+      // Scope baseHistory ONLY to active attender's history entries
+      const activeStateObj = findMatchingAttenderState(savedRow.attenderStates, activeAttenderId, activeAttenderName);
+      let rawHistory = Array.isArray(targetEdited.history) 
+        ? targetEdited.history 
+        : (Array.isArray(activeStateObj?.history) ? activeStateObj.history : []);
+      
+      let baseHistory = rawHistory.filter(h => {
+        if (!h) return false;
+        const hName = String(h.attenderName || "").toLowerCase().trim();
+        const hId = String(h.attenderId || "").toLowerCase().trim();
+        const myName = String(activeAttenderName || "").toLowerCase().trim();
+        const myId = String(activeAttenderId || "").toLowerCase().trim();
+        if (myId && hId && hId === myId) return true;
+        if (myName && hName && hName === myName) return true;
+        return !hId && !hName;
+      });
+
       if (isFromHistory) {
         if (updates.callbackDate) {
           if (typeof updates.callbackDate === "string") {
@@ -1411,6 +1499,8 @@ export const EditModal = ({
           }
         });
 
+        const baseHistory = Array.isArray(targetEdited.history) ? [...targetEdited.history] : (Array.isArray(savedRow.history) ? [...savedRow.history] : []);
+
         // Ensure any newly added fields are marked as mapped so they show up in the table/attender view
         if (addedFields.length > 0) {
           const currentMapped = Array.isArray(updates._mappedFields) ? [...updates._mappedFields] : [];
@@ -1429,9 +1519,6 @@ export const EditModal = ({
             updates.firstCalledAt = new Date().toISOString();
           }
         }
-
-        // Maintain a timeline of interactions.
-        let baseHistory = Array.isArray(targetEdited.history) ? targetEdited.history : (Array.isArray(savedRow.history) ? savedRow.history : []);
 
 
 
@@ -1496,9 +1583,10 @@ export const EditModal = ({
             callType: targetEdited.callType || "outgoing"
           };
 
-          // Fix for Flaw 2: 2-minute session collapsing (merge edits by same attender if within 2 min)
+          // Fix for Flaw 2: 15-second session collapsing for status-only edits by same attender
           let collapsed = false;
-          if (baseHistory.length > 0) {
+          const hasNewRemark = Boolean(String(newHist.remark || "").trim());
+          if (!hasNewRemark && baseHistory.length > 0) {
             const lastEntryIndex = baseHistory.length - 1;
             const lastEntry = baseHistory[lastEntryIndex];
             
@@ -1507,9 +1595,9 @@ export const EditModal = ({
             if (isSameAttender && lastEntry.timestamp) {
               const lastTime = new Date(lastEntry.timestamp).getTime();
               const currTime = new Date(nowStr).getTime();
-              const diffMinutes = (currTime - lastTime) / (1000 * 60);
+              const diffSeconds = (currTime - lastTime) / 1000;
               
-              if (diffMinutes < 2) {
+              if (diffSeconds < 15) {
                 const mergedEntry = {
                   ...lastEntry,
                   status: newHist.status,
@@ -1554,6 +1642,15 @@ export const EditModal = ({
         console.log("[EDIT MODAL SAVE] addIncomingCallLog result docId:", resId);
         savedDocId = resId;
       } else {
+        console.log(`[EDIT MODAL ISOLATED SAVE] Attender: "${activeAttenderName}" (${activeAttenderId})`, {
+          contactId: targetDocId,
+          leadName: targetEdited.Name || savedRow.Name,
+          previousIsolatedHistoryCount: baseHistory ? baseHistory.length : 0,
+          isCallAttemptUpdated,
+          finalHistoryCount: updates.history ? updates.history.length : 0,
+          savedHistoryEntries: updates.history || []
+        });
+
         const existingContext = globalDup?.first
           ? { ...globalDup.first, ...row, ...targetEdited }
           : { ...row, ...targetEdited };
@@ -1567,7 +1664,40 @@ export const EditModal = ({
       console.log("✅ Save successful!");
       toast.success("Saved!", { duration: 4000, position: 'top-center' });
 
-      if (onSave) onSave({ ...targetEdited, ...updates, id: savedDocId }, false);
+      // Merge updated history into attenderStates for local memory state so subsequent modal opens read the updated logs
+      const currentAttStates = { ...(targetEdited.attenderStates || savedRow.attenderStates || {}) };
+      if (activeAttenderId) {
+        const prevAttState = currentAttStates[activeAttenderId] || {};
+        currentAttStates[activeAttenderId] = {
+          ...prevAttState,
+          attenderId: activeAttenderId,
+          attenderName: activeAttenderName || prevAttState.attenderName || "Unknown",
+          status: updates.status || prevAttState.status,
+          remark: updates.remark !== undefined ? updates.remark : prevAttState.remark,
+          history: updates.history || prevAttState.history || [],
+          updatedAt: new Date().toISOString()
+        };
+      }
+
+      // Combine top-level history with active attender's updated history so global entries (e.g. Reg.Done) are preserved
+      const mergedDocHistory = Array.isArray(savedRow.history) ? [...savedRow.history] : [];
+      if (Array.isArray(updates.history)) {
+        updates.history.forEach(h => {
+          if (!mergedDocHistory.some(ex => ex.timestamp === h.timestamp && ex.remark === h.remark && ex.status === h.status)) {
+            mergedDocHistory.push(h);
+          }
+        });
+      }
+
+      const finalSavedPayload = {
+        ...targetEdited,
+        ...updates,
+        id: savedDocId,
+        attenderStates: currentAttStates,
+        history: mergedDocHistory.length > 0 ? mergedDocHistory : (updates.history || targetEdited.history || [])
+      };
+
+      if (onSave) onSave(finalSavedPayload, false);
       if (onClose) onClose();
     } catch (err) {
       console.error("❌ CRITICAL SAVE ERROR:", err.message || err);
@@ -1639,73 +1769,87 @@ export const EditModal = ({
       };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" onClick={handleDismiss}>
+    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in" onClick={handleDismiss}>
       <div
-        className="bg-white rounded-3xl w-full max-w-4xl max-h-[95vh] flex flex-col overflow-hidden shadow-2xl animate-slide-up"
+        className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200 animate-slide-up"
         onClick={e => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className={`px-6 py-4 flex items-center justify-between ${edited._callbackDue ? "bg-red-600 shadow-lg shadow-red-600/20" : isIncomingCall ? "bg-emerald-600 shadow-lg shadow-emerald-600/20" : "bg-indigo-600 shadow-lg shadow-indigo-600/20"}`}>
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-white">
-              {edited.callType === "incoming" ? <PhoneIncoming size={20} /> : <PhoneOutgoing size={20} />}
+        <div className={`px-5 py-3.5 flex items-center justify-between ${edited._callbackDue ? "bg-rose-800 text-white shadow-xs" : isIncomingCall ? "bg-emerald-800 text-white shadow-xs" : "bg-slate-900 text-white shadow-xs"}`}>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-white/10 border border-white/20 rounded-lg flex items-center justify-center text-white shrink-0">
+              {edited.callType === "incoming" ? <PhoneIncoming size={18} /> : <PhoneOutgoing size={18} />}
             </div>
             <div>
-              <div className="flex items-center gap-3">
-                <h3 className="text-white font-black text-xl leading-none">{getLogName() || "Unknown Entry"}</h3>
+              <div className="flex items-center gap-2.5">
+                <h3 className="text-white font-bold text-lg leading-none">{getLogName() || "Unknown Lead"}</h3>
                 <CallButton phone={edited.Phone || edited.Mobile} variant="header" />
                 <WhatsAppButton phone={edited.Phone || edited.Mobile} name={getLogName()} variant="header" />
               </div>
-              <div className="flex items-center gap-3 mt-1">
+              <div className="flex items-center gap-2.5 mt-1">
                 {edited.createdAt && (
-                  <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">
+                  <span className="text-[10px] font-semibold text-white/60 uppercase tracking-wider">
                     Assigned: {(edited.createdAt?.toDate ? edited.createdAt.toDate() : new Date(edited.createdAt)).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
                   </span>
                 )}
                 {edited.lastCalledAt && (
-                  <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">
+                  <span className="text-[10px] font-semibold text-white/60 uppercase tracking-wider">
                     Last called: {new Date(edited.lastCalledAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                   </span>
                 )}
-                {edited.history && edited.history.length > 0 && (
-                  <span className="text-[10px] font-bold bg-white/20 px-1.5 py-0.5 rounded text-white/80">
-                    {edited.history.length} call{edited.history.length > 1 ? "s" : ""}
+                {(myAttenderCallCount > 0 || (mergedHistory && mergedHistory.length > 0)) && (
+                  <span className="text-[10px] font-semibold bg-white/15 px-2 py-0.5 rounded-md text-white/90" title="Calls logged by active attender">
+                    {myAttenderCallCount > 0 ? myAttenderCallCount : mergedHistory.length} call{(myAttenderCallCount > 0 ? myAttenderCallCount : mergedHistory.length) > 1 ? "s" : ""}
                   </span>
                 )}
 
                 {getLastEditedBy() && (
-                  <span className="text-[10px] font-bold text-white/70 uppercase tracking-wider">
-                    Last edited by: {getLastEditedBy()}
+                  <span className="text-[10px] font-semibold text-white/70 uppercase tracking-wider">
+                    By: {getLastEditedBy()}
                   </span>
                 )}
 
                 {(isCheckingDuplicate || isSearchingCRM || isFetchingShared) && (
-                  <span className="text-[10px] font-black bg-amber-500/90 px-2.5 py-1 rounded-md text-white animate-pulse flex items-center gap-1.5 shrink-0 shadow-xs">
-                    <Loader size={12} className="animate-spin text-white" />
-                    {isFetchingShared ? "SYNCING LIVE UPDATES..." : isCheckingDuplicate ? "CHECKING DUPLICATES..." : "SEARCHING CRM..."}
+                  <span className="text-[10px] font-bold bg-amber-500 px-2 py-0.5 rounded-md text-white animate-pulse flex items-center gap-1 shrink-0 shadow-2xs">
+                    <Loader size={11} className="animate-spin text-white" />
+                    {isFetchingShared ? "SYNCING..." : isCheckingDuplicate ? "CHECKING DUPES..." : "SEARCHING CRM..."}
                   </span>
                 )}
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => handleChange("isHotLead", !edited.isHotLead)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition ${edited.isHotLead ? "bg-orange-500 text-white shadow-lg shadow-orange-500/30" : "bg-white/10 text-white/50 hover:bg-white/20"}`}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 active:scale-[0.98] cursor-pointer ${edited.isHotLead ? "bg-amber-500 text-white shadow-2xs" : "bg-white/10 text-white/80 hover:bg-white/20"}`}
             >
-              <Flame size={14} className={edited.isHotLead ? "animate-pulse" : ""} /> {edited.isHotLead ? "HOT LEAD" : "Mark Hot"}
+              <Flame size={13} className={edited.isHotLead ? "animate-pulse" : ""} /> {edited.isHotLead ? "HOT LEAD" : "Mark Hot"}
             </button>
-            {saving && <Loader size={16} className="text-white animate-spin" />}
-            <button onClick={handleDismiss} className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center text-white hover:bg-white/30 transition" title="Discard changes & close">
-              <X size={18} />
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof onRefreshLead === "function") {
+                  onRefreshLead(edited || row);
+                }
+              }}
+              disabled={isFetchingShared}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/10 hover:bg-white/20 active:scale-[0.98] rounded-lg text-white text-xs font-medium transition-all duration-150 border border-white/20 shadow-2xs cursor-pointer disabled:opacity-50"
+              title="Force fetch fresh lead directly from database"
+            >
+              <RotateCw size={12} className={isFetchingShared ? "animate-spin text-amber-300" : ""} />
+              <span>{isFetchingShared ? "Syncing..." : "Sync"}</span>
+            </button>
+            <button onClick={handleDismiss} className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center text-white hover:bg-white/20 active:scale-[0.98] transition-all duration-150 cursor-pointer" title="Discard changes & close">
+              <X size={16} />
             </button>
             <button
               onClick={handleSaveAndClose}
               disabled={saving}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-white/20 hover:bg-white/30 rounded-xl text-white text-xs font-black transition disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 active:scale-[0.98] rounded-lg text-white text-xs font-semibold transition-all duration-150 shadow-2xs disabled:opacity-50 cursor-pointer"
               title="Save changes & close"
             >
-              {saving ? <Loader size={13} className="animate-spin" /> : <Save size={13} />} Save
+              {saving ? <Loader size={12} className="animate-spin" /> : <Save size={12} />}
+              <span>{saving ? "Saving..." : "Save"}</span>
             </button>
           </div>
         </div>
@@ -2022,6 +2166,7 @@ export const EditModal = ({
           attenderId={attenderId}
           onParentClose={onClose}
           onSaveAll={handleSaveAndClose}
+          mergedHistory={mergedHistory}
         />
       )}
     </div>

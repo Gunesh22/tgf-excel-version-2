@@ -1,7 +1,7 @@
 import React from "react";
 import {
   ArrowLeft, Search, Plus, MapPin, PhoneOutgoing, Flame, Clock, CheckCircle2, AlertCircle,
-  Bell, Sparkles, UserCheck, Download, Users
+  Bell, Sparkles, UserCheck, Download, Users, RefreshCw
 } from "lucide-react";
 import { formatContactName, getSharedAttenders } from "../utils";
 import { AttenderFilters } from "../components/AttenderFilters";
@@ -16,6 +16,8 @@ export default function MobileAttenderView({
   setFilterStatus,
   onExit,
   openCallEntryDialog,
+  handleRebuildCache,
+  isRebuildingCache,
   setEditingRow,
   setGlobalSearchOpen,
   showAdvancedFilters,
@@ -194,6 +196,16 @@ export default function MobileAttenderView({
             title="Download Today's EOD Telemetry Log"
           >
             <Download size={16} />
+          </button>
+
+          <button
+            type="button"
+            onClick={handleRebuildCache}
+            disabled={isRebuildingCache}
+            className="w-9 h-9 rounded-full bg-[#1e293b] text-indigo-300 border border-indigo-500/30 flex items-center justify-center hover:bg-indigo-900 transition active:scale-95 disabled:opacity-50"
+            title="Rebuild cache from callCenterCache (Last 3 Months)"
+          >
+            <RefreshCw size={16} className={isRebuildingCache ? "animate-spin text-indigo-400" : ""} />
           </button>
 
           <button

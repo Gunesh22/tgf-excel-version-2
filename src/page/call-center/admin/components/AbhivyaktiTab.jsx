@@ -5,7 +5,7 @@ import {
   Download, Calendar, TrendingUp, UserCheck, Smile, Info, Search, X, ChevronDown, Check, ChevronRight, RotateCw
 } from "lucide-react";
 import { CONNECTED_STATUSES, getContactKhoji } from "../utils.jsx";
-import { clearLocalRegistrationsCache } from "../../../../lib/db/cacheService.js";
+import { clearLocalRegistrationsCache, deduplicateRegistrations } from "../../../../lib/db";
 
 function ReportSection({ title, subtitle, badge, action, children, defaultOpen = true }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -236,26 +236,26 @@ const parseDate = (val) => {
 export const getRegistrationPrimaryAttender = (r) => {
   if (!r) return "Direct / Online";
 
-  // 1. Check assigned lead owner (attenderName, assignedTo, assignedAttender, attender)
+  // 1. Check convertedBy first (the attender who performed the registration/conversion)
+  if (r.convertedBy && String(r.convertedBy).trim() && String(r.convertedBy).trim() !== "Unknown" && String(r.convertedBy).trim() !== "Unassigned") {
+    return String(r.convertedBy).trim();
+  }
+
+  // 2. Check assigned lead owner (attenderName, assignedTo, assignedAttender, attender)
   const assigned = r.attenderName || r.assignedTo || r.assignedAttender || r.attender;
   if (assigned && String(assigned).trim() && String(assigned).trim() !== "Unknown" && String(assigned).trim() !== "Unassigned") {
     return String(assigned).trim();
   }
 
-  // 2. Look back at prior call history array to find the primary nurturer
+  // 3. Look back at prior call history array to find the primary nurturer
   if (Array.isArray(r.history) && r.history.length > 0) {
     for (let i = 0; i < r.history.length; i++) {
       const h = r.history[i];
-      const hAttender = h.attenderName || h.convertedBy || h.user || h.attender;
+      const hAttender = h.convertedBy || h.attenderName || h.user || h.attender;
       if (hAttender && String(hAttender).trim() && String(hAttender).trim() !== "Unknown" && String(hAttender).trim() !== "Unassigned") {
         return String(hAttender).trim();
       }
     }
-  }
-
-  // 3. Fallback to convertedBy or Direct / Online
-  if (r.convertedBy && String(r.convertedBy).trim() && String(r.convertedBy).trim() !== "Unknown") {
-    return String(r.convertedBy).trim();
   }
 
   return "Direct / Online";
@@ -329,7 +329,7 @@ export default function AbhivyaktiTab({
 
   // Apply filters to calculate filteredRegistrations
   const filteredRegistrations = useMemo(() => {
-    return registrations.filter(r => {
+    const res = registrations.filter(r => {
       if (r._deleted) return false;
 
       // 1. Call Type Filter
@@ -371,6 +371,16 @@ export default function AbhivyaktiTab({
 
       return true;
     });
+
+    console.log("[ABHIVYAKTI FILTERED REGS TRACE]", {
+      totalInputRegistrations: registrations.length,
+      filteredRegistrationsCount: res.length,
+      attendersFound: Array.from(new Set(registrations.map(r => getRegistrationPrimaryAttender(r)))),
+      dateFrom,
+      dateTo
+    });
+
+    return res;
   }, [registrations, selectedCallTypes, selectedCalledFors, selectedSources, selectedAttenders, dateFrom, dateTo]);
 
   // Active filters count
@@ -1291,9 +1301,9 @@ export default function AbhivyaktiTab({
                 </thead>
                 <tbody className="divide-y divide-gray-50 font-semibold text-gray-600">
                   {filteredRegistrations.map((r, i) => {
-                    const nameVal = r.Name || r.name || "Unknown";
-                    const phoneVal = r.Phone || r.phone || "N/A";
-                    const mobileVal = r.Mobile || r.mobile || "N/A";
+                    const nameVal = r.Name || r.name || r["Contact Name"] || r.contactName || r.contact_name || r["Full Name"] || r.fullName || r.full_name || r["First Name"] || r.first_name || (Array.isArray(r.history) && r.history[0]?.name) || "Unknown";
+                    const phoneVal = r.Phone || r.phone || r["Phone Number"] || r.phoneNumber || r.normalizedPhone || "N/A";
+                    const mobileVal = r.Mobile || r.mobile || r["Mobile Number"] || r.mobileNumber || r.normalizedMobile || "N/A";
                     const attenderVal = getRegistrationPrimaryAttender(r);
                     const callsDoneVal = r.callCount !== undefined ? r.callCount : (r.history ? r.history.length : 0);
                     const calledForVal = r.calledFor || r["Called For"] || "N/A";
